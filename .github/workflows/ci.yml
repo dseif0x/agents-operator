@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: ["**"]
+    branches-ignore: ["gh-pages"]
     tags-ignore: ["v*"]
   pull_request:
 
@@ -103,7 +103,7 @@ jobs:
           python-version: "3.12"
       - uses: helm/chart-testing-action@v2
       - name: ct lint
-        run: ct lint --config ct.yaml --charts charts/agents-operator --all
+        run: ct lint --config ct.yaml --charts charts/agents-operator
       - uses: helm/kind-action@v1
         with:
           cluster_name: ct
