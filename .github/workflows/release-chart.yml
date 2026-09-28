@@ -64,6 +64,7 @@ jobs:
         env:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          mkdir -p .cr-index
           cr index \
             --owner "${GITHUB_REPOSITORY%%/*}" \
             --git-repo "${GITHUB_REPOSITORY#*/}" \
