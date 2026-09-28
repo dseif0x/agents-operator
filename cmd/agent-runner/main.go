@@ -178,18 +178,12 @@ type Workspace struct {
 // HomeDir is the agent's HOME on the PVC.
 func (w *Workspace) HomeDir() string { return filepath.Join(w.Root, "home") }
 
-// WorkDir is the directory the agent starts in: the first repo when it
-// exists, otherwise the workspace root, otherwise the current directory.
+// WorkDir is the directory the agent starts in: the workspace root, where
+// AGENTS.md lives and every repository is a subdirectory. Falls back to the
+// current directory when the root does not exist.
 func (w *Workspace) WorkDir() string {
-	candidates := []string{}
-	if repos, err := w.Repos(); err == nil && len(repos) > 0 {
-		candidates = append(candidates, filepath.Join(w.Root, repos[0].Path))
-	}
-	candidates = append(candidates, w.Root)
-	for _, d := range candidates {
-		if st, err := os.Stat(d); err == nil && st.IsDir() {
-			return d
-		}
+	if st, err := os.Stat(w.Root); err == nil && st.IsDir() {
+		return w.Root
 	}
 	return ""
 }

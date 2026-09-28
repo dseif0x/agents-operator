@@ -167,8 +167,8 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
           spellcheck={false}
         />
         <div class="muted" style="font-size:12px;margin-top:3px">
-          Each repo is cloned into <code>/workspace/&lt;directory&gt;</code> (default: the repo name). The agent starts in the first one; the
-          others sit next to it. Leave empty for a blank workspace.
+          Each repo is cloned into <code>/workspace/&lt;directory&gt;</code> (default: the repo name). The agent starts in <code>/workspace</code> next to an
+          AGENTS.md that lists them. Leave empty for a blank workspace.
         </div>
         <div class="checkbox">
           <input id="auto" type="checkbox" checked={autonomous} onChange={(e) => setAutonomous((e.target as HTMLInputElement).checked)} />
