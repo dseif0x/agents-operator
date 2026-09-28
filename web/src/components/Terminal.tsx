@@ -12,6 +12,8 @@ export interface TerminalHandle {
   /** Send clipboard-style text as if typed (bracketed paste when the app asked for it). */
   paste: (text: string) => void;
   focus: () => void;
+  /** Open the on-screen keyboard when closed, close it when open. Returns the new state. */
+  toggleKeyboard: () => boolean;
   /** The text of the screen plus scrollback, for the selectable overlay. */
   screenText: () => string;
   /** URLs currently visible in the buffer, newest last, de-duplicated. */
@@ -46,11 +48,15 @@ function bufferText(term: XTerm): string {
 
 interface Props {
   sessionId: string;
+  /** Called when xterm gains or loses focus, i.e. the keyboard opens or closes on phones. */
+  onFocusChange?: (focused: boolean) => void;
 }
 
 // Terminal wraps xterm.js and a reconnecting WebSocket to the hub. Binary
 // frames are PTY bytes; text frames are JSON control messages.
-export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ sessionId }, ref) {
+export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ sessionId, onFocusChange }, ref) {
+  const focusChange = useRef(onFocusChange);
+  focusChange.current = onFocusChange;
   const el = useRef<HTMLDivElement>(null);
   const ws = useRef<WebSocket | null>(null);
   const xterm = useRef<XTerm | null>(null);
@@ -65,6 +71,16 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     },
     paste: (text: string) => xterm.current?.paste(text),
     focus: () => xterm.current?.focus(),
+    toggleKeyboard: () => {
+      const t = xterm.current;
+      if (!t) return false;
+      if (t.textarea && document.activeElement === t.textarea) {
+        t.textarea.blur();
+        return false;
+      }
+      t.focus();
+      return true;
+    },
     screenText: () => (xterm.current ? bufferText(xterm.current) : ""),
     links: () => {
       const text = xterm.current ? bufferText(xterm.current) : "";
@@ -93,6 +109,78 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
     term.open(el.current);
+
+    // Touch handling. xterm leaves touch to the browser, and on iOS a drag
+    // with the keyboard open pans the visual viewport instead of scrolling
+    // the buffer, while any touch used to focus the terminal and pop the
+    // keyboard. So: consume drags here and scroll the buffer ourselves
+    // (with a little inertia), and treat only a short tap as "focus".
+    const host = el.current;
+    let touch: { x: number; y: number; lastY: number; lastT: number; t0: number; moved: boolean; acc: number; v: number } | null = null;
+    let inertia = 0;
+    const rowHeight = () => Math.max(8, host.clientHeight / Math.max(1, term.rows));
+    const scrollBy = (px: number) => {
+      if (!touch) return;
+      touch.acc += px / rowHeight();
+      const lines = Math.trunc(touch.acc);
+      if (lines !== 0) {
+        touch.acc -= lines;
+        term.scrollLines(lines);
+      }
+    };
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      cancelAnimationFrame(inertia);
+      const p = e.touches[0];
+      touch = { x: p.clientX, y: p.clientY, lastY: p.clientY, lastT: e.timeStamp, t0: e.timeStamp, moved: false, acc: 0, v: 0 };
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!touch || e.touches.length !== 1) return;
+      const p = e.touches[0];
+      if (!touch.moved && Math.hypot(p.clientX - touch.x, p.clientY - touch.y) > 8) touch.moved = true;
+      if (!touch.moved) return;
+      e.preventDefault(); // keep the browser from panning the viewport
+      const dy = touch.lastY - p.clientY;
+      const dt = Math.max(1, e.timeStamp - touch.lastT);
+      touch.v = dy / dt;
+      touch.lastY = p.clientY;
+      touch.lastT = e.timeStamp;
+      scrollBy(dy);
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!touch) return;
+      const t = touch;
+      if (!t.moved) {
+        // A tap: focus (opens the keyboard). Let the click through for links.
+        if (e.timeStamp - t.t0 < 500) term.focus();
+        touch = null;
+        return;
+      }
+      e.preventDefault();
+      // Inertia: keep scrolling with the last velocity, decaying.
+      let v = t.v;
+      let last = performance.now();
+      const step = (now: number) => {
+        const dt = now - last;
+        last = now;
+        v *= Math.pow(0.94, dt / 16);
+        if (Math.abs(v) < 0.02) {
+          touch = null;
+          return;
+        }
+        scrollBy(v * dt);
+        inertia = requestAnimationFrame(step);
+      };
+      inertia = requestAnimationFrame(step);
+    };
+    host.addEventListener("touchstart", onTouchStart, { passive: true });
+    host.addEventListener("touchmove", onTouchMove, { passive: false });
+    host.addEventListener("touchend", onTouchEnd, { passive: false });
+    host.addEventListener("touchcancel", () => (touch = null), { passive: true });
+    const onFocus = () => focusChange.current?.(true);
+    const onBlur = () => focusChange.current?.(false);
+    term.textarea?.addEventListener("focus", onFocus);
+    term.textarea?.addEventListener("blur", onBlur);
     // WebGL renderer with a canvas/DOM fallback when the context is lost or unavailable.
     import("@xterm/addon-webgl")
       .then(({ WebglAddon }) => {
@@ -216,6 +304,12 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       visualViewport?.removeEventListener("resize", refit);
       removeEventListener("agents-operator:theme", onTheme);
       document.removeEventListener("visibilitychange", onVisible);
+      cancelAnimationFrame(inertia);
+      term.textarea?.removeEventListener("focus", onFocus);
+      term.textarea?.removeEventListener("blur", onBlur);
+      host.removeEventListener("touchstart", onTouchStart);
+      host.removeEventListener("touchmove", onTouchMove);
+      host.removeEventListener("touchend", onTouchEnd);
       onData.dispose();
       onBinary.dispose();
       onResize.dispose();
@@ -238,7 +332,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
           Agent exited with code {exit}. Use “Restart agent” to relaunch it; the pod and volume are untouched.
         </div>
       )}
-      <div ref={el} style="height:100%" onTouchStart={() => xterm.current?.focus()} />
+      <div ref={el} class="term-host" style="height:100%" />
     </>
   );
 });

@@ -431,6 +431,12 @@ details summary {
   padding: 4px 0 0 6px;
 }
 
+/* Touch scrolling is handled in JS; stop the browser from panning. */
+.term-host {
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
 .term-wrap .xterm-viewport {
   overflow-y: auto;
 }

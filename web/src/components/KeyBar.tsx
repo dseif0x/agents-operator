@@ -5,6 +5,8 @@ import { useState } from "preact/hooks";
 export function KeyBar(props: {
   onKey: (seq: string) => void;
   onFocus: () => void;
+  onKeyboard: () => void;
+  keyboardOpen: boolean;
   onPaste: () => void;
   onSelect: () => void;
   onLinks: () => void;
@@ -41,6 +43,15 @@ export function KeyBar(props: {
 
   return (
     <div class="keybar" onTouchStart={(e) => e.stopPropagation()}>
+      <button
+        class={`action ${props.keyboardOpen ? "active" : ""}`}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={props.onKeyboard}
+        title={props.keyboardOpen ? "Hide the keyboard" : "Show the keyboard"}
+        aria-pressed={props.keyboardOpen}
+      >
+        ⌨
+      </button>
       <button class="action" onMouseDown={(e) => e.preventDefault()} onClick={props.onPaste} title="Paste from the clipboard">
         Paste
       </button>
