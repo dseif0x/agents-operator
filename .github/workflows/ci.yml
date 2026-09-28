@@ -98,7 +98,7 @@ jobs:
         run: |
           go run github.com/norwoodj/helm-docs/cmd/helm-docs@v1.14.2 --chart-search-root=charts
           git diff --exit-code -- charts/agents-operator/README.md
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - uses: helm/chart-testing-action@v2
