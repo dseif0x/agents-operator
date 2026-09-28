@@ -88,12 +88,21 @@ kubectl -n agents-operator exec agents-operator-postgresql-0 -- \
   pg_dump -U agents_operator agents_operator > agents-operator.sql
 ```
 
-## Releases
+## Releases and versioning
 
-Tags are the release trigger. `git tag v1.2.3 && git push --tags` produces:
+The git tag is the single source of the version. `Chart.yaml` in the repository always says `0.0.0`; nothing in the tree needs to be bumped before or after tagging, and there is no version to keep in sync by hand.
+
+```sh
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+That tag produces:
 
 1. `release-images.yml`: multi-arch images `ghcr.io/dseif0x/agents-operator:1.2.3` and `ghcr.io/dseif0x/agents-operator-runner:1.2.3` (plus `latest`, `1.2`, `sha-…`), SBOM and provenance attestations, keyless cosign signatures (non-blocking), and a GitHub Release listing the digests.
-2. `release-chart.yml` (runs when the first succeeds): sets `version`/`appVersion` to `1.2.3`, packages the chart with `helm/chart-releaser-action`, attaches `agents-operator-1.2.3.tgz` to a release and updates `index.yaml` on the `gh-pages` branch.
+2. `release-chart.yml` (runs when the first succeeds): checks out the tag, rewrites `version` and `appVersion` in `Chart.yaml` to `1.2.3`, packages the chart with `helm/chart-releaser-action`, attaches `agents-operator-1.2.3.tgz` to a release and updates `index.yaml` on the `gh-pages` branch. The chart's default image tags follow `appVersion`, so chart `1.2.3` runs images `1.2.3`.
+
+Because the version is rewritten at release time, the tag can point at any commit; the value committed in `Chart.yaml` is irrelevant. Use semver for the tags: patch for fixes, minor for features, major for breaking changes to values or the API.
 
 One-time repository setup:
 

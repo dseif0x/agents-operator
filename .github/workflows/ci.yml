@@ -1,10 +1,10 @@
 name: ci
 
+# Pull requests are the gate. Tags run the release workflows. Nothing runs
+# on pushes to main: a squash-merged PR was already checked.
 on:
-  push:
-    branches-ignore: ["gh-pages"]
-    tags-ignore: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -127,31 +127,3 @@ jobs:
           ! grep -E '^(pods/exec|nodes|deployments|namespaces)' can-i.txt
           ! kubectl auth can-i list nodes --as=system:serviceaccount:agents-operator:hub-agents-operator
           ! kubectl -n kube-system auth can-i list pods --as=system:serviceaccount:agents-operator:hub-agents-operator
-
-  images:
-    name: cross-build images (no push)
-    # The arm64 build runs under QEMU and takes long, so it only runs on
-    # main, not on pull requests. Tags build and push the real images.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - name: agents-operator
-            file: docker/hub.Dockerfile
-          - name: agents-operator-runner
-            file: docker/runner.Dockerfile
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.file }}
-          platforms: linux/amd64,linux/arm64
-          push: false
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-          build-args: |
-            VERSION=${{ github.sha }}
