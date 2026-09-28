@@ -40,7 +40,7 @@ The browser only talks to the hub. The hub reaches runners by pod IP on the clus
 
 A session is one row, one PVC, one Secret and zero or one Pod, all named `agents-operator-<id>` and labelled `agents-operator.io/session=<id>`. The PVC is the identity that survives; the Pod is disposable.
 
-A session lists zero or more repositories (`repos`: url, optional branch, directory name). On first boot the runner clones each into `/workspace/<path>`; the agent starts in the first one and sees the others next to it. Later boots skip directories that are not empty, so work survives stop/start.
+A session lists zero or more repositories (`repos`: url, optional branch, directory name). On first boot the runner clones each into `/workspace/<path>`; the agent starts in `/workspace` itself, next to the generated `AGENTS.md`, with every repository one directory down. Later boots skip directories that are not empty, so work survives stop/start.
 
 On every boot the runner also writes `/workspace/AGENTS.md`: what the pod is, which repositories were cloned where, what tools and credentials (`gh`, SSH key, git identity) are available, and a few conventions. The same content is placed in each CLI's global instructions file (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md`) unless the user wrote their own, so Claude Code, Codex and OpenCode all read it without configuration. Per-repository `AGENTS.md`/`CLAUDE.md` files still apply on top.
 

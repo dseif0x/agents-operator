@@ -22,15 +22,16 @@ func TestReposAndWorkDir(t *testing.T) {
 	if err != nil || len(repos) != 2 || repos[0].Path != "app" || repos[1].Path != "lib" {
 		t.Fatalf("repos = %+v, %v", repos, err)
 	}
-	// Before the clone the first repo dir does not exist: fall back to the root.
-	if got := ws.WorkDir(); got != root {
-		t.Fatalf("WorkDir before clone = %q", got)
-	}
+	// The agent always starts in the workspace root, next to AGENTS.md,
+	// never inside a repository.
 	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := ws.WorkDir(); got != filepath.Join(root, "app") {
-		t.Fatalf("WorkDir = %q", got)
+	if got := ws.WorkDir(); got != root {
+		t.Fatalf("WorkDir = %q, want %q", got, root)
+	}
+	if got := (&Workspace{Root: filepath.Join(root, "missing"), Log: log}).WorkDir(); got != "" {
+		t.Fatalf("WorkDir for a missing root = %q", got)
 	}
 
 	// Unsafe paths are refused even if the hub sent them.
@@ -122,7 +123,7 @@ func TestAgentsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{agentsMarker, filepath.Join(root, "app"), "git@github.com:x/app.git", "branch `main`", "your working directory", filepath.Join(root, "lib"), "`gh` is installed and authenticated", "rewritten to HTTPS", "Alice <a@b.c>"} {
+	for _, want := range []string{agentsMarker, filepath.Join(root, "app"), "git@github.com:x/app.git", "branch `main`", "You start in `" + root + "`", filepath.Join(root, "lib"), "`gh` is installed and authenticated", "rewritten to HTTPS", "Alice <a@b.c>"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("AGENTS.md missing %q", want)
 		}
@@ -130,7 +131,7 @@ func TestAgentsFile(t *testing.T) {
 	if got, _ := os.ReadFile(own); string(got) != "# mine\n" {
 		t.Fatal("user's CLAUDE.md was overwritten")
 	}
-	for _, p := range []string{filepath.Join(ws.HomeDir(), ".codex", "AGENTS.md"), filepath.Join(ws.HomeDir(), ".config", "opencode", "AGENTS.md")} {
+	for _, p := range []string{filepath.Join(root, "CLAUDE.md"), filepath.Join(ws.HomeDir(), ".codex", "AGENTS.md"), filepath.Join(ws.HomeDir(), ".config", "opencode", "AGENTS.md")} {
 		if got, err := os.ReadFile(p); err != nil || string(got) != s {
 			t.Errorf("%s not generated: %v", p, err)
 		}

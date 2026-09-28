@@ -73,7 +73,7 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | --- | --- | --- |
 | `RUNNER_TOKEN` | per-session Secret | bearer token, rotated on every start |
 | `AGENT`, `AUTONOMOUS` | pod spec | which CLI to run; `claude` gets `--dangerously-skip-permissions` when true |
-| `REPOS` | pod spec | JSON list of `{url, branch, path}`; each is cloned into `/workspace/<path>` on first boot, the agent starts in the first |
+| `REPOS` | pod spec | JSON list of `{url, branch, path}`; each is cloned into `/workspace/<path>` on first boot; the agent starts in `/workspace` |
 | `AGENTS_OPERATOR_SESSION` | pod spec | session name |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL` | per-session Secret (from the user Secret) | model credentials |
 | `GIT_USER_NAME`, `GIT_USER_EMAIL` | per-session Secret | seeded into `~/.gitconfig` |

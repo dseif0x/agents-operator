@@ -67,7 +67,7 @@ type Live struct {
 type CreateRequest struct {
 	Name  string `json:"name"`
 	Agent string `json:"agent"`
-	// Repos are cloned side by side under /workspace; the agent starts in the first.
+	// Repos are cloned side by side under /workspace, where the agent starts.
 	Repos []store.Repo `json:"repos"`
 	// RepoURL and Branch are a shorthand for a single first repo.
 	RepoURL      string              `json:"repo_url"`

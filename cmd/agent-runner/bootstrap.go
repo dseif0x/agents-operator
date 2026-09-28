@@ -163,16 +163,18 @@ const agentsMarker = "<!-- agents-operator:generated -->"
 // AgentsFile is the path of the generated workspace guide.
 func (w *Workspace) AgentsFile() string { return filepath.Join(w.Root, "AGENTS.md") }
 
-// writeAgentsFile generates /workspace/AGENTS.md describing the environment
-// and the cloned repositories, then links it into each CLI's global
-// instructions file (created only when absent or previously generated):
-// Claude Code reads ~/.claude/CLAUDE.md, Codex ~/.codex/AGENTS.md and
-// OpenCode ~/.config/opencode/AGENTS.md.
+// writeAgentsFile generates /workspace/AGENTS.md (and a CLAUDE.md twin,
+// since Claude Code only reads that name) describing the environment and
+// the cloned repositories. The agent starts in /workspace, so Codex and
+// OpenCode find AGENTS.md and Claude Code finds CLAUDE.md in the working
+// directory. The same content also goes into each CLI's global
+// instructions file (created only when absent or previously generated).
 func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 	var b strings.Builder
 	b.WriteString(agentsMarker + "\n")
 	b.WriteString("# Your workspace\n\n")
 	b.WriteString("You are running inside an agents-operator session: a Kubernetes pod created for this task, with its own persistent volume mounted at `" + w.Root + "`.\n\n")
+	b.WriteString("You start in `" + w.Root + "`, which is not a git repository itself; the repositories below are subdirectories. `cd` into one before running git or project commands.\n\n")
 	b.WriteString("## Repositories\n\n")
 	if len(repos) == 0 {
 		b.WriteString("No repository was cloned. `" + w.Root + "` is an empty workspace.\n")
@@ -182,8 +184,8 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 			if r.Branch != "" {
 				line += " (branch `" + r.Branch + "`)"
 			}
-			if i == 0 {
-				line += " — your working directory"
+			if i == 0 && len(repos) > 1 {
+				line += " — primary"
 			}
 			b.WriteString(line + "\n")
 		}
@@ -215,9 +217,11 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 	if err := os.WriteFile(w.AgentsFile(), []byte(content), 0o644); err != nil {
 		return err
 	}
-	// Global instruction files: only touch ours.
+	// The CLAUDE.md twin in the working directory and the global
+	// instruction files: only touch ours.
 	home := w.HomeDir()
 	for _, p := range []string{
+		filepath.Join(w.Root, "CLAUDE.md"),
 		filepath.Join(home, ".claude", "CLAUDE.md"),
 		filepath.Join(home, ".codex", "AGENTS.md"),
 		filepath.Join(home, ".config", "opencode", "AGENTS.md"),

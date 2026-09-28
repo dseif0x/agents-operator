@@ -89,7 +89,7 @@ type Credential struct {
 }
 
 // Repo is one repository checked out into /workspace/<Path> on first boot.
-// The first repo of a session is where the agent starts.
+// The agent starts in /workspace itself, one level above every repo.
 type Repo struct {
 	URL    string `json:"url"`
 	Branch string `json:"branch,omitempty"`
