@@ -9,7 +9,39 @@ import { currentTheme, terminalTheme, type Theme } from "../theme";
 
 export interface TerminalHandle {
   send: (data: string) => void;
+  /** Send clipboard-style text as if typed (bracketed paste when the app asked for it). */
+  paste: (text: string) => void;
   focus: () => void;
+  /** The text of the screen plus scrollback, for the selectable overlay. */
+  screenText: () => string;
+  /** URLs currently visible in the buffer, newest last, de-duplicated. */
+  links: () => string[];
+  /** xterm's own selection when there is one. */
+  selection: () => string;
+}
+
+const urlRE = /https?:\/\/[^\s"'<>`)\]]+/g;
+
+/** Read the buffer as plain text; wrapped lines are joined back together. */
+function bufferText(term: XTerm): string {
+  const buf = term.buffer.active;
+  const out: string[] = [];
+  let acc = "";
+  for (let i = 0; i < buf.length; i++) {
+    const line = buf.getLine(i);
+    if (!line) continue;
+    const text = line.translateToString(true);
+    if (line.isWrapped) {
+      acc += text;
+    } else {
+      if (i > 0) out.push(acc);
+      acc = text;
+    }
+  }
+  out.push(acc);
+  // Drop trailing blank lines but keep internal spacing.
+  while (out.length && out[out.length - 1].trim() === "") out.pop();
+  return out.join("\n");
 }
 
 interface Props {
@@ -31,7 +63,16 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     send: (data: string) => {
       if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(new TextEncoder().encode(data));
     },
+    paste: (text: string) => xterm.current?.paste(text),
     focus: () => xterm.current?.focus(),
+    screenText: () => (xterm.current ? bufferText(xterm.current) : ""),
+    links: () => {
+      const text = xterm.current ? bufferText(xterm.current) : "";
+      const seen = new Set<string>();
+      for (const m of text.matchAll(urlRE)) seen.add(m[0]);
+      return [...seen];
+    },
+    selection: () => xterm.current?.getSelection() ?? "",
   }));
 
   useEffect(() => {
