@@ -56,7 +56,7 @@ func run() int {
 		return 2
 	}
 
-	ws := &Workspace{Root: *workspace, Log: log}
+	ws := &Workspace{Root: *workspace, Agent: *agent, Log: log}
 	if !*skipBoot {
 		if err := ws.Bootstrap(context.Background()); err != nil {
 			log.Error("bootstrap failed", "err", err)
@@ -64,6 +64,9 @@ func run() int {
 			*agent = runner.AgentShell
 		}
 	}
+	// Login files touched from here on were written by the CLI (a login or a
+	// token refresh), not seeded by us; /status reports those to the hub.
+	loginBaseline := time.Now()
 
 	autonomous := strings.EqualFold(os.Getenv(runner.EnvAutonomous), "true") || os.Getenv(runner.EnvAutonomous) == "1"
 	cmdFn := func() server.Command {
@@ -89,7 +92,7 @@ func run() int {
 	}
 	defer proc.Close()
 
-	srv := &server.Server{Proc: proc, Token: token, Agent: *agent, Home: ws.HomeDir(), Log: log}
+	srv := &server.Server{Proc: proc, Token: token, Agent: *agent, Home: ws.HomeDir(), LoginBaseline: loginBaseline, Log: log}
 	httpSrv := &http.Server{
 		Addr:              *listen,
 		Handler:           srv.Handler(),
@@ -170,7 +173,9 @@ func parseLevel(s string) slog.Level {
 // Workspace is the PVC layout: /workspace/home is HOME and every repo is
 // checked out into /workspace/<path>.
 type Workspace struct {
-	Root  string
+	Root string
+	// Agent is the CLI this pod runs; some first-run setup is CLI-specific.
+	Agent string
 	Log   *slog.Logger
 	repos []store.Repo
 }

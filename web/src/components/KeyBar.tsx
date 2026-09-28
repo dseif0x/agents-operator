@@ -1,10 +1,48 @@
-import { useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
+import { useRef, useState } from "preact/hooks";
+
+// TapButton acts on the touch itself. On phones a tap on a <button> moves
+// focus away from xterm's textarea, which closes the on-screen keyboard, and
+// re-focusing afterwards opens it again: a flicker on every key. Preventing
+// the default on mousedown is not enough on iOS, where the blur comes with
+// the synthetic click after touchend. So a tap is handled at touchend with
+// its default prevented (no click, no blur, no focus change); a touch that
+// moved is the bar scrolling and is ignored; clicks still work for mice.
+function TapButton(props: { onTap: () => void; class?: string; title?: string; pressed?: boolean; children: ComponentChildren }) {
+  const start = useRef<{ x: number; y: number } | null>(null);
+  return (
+    <button
+      class={props.class}
+      title={props.title}
+      aria-pressed={props.pressed}
+      tabIndex={-1}
+      onTouchStart={(e) => {
+        const t = e.touches[0];
+        start.current = t ? { x: t.clientX, y: t.clientY } : null;
+      }}
+      onTouchEnd={(e) => {
+        const s = start.current;
+        start.current = null;
+        const t = e.changedTouches[0];
+        if (!s || !t || Math.hypot(t.clientX - s.x, t.clientY - s.y) > 10) return;
+        e.preventDefault();
+        props.onTap();
+      }}
+      onTouchCancel={() => (start.current = null)}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={props.onTap}
+    >
+      {props.children}
+    </button>
+  );
+}
 
 // Sticky key bar for phones: keys the on-screen keyboard lacks. A Ctrl
-// toggle applies to the next key sent (from the bar or typed).
+// toggle applies to the next key sent (from the bar or typed). Keys are sent
+// straight to the session and never touch focus: the keyboard stays as it
+// is, and the ⌨ button is the one place that opens or closes it.
 export function KeyBar(props: {
   onKey: (seq: string) => void;
-  onFocus: () => void;
   onKeyboard: () => void;
   keyboardOpen: boolean;
   onPaste: () => void;
@@ -20,7 +58,6 @@ export function KeyBar(props: {
       setCtrl(false);
     }
     props.onKey(seq);
-    props.onFocus();
   };
 
   const keys: [string, string][] = [
@@ -43,31 +80,28 @@ export function KeyBar(props: {
 
   return (
     <div class="keybar" onTouchStart={(e) => e.stopPropagation()}>
-      <button
+      <TapButton
         class={`action ${props.keyboardOpen ? "active" : ""}`}
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={props.onKeyboard}
+        onTap={props.onKeyboard}
         title={props.keyboardOpen ? "Hide the keyboard" : "Show the keyboard"}
-        aria-pressed={props.keyboardOpen}
+        pressed={props.keyboardOpen}
       >
         ⌨
-      </button>
-      <button class="action" onMouseDown={(e) => e.preventDefault()} onClick={props.onPaste} title="Paste from the clipboard">
+      </TapButton>
+      <TapButton class="action" onTap={props.onPaste} title="Paste from the clipboard">
         Paste
-      </button>
-      <button class="action" onMouseDown={(e) => e.preventDefault()} onClick={props.onSelect} title="Select and copy screen text">
+      </TapButton>
+      <TapButton class="action" onTap={props.onSelect} title="Select and copy screen text">
         Select
-      </button>
-      <button class="action" onMouseDown={(e) => e.preventDefault()} onClick={props.onLinks} title="Links on screen">
+      </TapButton>
+      <TapButton class="action" onTap={props.onLinks} title="Links on screen">
         Links
-      </button>
-      <button class={ctrl ? "active" : ""} onClick={() => setCtrl(!ctrl)} aria-pressed={ctrl}>
+      </TapButton>
+      <TapButton class={ctrl ? "active" : ""} onTap={() => setCtrl(!ctrl)} pressed={ctrl}>
         Ctrl
-      </button>
+      </TapButton>
       {keys.map(([label, seq]) => (
-        <button onMouseDown={(e) => e.preventDefault()} onClick={() => send(seq)}>
-          {label}
-        </button>
+        <TapButton onTap={() => send(seq)}>{label}</TapButton>
       ))}
     </div>
   );

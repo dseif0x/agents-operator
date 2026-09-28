@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,6 +25,7 @@ import (
 //   - seed ~/.gitconfig from GIT_USER_NAME / GIT_USER_EMAIL
 //   - install the SSH key or HTTPS credential helper
 //   - seed saved CLI logins (AGENTS_OPERATOR_LOGIN_<KIND>) when the file is absent
+//   - answer Claude Code's first-run prompts in ~/.claude.json when credentials exist
 //   - clone every entry of REPOS into /workspace/<path> when that directory is empty
 func (w *Workspace) Bootstrap(ctx context.Context) error {
 	home := w.HomeDir()
@@ -45,6 +48,7 @@ func (w *Workspace) Bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	w.prepareClaudeConfig(repos)
 	if err := w.writeAgentsFile(repos); err != nil {
 		w.Log.Warn("cannot write AGENTS.md", "err", err)
 	}
@@ -311,6 +315,99 @@ func (w *Workspace) seedLogins() {
 			w.Log.Info("seeded saved login", "kind", kind, "file", rel)
 		}
 	}
+}
+
+// claudeAPIKeySuffix is how Claude Code remembers which ANTHROPIC_API_KEY
+// the user approved: the key's last 20 characters.
+const claudeAPIKeySuffix = 20
+
+// prepareClaudeConfig lets Claude Code start straight at its prompt. The CLI
+// decides from ~/.claude.json whether to run onboarding (theme, login),
+// whether to ask before using ANTHROPIC_API_KEY from the environment, and
+// whether the working directory is trusted. In a session pod the user has
+// already chosen the credentials and the repositories, so those prompts are
+// answered here: keys that exist are never changed, so a seeded .claude.json
+// keeps its account state, and onboarding is only marked complete when
+// there is something to sign in with (a seeded login, CLAUDE_CODE_OAUTH_TOKEN
+// or ANTHROPIC_API_KEY). Without credentials the CLI's own login flow is the
+// right first screen.
+func (w *Workspace) prepareClaudeConfig(repos []store.Repo) {
+	if w.Agent != runner.AgentClaude {
+		return
+	}
+	path := filepath.Join(w.HomeDir(), ".claude.json")
+	cfg := map[string]any{}
+	raw, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber() // keep timestamps and counters exactly as they were
+		if err := dec.Decode(&cfg); err != nil || cfg == nil {
+			w.Log.Warn("~/.claude.json is not a JSON object, leaving it alone", "err", err)
+			return
+		}
+	case os.IsNotExist(err):
+		cfg["theme"] = "dark"
+	default:
+		w.Log.Warn("cannot read ~/.claude.json", "err", err)
+		return
+	}
+	changed := false
+	setDefault := func(m map[string]any, key string, v any) {
+		if _, ok := m[key]; !ok {
+			m[key] = v
+			changed = true
+		}
+	}
+
+	_, statErr := os.Stat(filepath.Join(w.HomeDir(), runner.LoginFile[runner.LoginClaude]))
+	haveAuth := statErr == nil || os.Getenv(runner.EnvClaudeOAuthToken) != "" || os.Getenv(runner.EnvAnthropicAPIKey) != ""
+	if haveAuth {
+		setDefault(cfg, "hasCompletedOnboarding", true)
+	}
+	if key := os.Getenv(runner.EnvAnthropicAPIKey); len(key) >= claudeAPIKeySuffix {
+		resp, _ := cfg["customApiKeyResponses"].(map[string]any)
+		if resp == nil {
+			resp = map[string]any{"approved": []any{}, "rejected": []any{}}
+		}
+		approved, _ := resp["approved"].([]any)
+		suffix := key[len(key)-claudeAPIKeySuffix:]
+		if !slices.Contains(approved, any(suffix)) {
+			resp["approved"] = append(approved, suffix)
+			cfg["customApiKeyResponses"] = resp
+			changed = true
+		}
+	}
+	projects, _ := cfg["projects"].(map[string]any)
+	if projects == nil {
+		projects = map[string]any{}
+	}
+	dirs := []string{w.Root}
+	for _, r := range repos {
+		dirs = append(dirs, filepath.Join(w.Root, r.Path))
+	}
+	for _, d := range dirs {
+		p, _ := projects[d].(map[string]any)
+		if p == nil {
+			p = map[string]any{}
+		}
+		setDefault(p, "hasTrustDialogAccepted", true)
+		projects[d] = p
+	}
+	cfg["projects"] = projects
+	if !changed {
+		return
+	}
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		w.Log.Warn("cannot encode ~/.claude.json", "err", err)
+		return
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		w.Log.Warn("cannot write ~/.claude.json", "err", err)
+		return
+	}
+	w.Log.Info("prepared Claude Code config", "onboarding_done", haveAuth, "trusted_dirs", len(dirs))
 }
 
 func (w *Workspace) clone(ctx context.Context, url, branch, dst string) error {

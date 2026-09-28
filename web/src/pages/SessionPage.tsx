@@ -209,7 +209,6 @@ export function SessionPage({ id }: { id: string }) {
       {canAttach && (
         <KeyBar
           onKey={(seq) => term.current?.send(seq)}
-          onFocus={() => term.current?.focus()}
           onKeyboard={() => term.current?.toggleKeyboard()}
           keyboardOpen={kbd}
           onPaste={pasteFromClipboard}

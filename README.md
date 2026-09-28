@@ -29,7 +29,7 @@ helm install agents-operator agents-operator/agents-operator -n agents-operator 
   --set ingress.host=agents-operator.example.com
 ```
 
-The NOTES print how to read the generated admin password. Set your model credentials on the account page (API key mode), or log in with the CLI inside a session and press *Save login* (subscription mode). Add a GitHub token there too and agents get `gh` plus HTTPS access to github.com for PRs, checks and Actions runs.
+The NOTES print how to read the generated admin password. Set your model credentials on the account page: an API key, or for a Claude subscription the token printed by `claude setup-token` (run it inside any session; the token never expires between sessions). Logging in with the CLI inside a session and pressing *Save login* works too, and the hub keeps that copy current as the CLI rotates its tokens. Add a GitHub token there too and agents get `gh` plus HTTPS access to github.com for PRs, checks and Actions runs.
 
 ## Security model
 

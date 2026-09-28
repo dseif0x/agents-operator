@@ -27,7 +27,11 @@ type Server struct {
 	Token string
 	Agent string
 	Home  string
-	Log   *slog.Logger
+	// LoginBaseline separates login files seeded at boot from ones the CLI
+	// wrote itself: only a credential file modified after this instant is
+	// reported in /status as login_updated_at.
+	LoginBaseline time.Time
+	Log           *slog.Logger
 
 	clients atomic.Int64
 }
@@ -60,8 +64,25 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	st := s.Proc.Status(s.Agent, int(s.clients.Load()))
+	if t := s.loginModTime(); t.After(s.LoginBaseline) {
+		st.LoginUpdatedAt = &t
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(st)
+}
+
+// loginModTime is the modification time of the agent CLI's credential file,
+// or zero when the agent has none or it does not exist.
+func (s *Server) loginModTime() time.Time {
+	kind := runner.LoginKindForAgent(s.Agent)
+	if kind == "" {
+		return time.Time{}
+	}
+	fi, err := os.Stat(filepath.Join(s.Home, runner.LoginFile[kind]))
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
 }
 
 func (s *Server) scrollback(w http.ResponseWriter, _ *http.Request) {
