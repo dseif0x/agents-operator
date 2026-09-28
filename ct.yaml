@@ -1,0 +1,8 @@
+# chart-testing configuration (ct lint / ct install)
+chart-dirs:
+  - charts
+# The version is set from the git tag at release time.
+check-version-increment: false
+validate-maintainers: false
+helm-extra-args: --timeout 600s
+target-branch: main

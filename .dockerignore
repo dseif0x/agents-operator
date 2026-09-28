@@ -1,0 +1,11 @@
+.git
+.github
+bin
+dist
+web/node_modules
+web/dist
+internal/ui/dist
+charts/agenthub/charts
+hack/dev.env
+*.test
+coverage.out

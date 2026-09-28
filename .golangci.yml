@@ -1,0 +1,58 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gocritic
+    - gosec
+    - misspell
+    - noctx
+    - revive
+    - unconvert
+    - unparam
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*github.com/coder/websocket.Conn).CloseNow
+    gosec:
+      excludes:
+        - G101 # credential *names* (env var and kind constants), not values
+        - G115 # integer overflow conversions on PTY sizes are bounds-checked
+        - G124 # cookies do set HttpOnly/Secure/SameSite; the checker misses struct literals
+        - G204 # launching the agent CLI from the command map is the runner's job
+        - G301 # HOME and repo dirs are 0755 on purpose: the agent owns them
+        - G302 # .ssh is chmod 0700, stricter than the checker's 0600-for-files rule expects
+        - G306 # ~/.gitconfig is 0644 on purpose; it holds no secrets
+        - G404 # math/rand is not used for security
+        - G702 # git clone args are validated by the hub before they reach the runner
+        - G703 # paths are built from constants under HOME
+        - G705 # JSON responses carry Content-Type: application/json and are never rendered as HTML
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - noctx
+          - bodyclose
+          - errorlint
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

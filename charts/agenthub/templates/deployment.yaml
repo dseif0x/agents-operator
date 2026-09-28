@@ -1,0 +1,151 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agenthub.fullname" . }}
+  labels:
+    {{- include "agenthub.labels" . | nindent 4 }}
+spec:
+  # One replica only: the reconciler and informers must not run twice.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "agenthub.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agenthub.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ toJson .Values | sha256sum | trunc 32 }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "agenthub.serviceAccountName" . }}
+      automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: hub
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: AGENTHUB_LISTEN_ADDR
+              value: ":8080"
+            - name: AGENTHUB_PUBLIC_URL
+              value: {{ .Values.publicUrl | quote }}
+            - name: AGENTHUB_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: AGENTHUB_RUNNER_IMAGE
+              value: {{ .Values.runner.image.repository | quote }}
+            - name: AGENTHUB_RUNNER_IMAGE_TAG
+              value: {{ .Values.runner.image.tag | default .Chart.AppVersion | quote }}
+            - name: AGENTHUB_RUNNER_IMAGE_PULL_POLICY
+              value: {{ .Values.runner.image.pullPolicy | quote }}
+            - name: AGENTHUB_DEFAULT_STORAGE_CLASS
+              value: {{ .Values.runner.storageClass | quote }}
+            - name: AGENTHUB_DEFAULT_PVC_SIZE
+              value: {{ .Values.runner.defaultSize | quote }}
+            - name: AGENTHUB_DEFAULT_RESOURCES
+              value: {{ .Values.runner.resources | toJson | quote }}
+            - name: AGENTHUB_RUNNER_NODE_SELECTOR
+              value: {{ .Values.runner.nodeSelector | toJson | quote }}
+            - name: AGENTHUB_RUNNER_TOLERATIONS
+              value: {{ .Values.runner.tolerations | toJson | quote }}
+            - name: AGENTHUB_RUNNER_RUNTIME_CLASS
+              value: {{ .Values.runner.runtimeClassName | quote }}
+            - name: AGENTHUB_RUNNER_EXTRA_ENV
+              value: {{ .Values.runner.extraEnv | toJson | quote }}
+            - name: AGENTHUB_IDLE_STOP_AFTER
+              value: {{ .Values.runner.idleStopAfter | quote }}
+            - name: AGENTHUB_ALLOWED_HOSTS
+              value: {{ join "," .Values.allowedHosts | quote }}
+            - name: AGENTHUB_LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: AGENTHUB_ADMIN_USERNAME
+              value: {{ .Values.auth.adminUsername | quote }}
+            - name: AGENTHUB_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agenthub.authSecretName" . }}
+                  key: cookieSecret
+            - name: AGENTHUB_ADMIN_PASSWORD_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agenthub.authSecretName" . }}
+                  key: adminPasswordHash
+                  optional: true
+            - name: AGENTHUB_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agenthub.authSecretName" . }}
+                  key: adminPassword
+                  optional: true
+            {{- if .Values.postgresql.enabled }}
+            - name: AGENTHUB_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.auth.existingSecret | default (include "agenthub.postgresqlHost" .) }}
+                  key: {{ if .Values.postgresql.auth.existingSecret }}{{ .Values.postgresql.auth.secretKeys.userPasswordKey | default "password" }}{{ else }}password{{ end }}
+            - name: AGENTHUB_DATABASE_URL
+              value: "postgres://{{ .Values.postgresql.auth.username }}:$(AGENTHUB_DB_PASSWORD)@{{ include "agenthub.postgresqlHost" . }}:5432/{{ .Values.postgresql.auth.database }}?sslmode=disable"
+            {{- else if .Values.database.existingSecret }}
+            - name: AGENTHUB_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret }}
+                  key: {{ .Values.database.existingSecretKey }}
+            {{- else }}
+            - name: AGENTHUB_DATABASE_URL
+              value: {{ required "database.url is required when postgresql.enabled=false" .Values.database.url | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

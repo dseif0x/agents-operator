@@ -1,0 +1,155 @@
+# Default values for agenthub.
+# Only one replica is supported: the reconciler and the informers must not
+# run twice, and the Deployment uses strategy Recreate for that reason.
+
+image:
+  # -- Hub image repository
+  repository: ghcr.io/dseif0x/agenthub
+  # -- Hub image tag; defaults to .Chart.AppVersion
+  tag: ""
+  # -- Hub image pull policy
+  pullPolicy: IfNotPresent
+
+# -- Image pull secrets for both the hub and session pods
+imagePullSecrets: []
+
+# -- Override the chart name
+nameOverride: ""
+# -- Override the full release name
+fullnameOverride: ""
+
+runner:
+  image:
+    # -- Runner image repository (session pods)
+    repository: ghcr.io/dseif0x/agenthub-runner
+    # -- Runner image tag; defaults to .Chart.AppVersion
+    tag: ""
+    # -- Runner image pull policy
+    pullPolicy: IfNotPresent
+  # -- StorageClass for session PVCs (empty = cluster default)
+  storageClass: nfs-fast
+  # -- Default PVC size for new sessions
+  defaultSize: 20Gi
+  # -- Default (and maximum) resources for session pods; a session can only lower them
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  # -- Node selector applied to every session pod
+  nodeSelector: {}
+  # -- Tolerations applied to every session pod
+  tolerations: []
+  # -- runtimeClassName for session pods (gVisor, Kata); empty = default runtime
+  runtimeClassName: ""
+  # -- Extra non-secret env injected into every session pod
+  extraEnv: {}
+  # -- Stop running sessions after this long without PTY output (0 = never)
+  idleStopAfter: 0h
+  networkPolicy:
+    # -- Create a default-deny NetworkPolicy for session pods
+    enabled: true
+    # -- Extra allowed egress CIDRs (all ports), e.g. an in-cluster LLM proxy
+    egressCIDRs: []
+    # -- CIDRs excluded from the "443/22 anywhere" rules: cluster pod and service ranges (k3s defaults)
+    blockedCIDRs:
+      - 10.42.0.0/16
+      - 10.43.0.0/16
+    # -- Extra peers allowed to egress to on any port (raw NetworkPolicy "to" entries)
+    extraEgress: []
+
+auth:
+  # -- argon2id hash for the admin user (`agenthub hash-password`); if empty a random password is generated
+  adminPasswordHash: ""
+  # -- Admin username
+  adminUsername: admin
+  # -- 32 bytes hex used to sign session cookies; generated if empty
+  cookieSecret: ""
+  # -- Existing Secret with keys `cookieSecret` and `adminPasswordHash` (or `adminPassword`); skips generation
+  existingSecret: ""
+
+# -- Public URL of the hub; cookies, Origin checks and the host allowlist derive from it
+publicUrl: https://agenthub.homelab.seifert.id
+# -- Extra allowed Host header values (the publicUrl host is always allowed)
+allowedHosts: []
+
+ingress:
+  # -- Create an Ingress
+  enabled: true
+  # -- Ingress class
+  className: traefik
+  # -- Ingress annotations
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-dns
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  # -- Ingress host
+  host: agenthub.homelab.seifert.id
+  # -- Terminate TLS with a cert-manager issued certificate
+  tls: true
+  # -- TLS secret name; defaults to <fullname>-tls
+  tlsSecretName: ""
+
+postgresql:
+  # -- Install the Bitnami PostgreSQL subchart
+  enabled: true
+  auth:
+    database: agenthub
+    username: agenthub
+  primary:
+    persistence:
+      size: 5Gi
+
+database:
+  # -- Database URL used only when postgresql.enabled=false
+  url: ""
+  # -- Existing Secret holding the database URL (alternative to database.url)
+  existingSecret: ""
+  # -- Key in database.existingSecret
+  existingSecretKey: url
+
+metrics:
+  serviceMonitor:
+    # -- Create a ServiceMonitor for kube-prometheus-stack
+    enabled: false
+    # -- Extra labels for the ServiceMonitor (e.g. release: kube-prometheus-stack)
+    labels: {}
+    # -- Scrape interval
+    interval: 30s
+
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- Service port
+  port: 80
+
+# -- Hub resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# -- Hub node selector
+nodeSelector: {}
+# -- Hub tolerations
+tolerations: []
+# -- Hub affinity
+affinity: {}
+# -- Extra pod annotations for the hub
+podAnnotations: {}
+# -- Extra env for the hub container (list of EnvVar)
+extraEnv: []
+# -- Hub log level: debug, info, warn, error
+logLevel: info
+
+serviceAccount:
+  # -- Create the ServiceAccount
+  create: true
+  # -- ServiceAccount name; defaults to the fullname
+  name: ""
+  # -- ServiceAccount annotations
+  annotations: {}

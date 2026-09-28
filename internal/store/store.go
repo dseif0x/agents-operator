@@ -1,0 +1,188 @@
+// Package store is the Postgres access layer. One interface per aggregate,
+// a Postgres implementation, and an in-memory implementation for tests.
+package store
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"time"
+
+	"github.com/dseif0x/agents-operator/internal/config"
+)
+
+// ErrNotFound is returned when a row does not exist.
+var ErrNotFound = errors.New("not found")
+
+// ErrConflict is returned on unique violations.
+var ErrConflict = errors.New("conflict")
+
+// Session states. See docs/ARCHITECTURE.md for the transitions.
+const (
+	StateCreating = "creating"
+	StateRunning  = "running"
+	StateStopping = "stopping"
+	StateStopped  = "stopped"
+	StateFailed   = "failed"
+	StateDeleting = "deleting"
+)
+
+// States lists every state, for validation and metrics.
+var States = []string{StateCreating, StateRunning, StateStopping, StateStopped, StateFailed, StateDeleting}
+
+// User is a login account.
+type User struct {
+	ID           string
+	Username     string
+	PasswordHash string
+	CreatedAt    time.Time
+	Disabled     bool
+}
+
+// Credential kinds. Values live in the per-user Kubernetes Secret, never
+// here; the row only records which kinds are set.
+const (
+	CredAnthropicAPIKey  = "anthropic_api_key"
+	CredAnthropicBaseURL = "anthropic_base_url"
+	CredOpenAIAPIKey     = "openai_api_key"
+	CredGitSSHKey        = "git_ssh_key"
+	CredGitHTTPSToken    = "git_https_token"
+	CredGitUserName      = "git_user_name"
+	CredGitUserEmail     = "git_user_email"
+	CredClaudeLogin      = "claude_login"
+	CredCodexLogin       = "codex_login"
+)
+
+// CredentialKinds lists every accepted kind.
+var CredentialKinds = []string{
+	CredAnthropicAPIKey, CredAnthropicBaseURL, CredOpenAIAPIKey,
+	CredGitSSHKey, CredGitHTTPSToken, CredGitUserName, CredGitUserEmail,
+	CredClaudeLogin, CredCodexLogin,
+}
+
+// SecretKinds are the credential kinds whose values must never be echoed
+// back by the API. The others (base URL, git identity) are plain settings.
+var SecretKinds = map[string]bool{
+	CredAnthropicAPIKey: true, CredOpenAIAPIKey: true, CredGitSSHKey: true,
+	CredGitHTTPSToken: true, CredClaudeLogin: true, CredCodexLogin: true,
+}
+
+// ValidCredentialKind reports whether kind is known.
+func ValidCredentialKind(kind string) bool {
+	for _, k := range CredentialKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// Credential records that a user has a value of a given kind stored in
+// their Kubernetes Secret under SecretRef.
+type Credential struct {
+	UserID    string
+	Kind      string
+	SecretRef string
+	UpdatedAt time.Time
+}
+
+// Session is one row of the sessions table.
+type Session struct {
+	ID             string
+	OwnerID        string
+	Name           string
+	Agent          string
+	RepoURL        string
+	Branch         string
+	ImageTag       string
+	PVCSize        string
+	StorageClass   string
+	Resources      config.Resources
+	NodeSelector   map[string]string
+	Tolerations    []config.Toleration
+	Env            map[string]string
+	Autonomous     bool
+	State          string
+	StateReason    string
+	Generation     int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastAttachedAt *time.Time
+	LastOutputAt   *time.Time
+	DeletedAt      *time.Time
+}
+
+// Event is one row of session_events.
+type Event struct {
+	ID        int64
+	SessionID string
+	At        time.Time
+	Kind      string
+	Message   string
+}
+
+// Users is the user aggregate.
+type Users interface {
+	Create(ctx context.Context, u *User) error
+	GetByID(ctx context.Context, id string) (*User, error)
+	GetByUsername(ctx context.Context, username string) (*User, error)
+	// UpsertPassword creates the user or replaces its password hash.
+	UpsertPassword(ctx context.Context, username, passwordHash string) (*User, error)
+}
+
+// Sessions is the session aggregate.
+type Sessions interface {
+	Create(ctx context.Context, s *Session) error
+	Get(ctx context.Context, id string) (*Session, error)
+	List(ctx context.Context, ownerID string) ([]*Session, error)
+	ListAll(ctx context.Context) ([]*Session, error)
+	// SetState updates state and reason. It returns the updated row.
+	SetState(ctx context.Context, id, state, reason string) (*Session, error)
+	// Bump increments generation and sets the state, in one statement.
+	Bump(ctx context.Context, id, state string) (*Session, error)
+	TouchAttached(ctx context.Context, id string, at time.Time) error
+	TouchOutput(ctx context.Context, id string, at time.Time) error
+	Delete(ctx context.Context, id string) error
+	CountByState(ctx context.Context) (map[string]int, error)
+}
+
+// Credentials is the user_credentials aggregate.
+type Credentials interface {
+	Upsert(ctx context.Context, c *Credential) error
+	Delete(ctx context.Context, userID, kind string) error
+	List(ctx context.Context, userID string) ([]*Credential, error)
+}
+
+// Events is the session_events aggregate.
+type Events interface {
+	Add(ctx context.Context, sessionID, kind, message string) error
+	List(ctx context.Context, sessionID string, limit int) ([]*Event, error)
+	// Prune keeps only the newest keep events for the session.
+	Prune(ctx context.Context, sessionID string, keep int) error
+}
+
+// Store bundles the aggregates.
+type Store interface {
+	Users() Users
+	Sessions() Sessions
+	Credentials() Credentials
+	Events() Events
+	Ping(ctx context.Context) error
+	Close()
+}
+
+// EventsKeep is how many events are retained per session.
+const EventsKeep = 200
+
+// NewID returns a random UUIDv4 string.
+func NewID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	h := hex.EncodeToString(b[:])
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+}

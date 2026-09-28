@@ -1,0 +1,16 @@
+# binaries
+/bin/
+/dist/
+# frontend
+web/node_modules/
+web/dist/
+internal/ui/dist/
+# helm
+charts/agenthub/charts/
+charts/agenthub/Chart.lock
+# misc
+*.test
+coverage.out
+.env
+.DS_Store
+hack/dev.env

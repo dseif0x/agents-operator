@@ -1,0 +1,56 @@
+{{- if .Values.runner.networkPolicy.enabled }}
+# Default-deny policy for session pods. They may talk to DNS, to 443 and 22
+# anywhere outside the cluster ranges, and to the extra CIDRs listed in
+# values. Only the hub may reach them, on the runner port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agenthub.fullname" . }}-sessions
+  labels:
+    {{- include "agenthub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: agenthub.io/session
+        operator: Exists
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "agenthub.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 7681
+  egress:
+    # DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # HTTPS and git over SSH, anywhere except cluster-internal ranges.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            {{- with .Values.runner.networkPolicy.blockedCIDRs }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 22
+    {{- range .Values.runner.networkPolicy.egressCIDRs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+    {{- end }}
+    {{- with .Values.runner.networkPolicy.extraEgress }}
+    - to:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+{{- end }}

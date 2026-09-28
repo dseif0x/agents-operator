@@ -1,0 +1,116 @@
+suite: deployment
+templates:
+  - deployment.yaml
+tests:
+  - it: runs a single replica with Recreate and a hardened pod
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: defaults image tags to appVersion
+    chart:
+      appVersion: 1.2.3
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/dseif0x/agenthub:1.2.3
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTHUB_RUNNER_IMAGE_TAG
+            value: "1.2.3"
+
+  - it: builds the database url from the bundled postgresql secret
+    release:
+      name: hub
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTHUB_DATABASE_URL
+            value: "postgres://agenthub:$(AGENTHUB_DB_PASSWORD)@hub-postgresql:5432/agenthub?sslmode=disable"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTHUB_DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: hub-postgresql
+                key: password
+
+  - it: uses database.url when postgresql is disabled
+    set:
+      postgresql.enabled: false
+      database.url: postgres://u:p@db.example:5432/agenthub
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTHUB_DATABASE_URL
+            value: postgres://u:p@db.example:5432/agenthub
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTHUB_DB_PASSWORD
+          any: true
+
+  - it: fails when postgresql is disabled and no database url is given
+    set:
+      postgresql.enabled: false
+    asserts:
+      - failedTemplate:
+          errorPattern: database.url is required
+
+  - it: reads auth values from an existing secret
+    set:
+      auth.existingSecret: my-sealed-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTHUB_COOKIE_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: my-sealed-secret
+                key: cookieSecret
+
+  - it: passes runner defaults through as JSON
+    set:
+      runner.nodeSelector:
+        kubernetes.io/arch: arm64
+      runner.idleStopAfter: 4h
+      runner.runtimeClassName: gvisor
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTHUB_RUNNER_NODE_SELECTOR
+            value: '{"kubernetes.io/arch":"arm64"}'
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTHUB_IDLE_STOP_AFTER
+            value: "4h"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTHUB_RUNNER_RUNTIME_CLASS
+            value: gvisor

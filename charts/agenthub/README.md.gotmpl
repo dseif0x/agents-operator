@@ -1,0 +1,39 @@
+{{ template "chart.header" . }}
+
+{{ template "chart.deprecationWarning" . }}
+
+{{ template "chart.badgesSection" . }}
+
+{{ template "chart.description" . }}
+
+The hub runs as a single-replica Deployment (strategy `Recreate`; do not scale it) and creates one Pod, one PersistentVolumeClaim and one Secret per agent session in its own namespace. PostgreSQL comes from the Bitnami subchart by default.
+
+## Install
+
+```sh
+helm repo add agenthub https://dseif0x.github.io/agents-operator/
+helm install agenthub agenthub/agenthub -n agenthub --create-namespace \
+  --set publicUrl=https://agenthub.example.com \
+  --set ingress.host=agenthub.example.com \
+  --set auth.adminPasswordHash="$(AGENTHUB_PASSWORD=... agenthub hash-password)"
+```
+
+With Flux, add the repo as a `HelmRepository` and reference it from a `HelmRelease`. Secrets (`auth.existingSecret`, `postgresql.auth.existingSecret`, `database.existingSecret`) can be SealedSecrets.
+
+The `auth.existingSecret` must contain `cookieSecret` (32+ bytes hex) and either `adminPasswordHash` (argon2id) or `adminPassword` (plaintext, hashed at startup).
+
+## Session pod security
+
+Every session pod runs non-root (UID 1000), with `readOnlyRootFilesystem`, all capabilities dropped, `seccompProfile: RuntimeDefault`, no service account token, no host namespaces and no host paths. None of this is configurable. `runner.networkPolicy` adds a default-deny policy: DNS, 443 and 22 outward (minus `blockedCIDRs`), plus `egressCIDRs`; inbound only from the hub on 7681.
+
+{{ template "chart.requirementsSection" . }}
+
+{{ template "chart.valuesSection" . }}
+
+## Backup
+
+```sh
+kubectl -n agenthub exec agenthub-postgresql-0 -- env PGPASSWORD="$(kubectl -n agenthub get secret agenthub-postgresql -o jsonpath='{.data.password}' | base64 -d)" pg_dump -U agenthub agenthub > agenthub.sql
+```
+
+{{ template "helm-docs.versionFooter" . }}

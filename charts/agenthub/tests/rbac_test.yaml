@@ -1,0 +1,69 @@
+suite: rbac
+templates:
+  - rbac.yaml
+tests:
+  - it: creates a namespace-scoped Role with exactly the required verbs
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: Role
+      - lengthEqual:
+          path: rules
+          count: 5
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods"]
+            verbs: ["get", "list", "watch", "create", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["pods/log"]
+            verbs: ["get"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["persistentvolumeclaims"]
+            verbs: ["get", "list", "watch", "create", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["events"]
+            verbs: ["create"]
+      - notMatchRegex:
+          path: rules[0].resources[0]
+          pattern: exec
+
+  - it: binds the Role to the chart ServiceAccount
+    documentIndex: 2
+    release:
+      name: hub
+      namespace: agents
+    asserts:
+      - isKind:
+          of: RoleBinding
+      - equal:
+          path: roleRef.kind
+          value: Role
+      - equal:
+          path: subjects[0].name
+          value: hub-agenthub
+      - equal:
+          path: subjects[0].namespace
+          value: agents
+
+  - it: creates the ServiceAccount by default
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ServiceAccount

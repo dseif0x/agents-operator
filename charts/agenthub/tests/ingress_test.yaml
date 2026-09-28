@@ -1,0 +1,51 @@
+suite: ingress and service
+templates:
+  - ingress.yaml
+  - service.yaml
+  - servicemonitor.yaml
+tests:
+  - it: renders a traefik ingress with cert-manager TLS by default
+    template: ingress.yaml
+    release:
+      name: hub
+    asserts:
+      - isKind:
+          of: Ingress
+      - equal:
+          path: spec.ingressClassName
+          value: traefik
+      - equal:
+          path: metadata.annotations["cert-manager.io/cluster-issuer"]
+          value: letsencrypt-dns
+      - equal:
+          path: spec.tls[0].secretName
+          value: hub-agenthub-tls
+      - equal:
+          path: spec.rules[0].host
+          value: agenthub.homelab.seifert.id
+
+  - it: exposes port 80 to the http container port
+    template: service.yaml
+    asserts:
+      - equal:
+          path: spec.ports[0].port
+          value: 80
+      - equal:
+          path: spec.ports[0].targetPort
+          value: http
+
+  - it: renders a ServiceMonitor only when enabled
+    template: servicemonitor.yaml
+    set:
+      metrics.serviceMonitor.enabled: true
+      metrics.serviceMonitor.labels:
+        release: kube-prometheus-stack
+    asserts:
+      - isKind:
+          of: ServiceMonitor
+      - equal:
+          path: metadata.labels.release
+          value: kube-prometheus-stack
+      - equal:
+          path: spec.endpoints[0].path
+          value: /metrics

@@ -1,0 +1,51 @@
+name: release-chart
+
+# Runs after release-images succeeds for a tag, so the chart never points
+# at images that do not exist yet. Can also be run by hand for a tag.
+on:
+  workflow_run:
+    workflows: ["release-images"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release the chart for (e.g. v1.2.3)"
+        required: true
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  chart:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.event.workflow_run.head_branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+      - name: git identity
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: set chart version and appVersion from the tag
+        run: |
+          v="${TAG#v}"
+          yq -i ".version = \"$v\" | .appVersion = \"$v\"" charts/agenthub/Chart.yaml
+          cat charts/agenthub/Chart.yaml
+      - run: helm dependency update charts/agenthub
+      - run: helm lint charts/agenthub --strict
+      - uses: helm/chart-releaser-action@v1
+        with:
+          charts_dir: charts
+          pages_branch: gh-pages
+          skip_existing: true
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CR_RELEASE_NAME_TEMPLATE: "{{ .Name }}-{{ .Version }}"

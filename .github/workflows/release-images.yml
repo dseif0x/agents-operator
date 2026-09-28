@@ -1,0 +1,97 @@
+name: release-images
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: build and push ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: agenthub
+            file: docker/hub.Dockerfile
+          - name: agenthub-runner
+            file: docker/runner.Dockerfile
+    outputs:
+      digest-agenthub: ${{ steps.digest.outputs.agenthub }}
+      digest-agenthub-runner: ${{ steps.digest.outputs.agenthub-runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+            type=sha
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+      - id: digest
+        run: echo "${{ matrix.name }}=${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+      - uses: sigstore/cosign-installer@v3
+      - name: sign (keyless, non-blocking)
+        continue-on-error: true
+        env:
+          COSIGN_YES: "true"
+        run: cosign sign "${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+
+  release:
+    name: github release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: release notes
+        run: |
+          {
+            echo "## Images"
+            echo
+            echo '```'
+            echo "ghcr.io/${{ github.repository_owner }}/agenthub@${{ needs.build.outputs.digest-agenthub }}"
+            echo "ghcr.io/${{ github.repository_owner }}/agenthub-runner@${{ needs.build.outputs.digest-agenthub-runner }}"
+            echo '```'
+            echo
+            echo "Both images are multi-arch (linux/amd64, linux/arm64), carry SBOM and provenance attestations, and are signed with cosign (keyless)."
+            echo
+            echo "## Chart"
+            echo
+            echo "The Helm chart \`agenthub-${GITHUB_REF_NAME#v}\` is published by the release-chart workflow to https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          } > notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+          generate_release_notes: true
