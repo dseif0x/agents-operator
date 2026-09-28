@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"io"
 	"log/slog"
 	"os"
@@ -142,6 +143,41 @@ func TestAgentsFile(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(filepath.Join(ws.HomeDir(), ".codex", "AGENTS.md")); !strings.Contains(string(got), "No repository was cloned") {
 		t.Fatal("generated file not refreshed")
+	}
+}
+
+func TestSeedLogins(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	bundle, _ := runner.EncodeLoginBundle(runner.LoginBundle{Files: map[string][]byte{
+		".claude/.credentials.json": []byte(`{"tok":1}`),
+		".claude.json":              []byte(`{"hasCompletedOnboarding":true}`),
+		"../../etc/passwd":          []byte("nope"), // never written: not a known file
+	}})
+	t.Setenv(runner.EnvSeedPrefix+"CLAUDE_LOGIN", base64.StdEncoding.EncodeToString(bundle))
+	// Legacy raw value for codex.
+	t.Setenv(runner.EnvSeedPrefix+"CODEX_LOGIN", base64.StdEncoding.EncodeToString([]byte(`{"codex":1}`)))
+	ws.seedLogins()
+	for rel, want := range map[string]string{
+		".claude/.credentials.json": `{"tok":1}`,
+		".claude.json":              `{"hasCompletedOnboarding":true}`,
+		".codex/auth.json":          `{"codex":1}`,
+	} {
+		got, err := os.ReadFile(filepath.Join(ws.HomeDir(), rel))
+		if err != nil || string(got) != want {
+			t.Errorf("%s = %q, %v", rel, got, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "etc", "passwd")); err == nil {
+		t.Fatal("unknown bundle path was written")
+	}
+	// A later boot keeps the session's own (possibly refreshed) files.
+	if err := os.WriteFile(filepath.Join(ws.HomeDir(), ".claude", ".credentials.json"), []byte(`{"tok":"newer"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws.seedLogins()
+	if got, _ := os.ReadFile(filepath.Join(ws.HomeDir(), ".claude", ".credentials.json")); string(got) != `{"tok":"newer"}` {
+		t.Fatal("seed overwrote an existing file")
 	}
 }
 

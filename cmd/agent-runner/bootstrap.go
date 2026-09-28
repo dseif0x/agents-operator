@@ -279,14 +279,10 @@ func (w *Workspace) installGitCredentials() error {
 
 // seedLogins writes saved CLI credential files when they do not exist yet.
 func (w *Workspace) seedLogins() {
-	for kind, rel := range runner.LoginFile {
+	for kind, allowed := range runner.LoginFiles {
 		envKey := runner.EnvSeedPrefix + strings.ToUpper(kind)
 		v := os.Getenv(envKey)
 		if v == "" {
-			continue
-		}
-		dst := filepath.Join(w.HomeDir(), rel)
-		if _, err := os.Stat(dst); err == nil {
 			continue
 		}
 		data, err := base64.StdEncoding.DecodeString(v)
@@ -294,15 +290,29 @@ func (w *Workspace) seedLogins() {
 			w.Log.Warn("bad saved login, ignoring", "kind", kind)
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-			w.Log.Warn("cannot create login dir", "kind", kind, "err", err)
-			continue
+		bundle := runner.DecodeLoginBundle(kind, data)
+		// Only the known files of this kind may be written; the bundle
+		// comes from the hub, but a compromised hub must not get a
+		// write-anywhere primitive.
+		for _, rel := range allowed {
+			content, ok := bundle.Files[rel]
+			if !ok {
+				continue
+			}
+			dst := filepath.Join(w.HomeDir(), rel)
+			if _, err := os.Stat(dst); err == nil {
+				continue // the volume already has this session's own copy
+			}
+			if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+				w.Log.Warn("cannot create login dir", "kind", kind, "err", err)
+				continue
+			}
+			if err := os.WriteFile(dst, content, 0o600); err != nil {
+				w.Log.Warn("cannot write login", "kind", kind, "file", rel, "err", err)
+				continue
+			}
+			w.Log.Info("seeded saved login", "kind", kind, "file", rel)
 		}
-		if err := os.WriteFile(dst, data, 0o600); err != nil {
-			w.Log.Warn("cannot write login", "kind", kind, "err", err)
-			continue
-		}
-		w.Log.Info("seeded saved login", "kind", kind)
 	}
 }
 

@@ -195,17 +195,29 @@ func (s *Server) handleControl(ctx context.Context, c *websocket.Conn, data []by
 			_ = writeControl(ctx, c, runner.Control{T: runner.MsgError, Message: err.Error()})
 		}
 	case runner.MsgExportLogin:
-		rel, ok := runner.LoginFile[msg.Kind]
+		files, ok := runner.LoginFiles[msg.Kind]
 		if !ok {
 			_ = writeControl(ctx, c, runner.Control{T: runner.MsgError, Message: "unknown login kind"})
 			return
 		}
-		b, err := os.ReadFile(filepath.Join(s.Home, rel))
+		bundle := runner.LoginBundle{Files: map[string][]byte{}}
+		for i, rel := range files {
+			b, err := os.ReadFile(filepath.Join(s.Home, rel))
+			if err != nil {
+				if i == 0 {
+					_ = writeControl(ctx, c, runner.Control{T: runner.MsgError, Message: "login file not found; run the CLI's login first"})
+					return
+				}
+				continue // optional companion file
+			}
+			bundle.Files[rel] = b
+		}
+		enc, err := runner.EncodeLoginBundle(bundle)
 		if err != nil {
-			_ = writeControl(ctx, c, runner.Control{T: runner.MsgError, Message: "login file not found; run the CLI's login first"})
+			_ = writeControl(ctx, c, runner.Control{T: runner.MsgError, Message: err.Error()})
 			return
 		}
-		_ = writeControl(ctx, c, runner.Control{T: runner.MsgLogin, Kind: msg.Kind, Data: base64.StdEncoding.EncodeToString(b)})
+		_ = writeControl(ctx, c, runner.Control{T: runner.MsgLogin, Kind: msg.Kind, Data: base64.StdEncoding.EncodeToString(enc)})
 	default:
 		_ = writeControl(ctx, c, runner.Control{T: runner.MsgError, Message: "unknown control message"})
 	}

@@ -10,7 +10,10 @@
 // runner. The hub never inspects binary frames.
 package runner
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Port is the TCP port the runner listens on inside the pod.
 const Port = 7681
@@ -107,11 +110,45 @@ const (
 	LoginCodex  = "codex_login"
 )
 
-// LoginFile maps a login kind to the path, relative to HOME, of the CLI's
-// credential file.
-var LoginFile = map[string]string{
-	LoginClaude: ".claude/.credentials.json",
-	LoginCodex:  ".codex/auth.json",
+// LoginFiles maps a login kind to the files, relative to HOME, that make up
+// a logged-in state. The first entry is the credential file and must exist
+// for an export to succeed; the others are copied when present. Claude Code
+// keeps its OAuth tokens in .claude/.credentials.json but decides whether
+// to show onboarding (and the login screen) from .claude.json, so both are
+// needed for a new session to start signed in.
+var LoginFiles = map[string][]string{
+	LoginClaude: {".claude/.credentials.json", ".claude.json"},
+	LoginCodex:  {".codex/auth.json"},
+}
+
+// LoginFile is the credential file of a login kind (the first of LoginFiles).
+var LoginFile = func() map[string]string {
+	m := map[string]string{}
+	for k, files := range LoginFiles {
+		m[k] = files[0]
+	}
+	return m
+}()
+
+// LoginBundle is the exported form of a login: every captured file by its
+// HOME-relative path. It travels base64-encoded in the "login" control
+// message and is stored as-is in the user's Secret.
+type LoginBundle struct {
+	Files map[string][]byte `json:"files"`
+}
+
+// EncodeLoginBundle serialises a bundle.
+func EncodeLoginBundle(b LoginBundle) ([]byte, error) { return json.Marshal(b) }
+
+// DecodeLoginBundle parses a stored login. Values saved before bundles
+// existed are the raw credential file; they are wrapped as a one-file bundle
+// so old saves keep working.
+func DecodeLoginBundle(kind string, data []byte) LoginBundle {
+	var b LoginBundle
+	if err := json.Unmarshal(data, &b); err == nil && b.Files != nil {
+		return b
+	}
+	return LoginBundle{Files: map[string][]byte{LoginFile[kind]: data}}
 }
 
 // Environment variables the runner reads. All of them are injected by the

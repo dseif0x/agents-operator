@@ -27,7 +27,7 @@ The hub exposes `GET /api/v1/sessions/{id}/scrollback` which proxies the latter.
 | hub → runner only | text | `{"t":"export_login","kind":"claude_login"}` — ask for the CLI's credential file |
 | server → client | text | `{"t":"hello","scrollback":true,"cols":220,"rows":50}` — first frame, before the replay |
 | server → client | text | `{"t":"exit","code":0}` — the agent process exited; the pod stays up |
-| runner → hub only | text | `{"t":"login","kind":"claude_login","data":"<base64>"}` — reply to `export_login` |
+| runner → hub only | text | `{"t":"login","kind":"claude_login","data":"<base64>"}` — reply to `export_login`; `data` is a JSON bundle `{"files":{"<HOME-relative path>":<bytes>}}` with every file that makes up the login (for Claude Code: `.claude/.credentials.json` and `.claude.json`) |
 | server → client | text | `{"t":"error","message":"..."}` |
 | both | ping/pong | every 20 s; a peer is dropped after 3 misses |
 
@@ -80,4 +80,4 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | `GIT_SSH_KEY` | per-session Secret | written to `~/.ssh/id_ed25519` (0600); removed from the agent's env |
 | `GIT_HTTPS_TOKEN` | per-session Secret | served by `agent-runner git-credential` for every host, never written to disk |
 | `GH_TOKEN` | per-session Secret | GitHub token for `gh` (also exported as `GITHUB_TOKEN`); the credential helper uses it for `https://github.com` when no `GIT_HTTPS_TOKEN` is set, and without an SSH key `git@github.com:` remotes are rewritten to HTTPS |
-| `AGENTS_OPERATOR_LOGIN_<KIND>` | per-session Secret | base64 credential file seeded into HOME on first boot |
+| `AGENTS_OPERATOR_LOGIN_<KIND>` | per-session Secret | base64 login bundle seeded into HOME on first boot; only the files known for that kind are written, and never over an existing file |
