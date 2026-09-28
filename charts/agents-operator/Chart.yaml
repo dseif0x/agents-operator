@@ -2,9 +2,11 @@ apiVersion: v2
 name: agents-operator
 description: Mission control for AI coding agents. One pod per session with its own PVC, the agent's real terminal streamed to the browser.
 type: application
-# version and appVersion are set from the git tag by release-chart.yml.
-version: 1.0.0
-appVersion: "1.0.0"
+# version and appVersion are placeholders. release-chart.yml sets both from
+# the git tag (v1.2.3 -> 1.2.3) when the chart is published; never bump them
+# by hand.
+version: 0.0.0
+appVersion: "0.0.0"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/dseif0x/agents-operator
 sources:
