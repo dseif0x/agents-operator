@@ -23,7 +23,7 @@ jobs:
     env:
       TAG: ${{ github.event.inputs.tag || github.event.workflow_run.head_branch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
           fetch-depth: 0
