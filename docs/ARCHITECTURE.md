@@ -42,6 +42,8 @@ A session is one row, one PVC, one Secret and zero or one Pod, all named `agents
 
 A session lists zero or more repositories (`repos`: url, optional branch, directory name). On first boot the runner clones each into `/workspace/<path>`; the agent starts in the first one and sees the others next to it. Later boots skip directories that are not empty, so work survives stop/start.
 
+On every boot the runner also writes `/workspace/AGENTS.md`: what the pod is, which repositories were cloned where, what tools and credentials (`gh`, SSH key, git identity) are available, and a few conventions. The same content is placed in each CLI's global instructions file (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/opencode/AGENTS.md`) unless the user wrote their own, so Claude Code, Codex and OpenCode all read it without configuration. Per-repository `AGENTS.md`/`CLAUDE.md` files still apply on top.
+
 ```
 creating ──pod Ready──▶ running ──stop──▶ stopping ──pod gone──▶ stopped
    ▲  │ error/timeout      │ pod gone / crashed                    │ start
@@ -70,7 +72,7 @@ Closing the tab changes nothing in the pod. Reopening replays the last 2 MiB of 
 ## Credentials
 
 - **API key mode**: values live in the per-user Secret `agents-operator-user-<id>` (managed by `internal/session/credentials.go`). At session creation the reconciler projects the known keys into the per-session Secret as env (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`, git identity, `GIT_SSH_KEY`, `GIT_HTTPS_TOKEN`, `GH_TOKEN`).
-- **GitHub**: a per-user `github_token` becomes `GH_TOKEN`/`GITHUB_TOKEN` in the pod. The runner image ships the `gh` CLI, so agents can read and comment on PRs, inspect Actions runs and create PRs with the same token; the git credential helper also uses it for `https://github.com` clones and pushes. A fine-grained PAT scoped to the repos in use is the recommended token; a GitHub App with short-lived installation tokens minted by the hub is the natural next step and would slot into the same env vars.
+- **GitHub**: a per-user `github_token` becomes `GH_TOKEN`/`GITHUB_TOKEN` in the pod. When no SSH key is configured, `git@github.com:` remotes are rewritten to HTTPS through `GIT_CONFIG_*` env so private repositories clone and push with the token alone. The runner image ships the `gh` CLI, so agents can read and comment on PRs, inspect Actions runs and create PRs with the same token; the git credential helper also uses it for `https://github.com` clones and pushes. A fine-grained PAT scoped to the repos in use is the recommended token; a GitHub App with short-lived installation tokens minted by the hub is the natural next step and would slot into the same env vars.
 - **Subscription mode**: the user logs in with the CLI inside a session; HOME is on the PVC so it persists. "Save login" asks the runner (over the control channel, hub-initiated only) for the CLI's credential file and stores it in the user Secret; later sessions get it seeded into HOME on first boot.
 - The API never returns secret values, only which kinds are set. The hub reads user Secrets only to project them.
 
