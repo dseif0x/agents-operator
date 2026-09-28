@@ -65,8 +65,11 @@ type Live struct {
 
 // CreateRequest is the JSON body of POST /sessions.
 type CreateRequest struct {
-	Name         string              `json:"name"`
-	Agent        string              `json:"agent"`
+	Name  string `json:"name"`
+	Agent string `json:"agent"`
+	// Repos are cloned side by side under /workspace; the agent starts in the first.
+	Repos []store.Repo `json:"repos"`
+	// RepoURL and Branch are a shorthand for a single first repo.
 	RepoURL      string              `json:"repo_url"`
 	Branch       string              `json:"branch"`
 	ImageTag     string              `json:"image_tag"`
@@ -84,9 +87,72 @@ var envKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // reservedEnv cannot be overridden per session.
 var reservedEnv = map[string]bool{
-	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvRepoURL: true,
-	runner.EnvRepoBranch: true, runner.EnvWorkspace: true, runner.EnvListen: true, "HOME": true, "PATH": true,
-	runner.EnvGitSSHKey: true, runner.EnvGitHTTPSToken: true,
+	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvRepos: true,
+	runner.EnvWorkspace: true, runner.EnvListen: true, "HOME": true, "PATH": true,
+	runner.EnvGitSSHKey: true, runner.EnvGitHTTPSToken: true, runner.EnvGitHubToken: true,
+}
+
+// MaxRepos caps the repositories per session.
+const MaxRepos = 10
+
+var repoPathRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+var unsafePathChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+
+// reservedPaths cannot be used as a repo directory under /workspace.
+var reservedPaths = map[string]bool{"home": true, ".": true, "..": true}
+
+// normaliseRepos merges the shorthand fields into the list, fills default
+// paths from the URL and validates everything.
+func normaliseRepos(req CreateRequest) ([]store.Repo, error) {
+	repos := []store.Repo{}
+	if u := strings.TrimSpace(req.RepoURL); u != "" {
+		repos = append(repos, store.Repo{URL: u, Branch: req.Branch})
+	}
+	repos = append(repos, req.Repos...)
+	if len(repos) > MaxRepos {
+		return nil, &ValidationError{fmt.Sprintf("at most %d repositories per session", MaxRepos)}
+	}
+	seen := map[string]bool{}
+	for i := range repos {
+		r := &repos[i]
+		r.URL = strings.TrimSpace(r.URL)
+		r.Branch = strings.TrimSpace(r.Branch)
+		r.Path = strings.TrimSpace(r.Path)
+		if !validRepoURL(r.URL) {
+			return nil, &ValidationError{"repository URL must be an https://, ssh:// or git@host:path URL: " + r.URL}
+		}
+		if strings.ContainsAny(r.Branch, " \t\n") || strings.HasPrefix(r.Branch, "-") {
+			return nil, &ValidationError{"invalid branch " + r.Branch}
+		}
+		if r.Path == "" {
+			r.Path = RepoPathFromURL(r.URL)
+		}
+		if !repoPathRE.MatchString(r.Path) || reservedPaths[r.Path] {
+			return nil, &ValidationError{"invalid repository path " + r.Path + " (a single directory name, not \"home\")"}
+		}
+		if seen[r.Path] {
+			return nil, &ValidationError{"duplicate repository path " + r.Path}
+		}
+		seen[r.Path] = true
+	}
+	return repos, nil
+}
+
+// RepoPathFromURL derives a checkout directory name from a git URL:
+// git@github.com:x/y.git -> y.
+func RepoPathFromURL(u string) string {
+	s := strings.TrimRight(u, "/")
+	s = strings.TrimSuffix(s, ".git")
+	if i := strings.LastIndexAny(s, "/:"); i >= 0 {
+		s = s[i+1:]
+	}
+	s = unsafePathChars.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-.")
+	if s == "" {
+		s = "repo"
+	}
+	return s
 }
 
 func (s *Service) clock() time.Time {
@@ -105,12 +171,9 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 	if !runner.ValidAgent(req.Agent) {
 		return nil, &ValidationError{"agent must be one of " + strings.Join(runner.Agents, ", ")}
 	}
-	req.RepoURL = strings.TrimSpace(req.RepoURL)
-	if req.RepoURL != "" && !validRepoURL(req.RepoURL) {
-		return nil, &ValidationError{"repo_url must be an https://, ssh:// or git@host:path URL"}
-	}
-	if strings.ContainsAny(req.Branch, " \t\n") || strings.HasPrefix(req.Branch, "-") {
-		return nil, &ValidationError{"invalid branch"}
+	repos, err := normaliseRepos(req)
+	if err != nil {
+		return nil, err
 	}
 	if req.PVCSize == "" {
 		req.PVCSize = s.Defaults.PVCSize
@@ -141,7 +204,7 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 		autonomous = *req.Autonomous
 	}
 	sess := &store.Session{
-		OwnerID: owner.ID, Name: req.Name, Agent: req.Agent, RepoURL: req.RepoURL, Branch: req.Branch,
+		OwnerID: owner.ID, Name: req.Name, Agent: req.Agent, Repos: repos,
 		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, Resources: req.Resources,
 		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
 		State: store.StateCreating,
@@ -462,8 +525,7 @@ type View struct {
 	ID             string              `json:"id"`
 	Name           string              `json:"name"`
 	Agent          string              `json:"agent"`
-	RepoURL        string              `json:"repo_url"`
-	Branch         string              `json:"branch"`
+	Repos          []store.Repo        `json:"repos"`
 	ImageTag       string              `json:"image_tag"`
 	PVCSize        string              `json:"pvc_size"`
 	StorageClass   string              `json:"storage_class"`
@@ -491,11 +553,14 @@ type View struct {
 // View converts a row plus live status into the API shape.
 func (s *Service) View(sess *store.Session) View {
 	v := View{
-		ID: sess.ID, Name: sess.Name, Agent: sess.Agent, RepoURL: sess.RepoURL, Branch: sess.Branch,
+		ID: sess.ID, Name: sess.Name, Agent: sess.Agent, Repos: sess.Repos,
 		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, Resources: sess.Resources,
 		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
 		State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
+	}
+	if v.Repos == nil {
+		v.Repos = []store.Repo{}
 	}
 	if v.NodeSelector == nil {
 		v.NodeSelector = map[string]string{}

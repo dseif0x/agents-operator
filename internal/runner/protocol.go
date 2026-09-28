@@ -120,8 +120,8 @@ const (
 	EnvRunnerToken   = "RUNNER_TOKEN"
 	EnvAgent         = "AGENT"
 	EnvAutonomous    = "AUTONOMOUS"
-	EnvRepoURL       = "REPO_URL"
-	EnvRepoBranch    = "REPO_BRANCH"
+	EnvRepos         = "REPOS"    // JSON list of {url, branch, path}; cloned under WORKSPACE
+	EnvGitHubToken   = "GH_TOKEN" // GitHub token for gh and https clones of github.com
 	EnvGitUserName   = "GIT_USER_NAME"
 	EnvGitUserEmail  = "GIT_USER_EMAIL"
 	EnvGitSSHKey     = "GIT_SSH_KEY"             // private key contents

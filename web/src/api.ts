@@ -10,12 +10,17 @@ export interface Resources {
   limits: { cpu?: string; memory?: string };
 }
 
+export interface Repo {
+  url: string;
+  branch?: string;
+  path: string;
+}
+
 export interface Session {
   id: string;
   name: string;
   agent: string;
-  repo_url: string;
-  branch: string;
+  repos: Repo[];
   image_tag: string;
   pvc_size: string;
   storage_class: string;
@@ -58,8 +63,7 @@ export interface Credential {
 export interface CreateSessionRequest {
   name: string;
   agent: string;
-  repo_url: string;
-  branch: string;
+  repos: Repo[];
   image_tag?: string;
   pvc_size?: string;
   storage_class?: string;

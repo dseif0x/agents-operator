@@ -10,7 +10,8 @@ const FIELDS: { kind: string; label: string; help: string; multiline?: boolean; 
   { kind: "git_user_name", label: "Git user.name", help: "Seeded into ~/.gitconfig on first boot.", secret: false },
   { kind: "git_user_email", label: "Git user.email", help: "Seeded into ~/.gitconfig on first boot.", secret: false },
   { kind: "git_ssh_key", label: "Git SSH private key", help: "Installed as ~/.ssh/id_ed25519 (0600) in every session.", multiline: true, secret: true },
-  { kind: "git_https_token", label: "Git HTTPS token", help: "Served by a credential helper from the environment; never written to disk.", secret: true },
+  { kind: "git_https_token", label: "Git HTTPS token", help: "Used for https:// clones and pushes on any host; served by a credential helper from the environment, never written to disk.", secret: true },
+  { kind: "github_token", label: "GitHub token", help: "Exposed as GH_TOKEN / GITHUB_TOKEN so gh (PRs, checks, Actions runs) and https://github.com clones work. A fine-grained PAT scoped to the repos you use is enough.", secret: true },
 ];
 
 const LOGIN_KINDS: Record<string, string> = {

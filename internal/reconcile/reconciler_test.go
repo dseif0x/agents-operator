@@ -120,7 +120,7 @@ func (h *harness) converge(id string) {
 }
 
 func newSession(h *harness) *store.Session {
-	s := &store.Session{OwnerID: "u1", Name: "one", Agent: "claude", RepoURL: "https://x/y.git", State: store.StateCreating, PVCSize: "5Gi"}
+	s := &store.Session{OwnerID: "u1", Name: "one", Agent: "claude", Repos: []store.Repo{{URL: "https://x/y.git", Path: "y"}}, State: store.StateCreating, PVCSize: "5Gi"}
 	if err := h.st.Sessions().Create(h.ctx, s); err != nil {
 		h.t.Fatal(err)
 	}

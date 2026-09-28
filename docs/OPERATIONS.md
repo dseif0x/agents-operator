@@ -106,7 +106,7 @@ The chart is then available at `https://dseif0x.github.io/agents-operator/`.
 
 ## Runner image contents
 
-`debian:bookworm-slim` + Node 22 + `@anthropic-ai/claude-code`, `opencode-ai`, `@openai/codex` (versions are build args: `CLAUDE_CODE_VERSION`, `OPENCODE_VERSION`, `CODEX_VERSION`; pin them in CI when you want reproducible images), git, openssh-client, ripgrep, tmux, curl, jq, tini. User `agent` UID 1000, HOME `/workspace/home`.
+`debian:bookworm-slim` + Node 22 + `@anthropic-ai/claude-code`, `opencode-ai`, `@openai/codex` (versions are build args: `CLAUDE_CODE_VERSION`, `OPENCODE_VERSION`, `CODEX_VERSION`; pin them in CI when you want reproducible images), git, `gh`, openssh-client, ripgrep, tmux, curl, jq, tini. User `agent` UID 1000, HOME `/workspace/home`, repositories under `/workspace/<name>`.
 
 The root filesystem is read-only in the pod; `/tmp` is an emptyDir and everything the agent writes goes to the PVC.
 

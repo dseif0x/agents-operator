@@ -73,10 +73,11 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | --- | --- | --- |
 | `RUNNER_TOKEN` | per-session Secret | bearer token, rotated on every start |
 | `AGENT`, `AUTONOMOUS` | pod spec | which CLI to run; `claude` gets `--dangerously-skip-permissions` when true |
-| `REPO_URL`, `REPO_BRANCH` | pod spec | cloned into `/workspace/repo` on first boot |
+| `REPOS` | pod spec | JSON list of `{url, branch, path}`; each is cloned into `/workspace/<path>` on first boot, the agent starts in the first |
 | `AGENTS_OPERATOR_SESSION` | pod spec | session name |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL` | per-session Secret (from the user Secret) | model credentials |
 | `GIT_USER_NAME`, `GIT_USER_EMAIL` | per-session Secret | seeded into `~/.gitconfig` |
 | `GIT_SSH_KEY` | per-session Secret | written to `~/.ssh/id_ed25519` (0600); removed from the agent's env |
-| `GIT_HTTPS_TOKEN` | per-session Secret | served by `agent-runner git-credential`, never written to disk |
+| `GIT_HTTPS_TOKEN` | per-session Secret | served by `agent-runner git-credential` for every host, never written to disk |
+| `GH_TOKEN` | per-session Secret | GitHub token for `gh` (also exported as `GITHUB_TOKEN`); the credential helper uses it for `https://github.com` when no `GIT_HTTPS_TOKEN` is set |
 | `AGENTS_OPERATOR_LOGIN_<KIND>` | per-session Secret | base64 credential file seeded into HOME on first boot |

@@ -5,6 +5,7 @@ package reconcile
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -123,6 +124,7 @@ var credentialEnv = map[string]string{
 	store.CredOpenAIAPIKey:     "OPENAI_API_KEY",
 	store.CredGitSSHKey:        runner.EnvGitSSHKey,
 	store.CredGitHTTPSToken:    runner.EnvGitHTTPSToken,
+	store.CredGitHubToken:      runner.EnvGitHubToken,
 	store.CredGitUserName:      runner.EnvGitUserName,
 	store.CredGitUserEmail:     runner.EnvGitUserEmail,
 }
@@ -227,11 +229,15 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 	if tag == "" {
 		tag = cfg.RunnerImageTag
 	}
+	repos := s.Repos
+	if repos == nil {
+		repos = []store.Repo{}
+	}
+	reposJSON, _ := json.Marshal(repos)
 	env := []corev1.EnvVar{
 		{Name: runner.EnvAgent, Value: s.Agent},
 		{Name: runner.EnvAutonomous, Value: strconv.FormatBool(s.Autonomous)},
-		{Name: runner.EnvRepoURL, Value: s.RepoURL},
-		{Name: runner.EnvRepoBranch, Value: s.Branch},
+		{Name: runner.EnvRepos, Value: string(reposJSON)},
 		{Name: runner.EnvSessionName, Value: s.Name},
 		{Name: runner.EnvWorkspace, Value: WorkspacePath},
 		{Name: "HOME", Value: WorkspacePath + "/home"},

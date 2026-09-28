@@ -201,7 +201,9 @@ function Drawer(props: { session: Session; tab: "events" | "logs" | "info"; setT
               `pod:           ${s.pod_name}`,
               `state:         ${s.state}${s.state_reason ? " (" + s.state_reason + ")" : ""}`,
               `agent:         ${s.agent}${s.autonomous ? " (autonomous)" : ""}`,
-              `repo:          ${s.repo_url || "-"}${s.branch ? " @ " + s.branch : ""}`,
+              ...(s.repos?.length
+                ? s.repos.map((r, i) => `${i === 0 ? "repos:         " : "               "}/workspace/${r.path}  ←  ${r.url}${r.branch ? " @ " + r.branch : ""}`)
+                : ["repos:         (none)"]),
               `image tag:     ${s.image_tag || "(default)"}`,
               `pvc:           ${s.pvc_size} ${s.storage_class}`,
               `limits:        cpu ${s.resources?.limits?.cpu || "default"}, memory ${s.resources?.limits?.memory || "default"}`,

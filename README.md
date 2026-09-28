@@ -15,7 +15,7 @@ browser ──▶ hub ──▶ session pod (agent-runner + agent CLI, /workspac
 ```
 
 - The **hub** (`cmd/agents-operator`) is a single-replica Deployment. It creates a PVC, a Secret and a Pod per session, proxies the terminal WebSocket by pod IP, and serves the SPA.
-- **agent-runner** (`cmd/agent-runner`) is the entrypoint of the session pod. It clones the repo on first boot, runs the agent under a PTY, keeps 2 MiB of scrollback and serves it over a WebSocket. Reconnects replay the buffer, so the TUI redraws correctly.
+- **agent-runner** (`cmd/agent-runner`) is the entrypoint of the session pod. It clones the session's repositories on first boot (one or many, side by side under `/workspace`), runs the agent under a PTY, keeps 2 MiB of scrollback and serves it over a WebSocket. Reconnects replay the buffer, so the TUI redraws correctly.
 - Stop deletes the pod and keeps the PVC. Start recreates the pod on the same PVC. Delete removes everything.
 
 Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/PROTOCOL.md](docs/PROTOCOL.md), [docs/OPERATIONS.md](docs/OPERATIONS.md), chart values in [charts/agents-operator/README.md](charts/agents-operator/README.md).
@@ -29,7 +29,7 @@ helm install agents-operator agents-operator/agents-operator -n agents-operator 
   --set ingress.host=agents-operator.example.com
 ```
 
-The NOTES print how to read the generated admin password. Set your model credentials on the account page (API key mode), or log in with the CLI inside a session and press *Save login* (subscription mode).
+The NOTES print how to read the generated admin password. Set your model credentials on the account page (API key mode), or log in with the CLI inside a session and press *Save login* (subscription mode). Add a GitHub token there too and agents get `gh` plus HTTPS access to github.com for PRs, checks and Actions runs.
 
 ## Security model
 

@@ -28,7 +28,8 @@ func testCfg() Config {
 func testSession() *store.Session {
 	return &store.Session{
 		ID: "11111111-2222-4333-8444-555555555555", OwnerID: "u1", Name: "My Session!", Agent: "claude",
-		RepoURL: "git@github.com:x/y.git", Branch: "main", Autonomous: true, Generation: 3,
+		Repos:      []store.Repo{{URL: "git@github.com:x/y.git", Branch: "main", Path: "y"}, {URL: "https://github.com/x/z.git", Path: "z"}},
+		Autonomous: true, Generation: 3,
 		Env:          map[string]string{"FOO": "bar"},
 		NodeSelector: map[string]string{"kubernetes.io/arch": "arm64"},
 	}
@@ -58,10 +59,11 @@ func TestBuildSecret(t *testing.T) {
 	sec := BuildSecret(s, testCfg(), "tok", map[string][]byte{
 		store.CredAnthropicAPIKey: []byte("sk-ant"),
 		store.CredGitSSHKey:       []byte("-----BEGIN"),
+		store.CredGitHubToken:     []byte("ghp_x"),
 		store.CredClaudeLogin:     []byte(`{"a":1}`),
 		"unknown":                 []byte("x"),
 	})
-	if string(sec.Data["RUNNER_TOKEN"]) != "tok" || string(sec.Data["ANTHROPIC_API_KEY"]) != "sk-ant" || string(sec.Data["GIT_SSH_KEY"]) != "-----BEGIN" {
+	if string(sec.Data["RUNNER_TOKEN"]) != "tok" || string(sec.Data["ANTHROPIC_API_KEY"]) != "sk-ant" || string(sec.Data["GIT_SSH_KEY"]) != "-----BEGIN" || string(sec.Data["GH_TOKEN"]) != "ghp_x" {
 		t.Fatalf("data = %v", sec.Data)
 	}
 	if string(sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"]) != "eyJhIjoxfQ==" {
@@ -149,8 +151,11 @@ func TestBuildPod(t *testing.T) {
 	for _, e := range c.Env {
 		env[e.Name] = e.Value
 	}
-	if env["AGENT"] != "claude" || env["AUTONOMOUS"] != "true" || env["REPO_URL"] != s.RepoURL || env["REPO_BRANCH"] != "main" || env["FOO"] != "bar" || env["ANTHROPIC_BASE_URL"] != "http://cliproxy" {
+	if env["AGENT"] != "claude" || env["AUTONOMOUS"] != "true" || env["FOO"] != "bar" || env["ANTHROPIC_BASE_URL"] != "http://cliproxy" {
 		t.Fatalf("env = %v", env)
+	}
+	if env["REPOS"] != `[{"url":"git@github.com:x/y.git","branch":"main","path":"y"},{"url":"https://github.com/x/z.git","path":"z"}]` {
+		t.Fatalf("REPOS = %s", env["REPOS"])
 	}
 	if len(c.EnvFrom) != 1 || c.EnvFrom[0].SecretRef.Name != ObjectName(s.ID) {
 		t.Fatalf("envFrom = %+v", c.EnvFrom)
