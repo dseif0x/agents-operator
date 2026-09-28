@@ -1,4 +1,4 @@
-// Package config loads the hub configuration from AGENTHUB_* environment
+// Package config loads the hub configuration from AGENTS_OPERATOR_* environment
 // variables and fails fast on anything missing or malformed.
 package config
 
@@ -15,7 +15,7 @@ import (
 )
 
 // Prefix is prepended to every environment variable name.
-const Prefix = "AGENTHUB_"
+const Prefix = "AGENTS_OPERATOR_"
 
 // Resources is a CPU/memory request and limit pair in Kubernetes quantity
 // syntax. Kept free of k8s types so it can live in the store too.
@@ -134,7 +134,7 @@ func load(get lookup) (*Config, error) {
 		ListenAddr:            str("LISTEN_ADDR", ":8080"),
 		DatabaseURL:           required("DATABASE_URL"),
 		Kubeconfig:            str("KUBECONFIG", ""),
-		RunnerImage:           str("RUNNER_IMAGE", "ghcr.io/dseif0x/agenthub-runner"),
+		RunnerImage:           str("RUNNER_IMAGE", "ghcr.io/dseif0x/agents-operator-runner"),
 		RunnerImageTag:        str("RUNNER_IMAGE_TAG", "latest"),
 		RunnerImagePullPolicy: str("RUNNER_IMAGE_PULL_POLICY", "IfNotPresent"),
 		DefaultStorageClass:   str("DEFAULT_STORAGE_CLASS", ""),

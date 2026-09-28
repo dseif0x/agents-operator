@@ -2,16 +2,16 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "agenthub.fullname" . }}
+  name: {{ include "agents-operator.fullname" . }}
   labels:
-    {{- include "agenthub.labels" . | nindent 4 }}
+    {{- include "agents-operator.labels" . | nindent 4 }}
     {{- with .Values.metrics.serviceMonitor.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
   selector:
     matchLabels:
-      {{- include "agenthub.selectorLabels" . | nindent 6 }}
+      {{- include "agents-operator.selectorLabels" . | nindent 6 }}
   namespaceSelector:
     matchNames:
       - {{ .Release.Namespace }}

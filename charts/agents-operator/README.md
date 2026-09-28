@@ -1,4 +1,4 @@
-# agenthub
+# agents-operator
 
 ![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.1.0](https://img.shields.io/badge/AppVersion-0.1.0-informational?style=flat-square)
 
@@ -9,11 +9,11 @@ The hub runs as a single-replica Deployment (strategy `Recreate`; do not scale i
 ## Install
 
 ```sh
-helm repo add agenthub https://dseif0x.github.io/agents-operator/
-helm install agenthub agenthub/agenthub -n agenthub --create-namespace \
-  --set publicUrl=https://agenthub.example.com \
-  --set ingress.host=agenthub.example.com \
-  --set auth.adminPasswordHash="$(AGENTHUB_PASSWORD=... agenthub hash-password)"
+helm repo add agents-operator https://dseif0x.github.io/agents-operator/
+helm install agents-operator agents-operator/agents-operator -n agents-operator --create-namespace \
+  --set publicUrl=https://agents-operator.example.com \
+  --set ingress.host=agents-operator.example.com \
+  --set auth.adminPasswordHash="$(AGENTS_OPERATOR_PASSWORD=... agents-operator hash-password)"
 ```
 
 With Flux, add the repo as a `HelmRepository` and reference it from a `HelmRelease`. Secrets (`auth.existingSecret`, `postgresql.auth.existingSecret`, `database.existingSecret`) can be SealedSecrets.
@@ -38,7 +38,7 @@ Kubernetes: `>=1.27.0-0`
 |-----|------|---------|-------------|
 | affinity | object | `{}` | Hub affinity |
 | allowedHosts | list | `[]` | Extra allowed Host header values (the publicUrl host is always allowed) |
-| auth.adminPasswordHash | string | `""` | argon2id hash for the admin user (`agenthub hash-password`); if empty a random password is generated |
+| auth.adminPasswordHash | string | `""` | argon2id hash for the admin user (`agents-operator hash-password`); if empty a random password is generated |
 | auth.adminUsername | string | `"admin"` | Admin username |
 | auth.cookieSecret | string | `""` | 32 bytes hex used to sign session cookies; generated if empty |
 | auth.existingSecret | string | `""` | Existing Secret with keys `cookieSecret` and `adminPasswordHash` (or `adminPassword`); skips generation |
@@ -48,13 +48,13 @@ Kubernetes: `>=1.27.0-0`
 | extraEnv | list | `[]` | Extra env for the hub container (list of EnvVar) |
 | fullnameOverride | string | `""` | Override the full release name |
 | image.pullPolicy | string | `"IfNotPresent"` | Hub image pull policy |
-| image.repository | string | `"ghcr.io/dseif0x/agenthub"` | Hub image repository |
+| image.repository | string | `"ghcr.io/dseif0x/agents-operator"` | Hub image repository |
 | image.tag | string | `""` | Hub image tag; defaults to .Chart.AppVersion |
 | imagePullSecrets | list | `[]` | Image pull secrets for both the hub and session pods |
 | ingress.annotations | object | `{"cert-manager.io/cluster-issuer":"letsencrypt-dns","traefik.ingress.kubernetes.io/router.entrypoints":"websecure"}` | Ingress annotations |
 | ingress.className | string | `"traefik"` | Ingress class |
 | ingress.enabled | bool | `true` | Create an Ingress |
-| ingress.host | string | `"agenthub.homelab.seifert.id"` | Ingress host |
+| ingress.host | string | `"agents-operator.homelab.seifert.id"` | Ingress host |
 | ingress.tls | bool | `true` | Terminate TLS with a cert-manager issued certificate |
 | ingress.tlsSecretName | string | `""` | TLS secret name; defaults to <fullname>-tls |
 | logLevel | string | `"info"` | Hub log level: debug, info, warn, error |
@@ -64,17 +64,17 @@ Kubernetes: `>=1.27.0-0`
 | nameOverride | string | `""` | Override the chart name |
 | nodeSelector | object | `{}` | Hub node selector |
 | podAnnotations | object | `{}` | Extra pod annotations for the hub |
-| postgresql.auth.database | string | `"agenthub"` |  |
-| postgresql.auth.username | string | `"agenthub"` |  |
+| postgresql.auth.database | string | `"agents_operator"` |  |
+| postgresql.auth.username | string | `"agents_operator"` |  |
 | postgresql.enabled | bool | `true` | Install the Bitnami PostgreSQL subchart |
 | postgresql.primary.persistence.size | string | `"5Gi"` |  |
-| publicUrl | string | `"https://agenthub.homelab.seifert.id"` | Public URL of the hub; cookies, Origin checks and the host allowlist derive from it |
+| publicUrl | string | `"https://agents-operator.homelab.seifert.id"` | Public URL of the hub; cookies, Origin checks and the host allowlist derive from it |
 | resources | object | `{"limits":{"cpu":"1","memory":"512Mi"},"requests":{"cpu":"100m","memory":"128Mi"}}` | Hub resources |
 | runner.defaultSize | string | `"20Gi"` | Default PVC size for new sessions |
 | runner.extraEnv | object | `{}` | Extra non-secret env injected into every session pod |
 | runner.idleStopAfter | string | `"0h"` | Stop running sessions after this long without PTY output (0 = never) |
 | runner.image.pullPolicy | string | `"IfNotPresent"` | Runner image pull policy |
-| runner.image.repository | string | `"ghcr.io/dseif0x/agenthub-runner"` | Runner image repository (session pods) |
+| runner.image.repository | string | `"ghcr.io/dseif0x/agents-operator-runner"` | Runner image repository (session pods) |
 | runner.image.tag | string | `""` | Runner image tag; defaults to .Chart.AppVersion |
 | runner.networkPolicy.blockedCIDRs | list | `["10.42.0.0/16","10.43.0.0/16"]` | CIDRs excluded from the "443/22 anywhere" rules: cluster pod and service ranges (k3s defaults) |
 | runner.networkPolicy.egressCIDRs | list | `[]` | Extra allowed egress CIDRs (all ports), e.g. an in-cluster LLM proxy |
@@ -95,6 +95,6 @@ Kubernetes: `>=1.27.0-0`
 ## Backup
 
 ```sh
-kubectl -n agenthub exec agenthub-postgresql-0 -- env PGPASSWORD="$(kubectl -n agenthub get secret agenthub-postgresql -o jsonpath='{.data.password}' | base64 -d)" pg_dump -U agenthub agenthub > agenthub.sql
+kubectl -n agents-operator exec agents-operator-postgresql-0 -- env PGPASSWORD="$(kubectl -n agents-operator get secret agents-operator-postgresql -o jsonpath='{.data.password}' | base64 -d)" pg_dump -U agents_operator agents_operator > agents-operator.sql
 ```
 

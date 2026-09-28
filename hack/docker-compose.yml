@@ -3,16 +3,16 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: agenthub
-      POSTGRES_PASSWORD: agenthub
-      POSTGRES_DB: agenthub
+      POSTGRES_USER: agents_operator
+      POSTGRES_PASSWORD: agents_operator
+      POSTGRES_DB: agents_operator
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agenthub"]
+      test: ["CMD-SHELL", "pg_isready -U agents_operator"]
       interval: 3s
       timeout: 3s
       retries: 20

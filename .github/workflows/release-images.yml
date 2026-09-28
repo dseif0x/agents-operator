@@ -20,13 +20,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: agenthub
+          - name: agents-operator
             file: docker/hub.Dockerfile
-          - name: agenthub-runner
+          - name: agents-operator-runner
             file: docker/runner.Dockerfile
     outputs:
-      digest-agenthub: ${{ steps.digest.outputs.agenthub }}
-      digest-agenthub-runner: ${{ steps.digest.outputs.agenthub-runner }}
+      digest-agents-operator: ${{ steps.digest.outputs.agents-operator }}
+      digest-agents-operator-runner: ${{ steps.digest.outputs.agents-operator-runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -81,15 +81,15 @@ jobs:
             echo "## Images"
             echo
             echo '```'
-            echo "ghcr.io/${{ github.repository_owner }}/agenthub@${{ needs.build.outputs.digest-agenthub }}"
-            echo "ghcr.io/${{ github.repository_owner }}/agenthub-runner@${{ needs.build.outputs.digest-agenthub-runner }}"
+            echo "ghcr.io/${{ github.repository_owner }}/agents-operator@${{ needs.build.outputs.digest-agents-operator }}"
+            echo "ghcr.io/${{ github.repository_owner }}/agents-operator-runner@${{ needs.build.outputs.digest-agents-operator-runner }}"
             echo '```'
             echo
             echo "Both images are multi-arch (linux/amd64, linux/arm64), carry SBOM and provenance attestations, and are signed with cosign (keyless)."
             echo
             echo "## Chart"
             echo
-            echo "The Helm chart \`agenthub-${GITHUB_REF_NAME#v}\` is published by the release-chart workflow to https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+            echo "The Helm chart \`agents-operator-${GITHUB_REF_NAME#v}\` is published by the release-chart workflow to https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
           } > notes.md
       - uses: softprops/action-gh-release@v2
         with:

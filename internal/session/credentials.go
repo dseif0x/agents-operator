@@ -17,7 +17,7 @@ import (
 	"github.com/dseif0x/agents-operator/internal/store"
 )
 
-// Credentials manages the per-user Secret `agenthub-user-<id>`. Values live
+// Credentials manages the per-user Secret `agents-operator-user-<id>`. Values live
 // only in the Secret; the store records which kinds are set. The hub reads
 // the Secret only to project values into session Secrets and never returns
 // secret values through the API.
@@ -52,7 +52,7 @@ func (c *Credentials) Set(ctx context.Context, userID, kind string, value []byte
 	case apierrors.IsNotFound(err):
 		sec = &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.Namespace, Labels: map[string]string{
-				k8s.LabelUser: userID, k8s.LabelManagedBy: k8s.ManagedBy, k8s.LabelName: "agenthub", k8s.LabelComponent: "user-credentials",
+				k8s.LabelUser: userID, k8s.LabelManagedBy: k8s.ManagedBy, k8s.LabelName: "agents-operator", k8s.LabelComponent: "user-credentials",
 			}},
 			Type: corev1.SecretTypeOpaque,
 			Data: map[string][]byte{kind: value},

@@ -74,9 +74,9 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | `RUNNER_TOKEN` | per-session Secret | bearer token, rotated on every start |
 | `AGENT`, `AUTONOMOUS` | pod spec | which CLI to run; `claude` gets `--dangerously-skip-permissions` when true |
 | `REPO_URL`, `REPO_BRANCH` | pod spec | cloned into `/workspace/repo` on first boot |
-| `AGENTHUB_SESSION` | pod spec | session name |
+| `AGENTS_OPERATOR_SESSION` | pod spec | session name |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL` | per-session Secret (from the user Secret) | model credentials |
 | `GIT_USER_NAME`, `GIT_USER_EMAIL` | per-session Secret | seeded into `~/.gitconfig` |
 | `GIT_SSH_KEY` | per-session Secret | written to `~/.ssh/id_ed25519` (0600); removed from the agent's env |
 | `GIT_HTTPS_TOKEN` | per-session Secret | served by `agent-runner git-credential`, never written to disk |
-| `AGENTHUB_LOGIN_<KIND>` | per-session Secret | base64 credential file seeded into HOME on first boot |
+| `AGENTS_OPERATOR_LOGIN_<KIND>` | per-session Secret | base64 credential file seeded into HOME on first boot |

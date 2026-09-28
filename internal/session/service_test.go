@@ -27,7 +27,7 @@ func newService(t *testing.T) (*Service, *fakeOrch, *store.User) {
 	orch := &fakeOrch{}
 	svc := &Service{
 		Store: st, Orch: orch, Broker: NewBroker(),
-		Creds:    &Credentials{Store: st, CS: fake.NewClientset(), Namespace: "agenthub"},
+		Creds:    &Credentials{Store: st, CS: fake.NewClientset(), Namespace: "agents-operator"},
 		Defaults: Defaults{PVCSize: "20Gi", StorageClass: "nfs-fast", Autonomous: true},
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -185,7 +185,7 @@ func TestViewAndBroker(t *testing.T) {
 	svc, _, u := newService(t)
 	sess, _ := svc.Create(context.Background(), u, CreateRequest{Name: "v", Agent: "shell"})
 	v := svc.View(sess)
-	if v.ID != sess.ID || v.PodName != "agenthub-"+sess.ID || v.Env == nil || v.NeedsAttention {
+	if v.ID != sess.ID || v.PodName != "agents-operator-"+sess.ID || v.Env == nil || v.NeedsAttention {
 		t.Fatalf("view = %+v", v)
 	}
 	b := NewBroker()

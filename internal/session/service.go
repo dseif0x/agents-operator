@@ -347,12 +347,12 @@ func (s *Service) SessionDeleted(_ context.Context, id, ownerID string) {
 // ---- status polling, idle policy, metrics ----
 
 var sessionsGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-	Name: "agenthub_sessions_total",
+	Name: "agents_operator_sessions_total",
 	Help: "Number of sessions by state.",
 }, []string{"state"})
 
 var pollErrors = prometheus.NewCounter(prometheus.CounterOpts{
-	Name: "agenthub_runner_status_poll_errors_total",
+	Name: "agents_operator_runner_status_poll_errors_total",
 	Help: "Failed runner status polls.",
 })
 

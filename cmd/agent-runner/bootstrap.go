@@ -18,7 +18,7 @@ import (
 //   - create /workspace/home and /workspace/repo
 //   - seed ~/.gitconfig from GIT_USER_NAME / GIT_USER_EMAIL
 //   - install the SSH key or HTTPS credential helper
-//   - seed saved CLI logins (AGENTHUB_LOGIN_<KIND>) when the file is absent
+//   - seed saved CLI logins (AGENTS_OPERATOR_LOGIN_<KIND>) when the file is absent
 //   - clone REPO_URL at REPO_BRANCH into /workspace/repo when it is empty
 func (w Workspace) Bootstrap(ctx context.Context) error {
 	home, repo := w.HomeDir(), w.RepoDir()
@@ -86,10 +86,10 @@ func (w Workspace) sshKeyPath() string { return filepath.Join(w.HomeDir(), ".ssh
 func (w Workspace) seedGitConfig() error {
 	name, email := os.Getenv(runner.EnvGitUserName), os.Getenv(runner.EnvGitUserEmail)
 	if name == "" {
-		name = "agenthub"
+		name = "agents-operator"
 	}
 	if email == "" {
-		email = "agenthub@localhost"
+		email = "agents-operator@localhost"
 	}
 	cfg := filepath.Join(w.HomeDir(), ".gitconfig")
 	if _, err := os.Stat(cfg); err == nil {

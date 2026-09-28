@@ -106,7 +106,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
           const m = JSON.parse(ev.data as string) as { t: string; code?: number; cols?: number; rows?: number; message?: string };
           if (m.t === "exit") setExit(m.code ?? 0);
           else if (m.t === "hello") setExit(null);
-          else if (m.t === "error") term.write(`\r\n\x1b[31m[agenthub] ${m.message}\x1b[0m\r\n`);
+          else if (m.t === "error") term.write(`\r\n\x1b[31m[agents-operator] ${m.message}\x1b[0m\r\n`);
         } catch {
           /* ignore */
         }
@@ -154,7 +154,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     const onTheme = (e: Event) => {
       term.options.theme = terminalTheme((e as CustomEvent<Theme>).detail);
     };
-    addEventListener("agenthub:theme", onTheme);
+    addEventListener("agents-operator:theme", onTheme);
     // Reconnect promptly when the tab comes back.
     const onVisible = () => {
       if (document.visibilityState === "visible" && !socket && !closed) {
@@ -173,7 +173,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       clearInterval(countdown);
       ro.disconnect();
       visualViewport?.removeEventListener("resize", refit);
-      removeEventListener("agenthub:theme", onTheme);
+      removeEventListener("agents-operator:theme", onTheme);
       document.removeEventListener("visibilitychange", onVisible);
       onData.dispose();
       onBinary.dispose();

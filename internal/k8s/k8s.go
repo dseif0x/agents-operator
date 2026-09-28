@@ -22,15 +22,15 @@ import (
 
 // Labels and annotations the hub puts on every object it owns.
 const (
-	LabelSession   = "agenthub.io/session"
-	LabelOwner     = "agenthub.io/owner"
-	LabelUser      = "agenthub.io/user" // per-user credential Secrets
+	LabelSession   = "agents-operator.io/session"
+	LabelOwner     = "agents-operator.io/owner"
+	LabelUser      = "agents-operator.io/user" // per-user credential Secrets
 	LabelManagedBy = "app.kubernetes.io/managed-by"
 	LabelName      = "app.kubernetes.io/name"
 	LabelComponent = "app.kubernetes.io/component"
-	ManagedBy      = "agenthub"
+	ManagedBy      = "agents-operator"
 
-	AnnotationGeneration = "agenthub.io/generation"
+	AnnotationGeneration = "agents-operator.io/generation"
 )
 
 // NewClientset returns an in-cluster client, falling back to kubeconfig
@@ -53,7 +53,7 @@ func NewClientset(kubeconfig string) (kubernetes.Interface, error) {
 	}
 	cfg.QPS = 20
 	cfg.Burst = 50
-	cfg.UserAgent = "agenthub"
+	cfg.UserAgent = "agents-operator"
 	return kubernetes.NewForConfig(cfg)
 }
 

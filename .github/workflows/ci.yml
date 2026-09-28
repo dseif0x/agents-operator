@@ -21,12 +21,12 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: agenthub
-          POSTGRES_PASSWORD: agenthub
-          POSTGRES_DB: agenthub_test
+          POSTGRES_USER: agents_operator
+          POSTGRES_PASSWORD: agents_operator
+          POSTGRES_DB: agents_operator_test
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U agenthub"
+          --health-cmd "pg_isready -U agents_operator"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -42,7 +42,7 @@ jobs:
           version: latest
       - name: go test
         env:
-          AGENTHUB_TEST_DATABASE_URL: postgres://agenthub:agenthub@localhost:5432/agenthub_test?sslmode=disable
+          AGENTS_OPERATOR_TEST_DATABASE_URL: postgres://agents_operator:agents_operator@localhost:5432/agents_operator_test?sslmode=disable
         run: go test -race -count=1 ./...
       - name: build (stub UI, no Node needed)
         run: go build ./...
@@ -84,12 +84,12 @@ jobs:
         with:
           version: v3.19.0
       - name: helm dependency update
-        run: helm dependency update charts/agenthub
-      - run: helm lint charts/agenthub --strict
+        run: helm dependency update charts/agents-operator
+      - run: helm lint charts/agents-operator --strict
       - name: helm-unittest
         run: |
           helm plugin install https://github.com/helm-unittest/helm-unittest.git
-          helm unittest charts/agenthub
+          helm unittest charts/agents-operator
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -97,27 +97,27 @@ jobs:
       - name: helm-docs is up to date
         run: |
           go run github.com/norwoodj/helm-docs/cmd/helm-docs@v1.14.2 --chart-search-root=charts
-          git diff --exit-code -- charts/agenthub/README.md
+          git diff --exit-code -- charts/agents-operator/README.md
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - uses: helm/chart-testing-action@v2
       - name: ct lint
-        run: ct lint --config ct.yaml --charts charts/agenthub --all
+        run: ct lint --config ct.yaml --charts charts/agents-operator --all
       - uses: helm/kind-action@v1
         with:
           cluster_name: ct
       - name: server-side validation of every rendered object
         run: |
-          kubectl create namespace agenthub
-          helm template hub charts/agenthub --namespace agenthub \
+          kubectl create namespace agents-operator
+          helm template hub charts/agents-operator --namespace agents-operator \
             --set postgresql.enabled=false --set database.url=postgres://x \
-            | kubectl apply -n agenthub --dry-run=server -f -
+            | kubectl apply -n agents-operator --dry-run=server -f -
       - name: rbac stays honest (kubectl auth can-i --list)
         run: |
-          helm template hub charts/agenthub --namespace agenthub --show-only templates/rbac.yaml \
-            | kubectl apply -n agenthub -f -
-          kubectl -n agenthub auth can-i --list --as=system:serviceaccount:agenthub:hub-agenthub | tee can-i.txt
+          helm template hub charts/agents-operator --namespace agents-operator --show-only templates/rbac.yaml \
+            | kubectl apply -n agents-operator -f -
+          kubectl -n agents-operator auth can-i --list --as=system:serviceaccount:agents-operator:hub-agents-operator | tee can-i.txt
           # exactly the verbs from the spec, nothing more
           grep -E '^pods +\[\] +\[\] +\[get list watch create delete\]' can-i.txt
           grep -E '^pods/log +\[\] +\[\] +\[get\]' can-i.txt
@@ -125,8 +125,8 @@ jobs:
           grep -E '^secrets +\[\] +\[\] +\[get list watch create update delete\]' can-i.txt
           grep -E '^events +\[\] +\[\] +\[create\]' can-i.txt
           ! grep -E '^(pods/exec|nodes|deployments|namespaces)' can-i.txt
-          ! kubectl auth can-i list nodes --as=system:serviceaccount:agenthub:hub-agenthub
-          ! kubectl -n kube-system auth can-i list pods --as=system:serviceaccount:agenthub:hub-agenthub
+          ! kubectl auth can-i list nodes --as=system:serviceaccount:agents-operator:hub-agents-operator
+          ! kubectl -n kube-system auth can-i list pods --as=system:serviceaccount:agents-operator:hub-agents-operator
 
   images:
     name: cross-build images (no push)
@@ -134,9 +134,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: agenthub
+          - name: agents-operator
             file: docker/hub.Dockerfile
-          - name: agenthub-runner
+          - name: agents-operator-runner
             file: docker/runner.Dockerfile
     steps:
       - uses: actions/checkout@v4

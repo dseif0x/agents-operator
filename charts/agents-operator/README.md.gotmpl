@@ -11,11 +11,11 @@ The hub runs as a single-replica Deployment (strategy `Recreate`; do not scale i
 ## Install
 
 ```sh
-helm repo add agenthub https://dseif0x.github.io/agents-operator/
-helm install agenthub agenthub/agenthub -n agenthub --create-namespace \
-  --set publicUrl=https://agenthub.example.com \
-  --set ingress.host=agenthub.example.com \
-  --set auth.adminPasswordHash="$(AGENTHUB_PASSWORD=... agenthub hash-password)"
+helm repo add agents-operator https://dseif0x.github.io/agents-operator/
+helm install agents-operator agents-operator/agents-operator -n agents-operator --create-namespace \
+  --set publicUrl=https://agents-operator.example.com \
+  --set ingress.host=agents-operator.example.com \
+  --set auth.adminPasswordHash="$(AGENTS_OPERATOR_PASSWORD=... agents-operator hash-password)"
 ```
 
 With Flux, add the repo as a `HelmRepository` and reference it from a `HelmRelease`. Secrets (`auth.existingSecret`, `postgresql.auth.existingSecret`, `database.existingSecret`) can be SealedSecrets.
@@ -33,7 +33,7 @@ Every session pod runs non-root (UID 1000), with `readOnlyRootFilesystem`, all c
 ## Backup
 
 ```sh
-kubectl -n agenthub exec agenthub-postgresql-0 -- env PGPASSWORD="$(kubectl -n agenthub get secret agenthub-postgresql -o jsonpath='{.data.password}' | base64 -d)" pg_dump -U agenthub agenthub > agenthub.sql
+kubectl -n agents-operator exec agents-operator-postgresql-0 -- env PGPASSWORD="$(kubectl -n agents-operator get secret agents-operator-postgresql -o jsonpath='{.data.password}' | base64 -d)" pg_dump -U agents_operator agents_operator > agents-operator.sql
 ```
 
 {{ template "helm-docs.versionFooter" . }}

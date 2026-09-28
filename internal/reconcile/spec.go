@@ -70,14 +70,14 @@ const (
 )
 
 // ObjectName is the name shared by a session's PVC, Secret and Pod.
-func ObjectName(sessionID string) string { return "agenthub-" + sessionID }
+func ObjectName(sessionID string) string { return "agents-operator-" + sessionID }
 
 // UserSecretName is the per-user credential Secret.
-func UserSecretName(userID string) string { return "agenthub-user-" + userID }
+func UserSecretName(userID string) string { return "agents-operator-user-" + userID }
 
 // SessionIDFromName is the inverse of ObjectName.
 func SessionIDFromName(name string) (string, bool) {
-	return strings.CutPrefix(name, "agenthub-")
+	return strings.CutPrefix(name, "agents-operator-")
 }
 
 // Labels returns the labels every per-session object carries.
@@ -86,7 +86,7 @@ func Labels(s *store.Session) map[string]string {
 		k8s.LabelSession:   s.ID,
 		k8s.LabelOwner:     s.OwnerID,
 		k8s.LabelManagedBy: k8s.ManagedBy,
-		k8s.LabelName:      "agenthub-runner",
+		k8s.LabelName:      "agents-operator-runner",
 		k8s.LabelComponent: "session",
 	}
 }

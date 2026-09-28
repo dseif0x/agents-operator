@@ -12,7 +12,7 @@ import (
 
 func testCfg() Config {
 	return Config{
-		Namespace: "agenthub", RunnerImage: "ghcr.io/x/agenthub-runner", RunnerImageTag: "1.0.0",
+		Namespace: "agents-operator", RunnerImage: "ghcr.io/x/agents-operator-runner", RunnerImageTag: "1.0.0",
 		DefaultStorageClass: "nfs-fast", DefaultPVCSize: "20Gi",
 		DefaultResources: config.Resources{
 			Requests: config.ResourceList{CPU: "250m", Memory: "512Mi"},
@@ -37,7 +37,7 @@ func testSession() *store.Session {
 func TestBuildPVC(t *testing.T) {
 	s := testSession()
 	pvc := BuildPVC(s, testCfg())
-	if pvc.Name != "agenthub-"+s.ID || *pvc.Spec.StorageClassName != "nfs-fast" {
+	if pvc.Name != "agents-operator-"+s.ID || *pvc.Spec.StorageClassName != "nfs-fast" {
 		t.Fatalf("pvc = %+v", pvc)
 	}
 	if pvc.Spec.Resources.Requests.Storage().String() != "20Gi" || pvc.Spec.AccessModes[0] != corev1.ReadWriteOnce {
@@ -64,8 +64,8 @@ func TestBuildSecret(t *testing.T) {
 	if string(sec.Data["RUNNER_TOKEN"]) != "tok" || string(sec.Data["ANTHROPIC_API_KEY"]) != "sk-ant" || string(sec.Data["GIT_SSH_KEY"]) != "-----BEGIN" {
 		t.Fatalf("data = %v", sec.Data)
 	}
-	if string(sec.Data["AGENTHUB_LOGIN_CLAUDE_LOGIN"]) != "eyJhIjoxfQ==" {
-		t.Fatalf("login seed = %q", sec.Data["AGENTHUB_LOGIN_CLAUDE_LOGIN"])
+	if string(sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"]) != "eyJhIjoxfQ==" {
+		t.Fatalf("login seed = %q", sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"])
 	}
 	if _, ok := sec.Data["unknown"]; ok {
 		t.Fatal("unknown key projected")
@@ -116,7 +116,7 @@ func TestHostname(t *testing.T) {
 func TestBuildPod(t *testing.T) {
 	s := testSession()
 	pod := BuildPod(s, testCfg())
-	if pod.Name != ObjectName(s.ID) || pod.Namespace != "agenthub" || pod.Spec.Hostname != "my-session" {
+	if pod.Name != ObjectName(s.ID) || pod.Namespace != "agents-operator" || pod.Spec.Hostname != "my-session" {
 		t.Fatalf("meta: %+v", pod.ObjectMeta)
 	}
 	if pod.Spec.RestartPolicy != corev1.RestartPolicyNever || *pod.Spec.AutomountServiceAccountToken || *pod.Spec.RuntimeClassName != "gvisor" {
@@ -130,7 +130,7 @@ func TestBuildPod(t *testing.T) {
 		t.Fatal("one container expected")
 	}
 	c := pod.Spec.Containers[0]
-	if c.Image != "ghcr.io/x/agenthub-runner:1.0.0" {
+	if c.Image != "ghcr.io/x/agents-operator-runner:1.0.0" {
 		t.Fatalf("image = %s", c.Image)
 	}
 	csc := c.SecurityContext
@@ -175,7 +175,7 @@ func TestBuildPod(t *testing.T) {
 		t.Fatalf("mounts = %v", mounts)
 	}
 	s.ImageTag = "dev"
-	if BuildPod(s, testCfg()).Spec.Containers[0].Image != "ghcr.io/x/agenthub-runner:dev" {
+	if BuildPod(s, testCfg()).Spec.Containers[0].Image != "ghcr.io/x/agents-operator-runner:dev" {
 		t.Fatal("image tag override ignored")
 	}
 }

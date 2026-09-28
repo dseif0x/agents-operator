@@ -24,7 +24,7 @@ ARG CLAUDE_CODE_VERSION=latest
 ARG OPENCODE_VERSION=latest
 ARG CODEX_VERSION=latest
 
-LABEL org.opencontainers.image.title="agenthub-runner" \
+LABEL org.opencontainers.image.title="agents-operator-runner" \
       org.opencontainers.image.description="Session pod image: agent CLIs under a PTY served over WebSocket" \
       org.opencontainers.image.source="https://github.com/dseif0x/agents-operator" \
       org.opencontainers.image.version="${VERSION}" \

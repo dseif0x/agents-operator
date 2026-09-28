@@ -50,7 +50,7 @@ func newEnv(t *testing.T) *env {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	pub, _ := url.Parse("http://hub.test")
 	cfg := &config.Config{PublicURL: pub, AllowedHosts: []string{"hub.test", "127.0.0.1"}, CookieSecret: bytes.Repeat([]byte("k"), 32)}
-	creds := &session.Credentials{Store: st, CS: fake.NewClientset(), Namespace: "agenthub"}
+	creds := &session.Credentials{Store: st, CS: fake.NewClientset(), Namespace: "agents-operator"}
 	proxy := &term.Proxy{Resolver: noResolver{}, Log: log}
 	svc := &session.Service{Store: st, Orch: fakeOrch{}, Term: proxy, Broker: session.NewBroker(), Creds: creds,
 		Defaults: session.Defaults{PVCSize: "20Gi"}, Log: log}
@@ -212,7 +212,7 @@ func TestSessionCRUD(t *testing.T) {
 		t.Fatalf("list = %d %v", resp.StatusCode, body)
 	}
 	resp, body = e.do(t, http.MethodGet, "/api/v1/sessions/"+id, nil, "hub.test")
-	if resp.StatusCode != http.StatusOK || body["pod_name"] != "agenthub-"+id {
+	if resp.StatusCode != http.StatusOK || body["pod_name"] != "agents-operator-"+id {
 		t.Fatalf("get = %d %v", resp.StatusCode, body)
 	}
 	resp, _ = e.do(t, http.MethodGet, "/api/v1/sessions/"+store.NewID(), nil, "hub.test")

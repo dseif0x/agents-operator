@@ -1,11 +1,11 @@
-agenthub {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
+agents-operator {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
 
 URL: {{ .Values.publicUrl }}
 {{- if .Values.ingress.enabled }}
 Ingress host: {{ .Values.ingress.host }} (class {{ .Values.ingress.className }}{{ if .Values.ingress.tls }}, TLS via {{ index .Values.ingress.annotations "cert-manager.io/cluster-issuer" | default "your issuer" }}{{ end }})
 {{- else }}
 No Ingress was created. Port-forward to try it:
-  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agenthub.fullname" . }} 8080:{{ .Values.service.port }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "agents-operator.fullname" . }} 8080:{{ .Values.service.port }}
 {{- end }}
 
 Login: {{ .Values.auth.adminUsername }}
@@ -15,11 +15,11 @@ Password: from your Secret {{ .Values.auth.existingSecret }}.
 Password: the one you hashed into auth.adminPasswordHash.
 {{- else }}
 Password: generated. Read it with
-  kubectl -n {{ .Release.Namespace }} get secret {{ include "agenthub.authSecretName" . }} -o jsonpath='{.data.adminPassword}' | base64 -d; echo
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "agents-operator.authSecretName" . }} -o jsonpath='{.data.adminPassword}' | base64 -d; echo
 {{- end }}
 
 Sessions run as pods in this namespace, each with a PVC on storage class "{{ .Values.runner.storageClass | default "(cluster default)" }}".
 Do not scale the hub above one replica: the reconciler and informers are single-instance by design.
 
 Backups: the database is the only state besides session PVCs. Dump it with
-  kubectl -n {{ .Release.Namespace }} exec {{ include "agenthub.postgresqlHost" . }}-0 -- env PGPASSWORD="$(kubectl -n {{ .Release.Namespace }} get secret {{ include "agenthub.postgresqlHost" . }} -o jsonpath='{.data.password}' | base64 -d)" pg_dump -U {{ .Values.postgresql.auth.username }} {{ .Values.postgresql.auth.database }} > agenthub.sql
+  kubectl -n {{ .Release.Namespace }} exec {{ include "agents-operator.postgresqlHost" . }}-0 -- env PGPASSWORD="$(kubectl -n {{ .Release.Namespace }} get secret {{ include "agents-operator.postgresqlHost" . }} -o jsonpath='{.data.password}' | base64 -d)" pg_dump -U {{ .Values.postgresql.auth.username }} {{ .Values.postgresql.auth.database }} > agents-operator.sql

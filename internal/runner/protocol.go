@@ -124,10 +124,10 @@ const (
 	EnvRepoBranch    = "REPO_BRANCH"
 	EnvGitUserName   = "GIT_USER_NAME"
 	EnvGitUserEmail  = "GIT_USER_EMAIL"
-	EnvGitSSHKey     = "GIT_SSH_KEY"      // private key contents
-	EnvGitHTTPSToken = "GIT_HTTPS_TOKEN"  // token for https clones
-	EnvSeedPrefix    = "AGENTHUB_LOGIN_"  // + upper(kind): base64 credential file to seed
-	EnvWorkspace     = "WORKSPACE"        // defaults to /workspace
-	EnvListen        = "RUNNER_LISTEN"    // defaults to :7681
-	EnvSessionName   = "AGENTHUB_SESSION" // human name, used for the prompt/hostname
+	EnvGitSSHKey     = "GIT_SSH_KEY"             // private key contents
+	EnvGitHTTPSToken = "GIT_HTTPS_TOKEN"         // token for https clones
+	EnvSeedPrefix    = "AGENTS_OPERATOR_LOGIN_"  // + upper(kind): base64 credential file to seed
+	EnvWorkspace     = "WORKSPACE"               // defaults to /workspace
+	EnvListen        = "RUNNER_LISTEN"           // defaults to :7681
+	EnvSessionName   = "AGENTS_OPERATOR_SESSION" // human name, used for the prompt/hostname
 )

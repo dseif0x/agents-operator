@@ -14,6 +14,6 @@ func Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte("agenthub was built without the web UI (go build -tags ui). The API is available under /api/v1.\n"))
+		_, _ = w.Write([]byte("agents-operator was built without the web UI (go build -tags ui). The API is available under /api/v1.\n"))
 	})
 }

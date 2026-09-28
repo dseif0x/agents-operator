@@ -6,7 +6,7 @@ export function Nav(props: { user: User; onLogout: () => void; right?: preact.Co
   return (
     <nav class="nav">
       <Link href="/" class="brand">
-        agenthub
+        agents-operator
       </Link>
       <span class="spacer" />
       {props.right}

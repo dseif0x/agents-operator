@@ -11,11 +11,11 @@ import (
 )
 
 // stores returns the implementations under test: always Memory, and
-// Postgres when AGENTHUB_TEST_DATABASE_URL is set (CI provides one).
+// Postgres when AGENTS_OPERATOR_TEST_DATABASE_URL is set (CI provides one).
 func stores(t *testing.T) map[string]Store {
 	t.Helper()
 	out := map[string]Store{"memory": NewMemory()}
-	if url := os.Getenv("AGENTHUB_TEST_DATABASE_URL"); url != "" {
+	if url := os.Getenv("AGENTS_OPERATOR_TEST_DATABASE_URL"); url != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		pg, err := Open(ctx, url, slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -27,7 +27,7 @@ func stores(t *testing.T) map[string]Store {
 		t.Cleanup(pg.Close)
 		out["postgres"] = pg
 	} else {
-		t.Log("AGENTHUB_TEST_DATABASE_URL not set; skipping postgres")
+		t.Log("AGENTS_OPERATOR_TEST_DATABASE_URL not set; skipping postgres")
 	}
 	return out
 }

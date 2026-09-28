@@ -1,6 +1,6 @@
 # Architecture
 
-agenthub is a self-hosted mission control for AI coding agents. Every session is a Kubernetes Pod with its own PersistentVolumeClaim, and the agent's real terminal is streamed to the browser. There is no chat UI around an SDK: the CLI's own TUI is the interface.
+agents-operator is a self-hosted mission control for AI coding agents. Every session is a Kubernetes Pod with its own PersistentVolumeClaim, and the agent's real terminal is streamed to the browser. There is no chat UI around an SDK: the CLI's own TUI is the interface.
 
 ## Components
 
@@ -15,7 +15,7 @@ agenthub is a self-hosted mission control for AI coding agents. Every session is
 
 | Piece | Runs as | Owns |
 | --- | --- | --- |
-| **hub** (`cmd/agenthub`) | Deployment, 1 replica, distroless | REST API, SSE feed, WebSocket terminal proxy, reconciler, embedded SPA |
+| **hub** (`cmd/agents-operator`) | Deployment, 1 replica, distroless | REST API, SSE feed, WebSocket terminal proxy, reconciler, embedded SPA |
 | **agent-runner** (`cmd/agent-runner`) | PID 1 in every session pod (under tini) | The PTY, the 2 MiB scrollback ring buffer, the runner WebSocket on `:7681` |
 | **Postgres** | Bitnami subchart or external | users, sessions, session_events, user_credentials |
 
@@ -25,7 +25,7 @@ The browser only talks to the hub. The hub reaches runners by pod IP on the clus
 
 | Package | Responsibility |
 | --- | --- |
-| `internal/config` | Typed config from `AGENTHUB_*` env; fails fast |
+| `internal/config` | Typed config from `AGENTS_OPERATOR_*` env; fails fast |
 | `internal/store` | Postgres via pgx; goose migrations embedded and applied under an advisory lock; in-memory implementation for tests |
 | `internal/auth` | argon2id passwords, HMAC-signed cookie sessions, CSRF tokens, login rate limit, runner token minting; `Authenticator` is the OIDC seam |
 | `internal/k8s` | Client (in-cluster, kubeconfig fallback) and label-filtered informers for Pods, PVCs, Secrets |
@@ -38,7 +38,7 @@ The browser only talks to the hub. The hub reaches runners by pod IP on the clus
 
 ## Session model
 
-A session is one row, one PVC, one Secret and zero or one Pod, all named `agenthub-<id>` and labelled `agenthub.io/session=<id>`. The PVC is the identity that survives; the Pod is disposable.
+A session is one row, one PVC, one Secret and zero or one Pod, all named `agents-operator-<id>` and labelled `agents-operator.io/session=<id>`. The PVC is the identity that survives; the Pod is disposable.
 
 ```
 creating ──pod Ready──▶ running ──stop──▶ stopping ──pod gone──▶ stopped
@@ -57,7 +57,7 @@ The reconciler never trusts the state column as truth about the cluster. On ever
 - **deleting**: delete all three; delete the row once they are gone.
 - **orphans** (labelled objects without a row): deleted after a 2 min grace period and logged.
 
-Starting a stopped or failed session bumps `generation`. The Secret's and Pod's `agenthub.io/generation` annotation must match, which is how the token rotates and how a dead pod from the previous generation gets replaced.
+Starting a stopped or failed session bumps `generation`. The Secret's and Pod's `agents-operator.io/generation` annotation must match, which is how the token rotates and how a dead pod from the previous generation gets replaced.
 
 ## Terminal streaming
 
@@ -67,7 +67,7 @@ Closing the tab changes nothing in the pod. Reopening replays the last 2 MiB of 
 
 ## Credentials
 
-- **API key mode**: values live in the per-user Secret `agenthub-user-<id>` (managed by `internal/session/credentials.go`). At session creation the reconciler projects the known keys into the per-session Secret as env (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`, git identity, `GIT_SSH_KEY`, `GIT_HTTPS_TOKEN`).
+- **API key mode**: values live in the per-user Secret `agents-operator-user-<id>` (managed by `internal/session/credentials.go`). At session creation the reconciler projects the known keys into the per-session Secret as env (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`, git identity, `GIT_SSH_KEY`, `GIT_HTTPS_TOKEN`).
 - **Subscription mode**: the user logs in with the CLI inside a session; HOME is on the PVC so it persists. "Save login" asks the runner (over the control channel, hub-initiated only) for the CLI's credential file and stores it in the user Secret; later sessions get it seeded into HOME on first boot.
 - The API never returns secret values, only which kinds are set. The hub reads user Secrets only to project them.
 
@@ -77,7 +77,7 @@ Preact + TypeScript + Vite, xterm.js 6 with fit, WebGL (falls back to DOM), web-
 
 ## Deliberate deviations from the spec
 
-- **Module path** is `github.com/dseif0x/agents-operator` because that is the repository name; every other name (binary, image, chart, labels, env prefix) is `agenthub`.
+- **Module path** is `github.com/dseif0x/agents-operator` because that is the repository name; every other name (binary, image, chart, labels, env prefix) is `agents-operator`.
 - **SSH key delivery**: the spec mounts the key as a projected volume at `~/.ssh/id_ed25519`. Kubernetes Secret volumes end up group-readable once `fsGroup` applies and OpenSSH refuses such keys, and a read-only mount over `~/.ssh` would break `known_hosts`. The key is therefore passed as env (`GIT_SSH_KEY`) and the runner writes it to `~/.ssh/id_ed25519` with mode 0600 on every boot.
 - **Self-updating CLIs**: `/opt/agents` is owned by UID 1000 as the spec asks, but `readOnlyRootFilesystem: true` (a hard requirement) makes it read-only at runtime. CLI updates come from new runner image tags.
 - **PID 1**: `tini` is PID 1 and forwards signals; `agent-runner` runs under it and forwards SIGTERM to the agent. This avoids a hand-written zombie reaper.

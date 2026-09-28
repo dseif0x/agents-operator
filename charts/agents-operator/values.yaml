@@ -1,10 +1,10 @@
-# Default values for agenthub.
+# Default values for agents-operator.
 # Only one replica is supported: the reconciler and the informers must not
 # run twice, and the Deployment uses strategy Recreate for that reason.
 
 image:
   # -- Hub image repository
-  repository: ghcr.io/dseif0x/agenthub
+  repository: ghcr.io/dseif0x/agents-operator
   # -- Hub image tag; defaults to .Chart.AppVersion
   tag: ""
   # -- Hub image pull policy
@@ -21,7 +21,7 @@ fullnameOverride: ""
 runner:
   image:
     # -- Runner image repository (session pods)
-    repository: ghcr.io/dseif0x/agenthub-runner
+    repository: ghcr.io/dseif0x/agents-operator-runner
     # -- Runner image tag; defaults to .Chart.AppVersion
     tag: ""
     # -- Runner image pull policy
@@ -61,7 +61,7 @@ runner:
     extraEgress: []
 
 auth:
-  # -- argon2id hash for the admin user (`agenthub hash-password`); if empty a random password is generated
+  # -- argon2id hash for the admin user (`agents-operator hash-password`); if empty a random password is generated
   adminPasswordHash: ""
   # -- Admin username
   adminUsername: admin
@@ -71,7 +71,7 @@ auth:
   existingSecret: ""
 
 # -- Public URL of the hub; cookies, Origin checks and the host allowlist derive from it
-publicUrl: https://agenthub.homelab.seifert.id
+publicUrl: https://agents-operator.homelab.seifert.id
 # -- Extra allowed Host header values (the publicUrl host is always allowed)
 allowedHosts: []
 
@@ -85,7 +85,7 @@ ingress:
     cert-manager.io/cluster-issuer: letsencrypt-dns
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
   # -- Ingress host
-  host: agenthub.homelab.seifert.id
+  host: agents-operator.homelab.seifert.id
   # -- Terminate TLS with a cert-manager issued certificate
   tls: true
   # -- TLS secret name; defaults to <fullname>-tls
@@ -95,8 +95,8 @@ postgresql:
   # -- Install the Bitnami PostgreSQL subchart
   enabled: true
   auth:
-    database: agenthub
-    username: agenthub
+    database: agents_operator
+    username: agents_operator
   primary:
     persistence:
       size: 5Gi

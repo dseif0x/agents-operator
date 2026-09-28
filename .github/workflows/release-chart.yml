@@ -37,10 +37,10 @@ jobs:
       - name: set chart version and appVersion from the tag
         run: |
           v="${TAG#v}"
-          yq -i ".version = \"$v\" | .appVersion = \"$v\"" charts/agenthub/Chart.yaml
-          cat charts/agenthub/Chart.yaml
-      - run: helm dependency update charts/agenthub
-      - run: helm lint charts/agenthub --strict
+          yq -i ".version = \"$v\" | .appVersion = \"$v\"" charts/agents-operator/Chart.yaml
+          cat charts/agents-operator/Chart.yaml
+      - run: helm dependency update charts/agents-operator
+      - run: helm lint charts/agents-operator --strict
       - uses: helm/chart-releaser-action@v1
         with:
           charts_dir: charts

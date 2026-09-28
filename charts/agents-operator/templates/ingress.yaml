@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "agenthub.fullname" . }}
+  name: {{ include "agents-operator.fullname" . }}
   labels:
-    {{- include "agenthub.labels" . | nindent 4 }}
+    {{- include "agents-operator.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -17,7 +17,7 @@ spec:
   tls:
     - hosts:
         - {{ .Values.ingress.host | quote }}
-      secretName: {{ include "agenthub.tlsSecretName" . }}
+      secretName: {{ include "agents-operator.tlsSecretName" . }}
   {{- end }}
   rules:
     - host: {{ .Values.ingress.host | quote }}
@@ -27,7 +27,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "agenthub.fullname" . }}
+                name: {{ include "agents-operator.fullname" . }}
                 port:
                   name: http
 {{- end }}

@@ -1,5 +1,5 @@
 apiVersion: v2
-name: agenthub
+name: agents-operator
 description: Mission control for AI coding agents. One pod per session with its own PVC, the agent's real terminal streamed to the browser.
 type: application
 # version and appVersion are set from the git tag by release-chart.yml.

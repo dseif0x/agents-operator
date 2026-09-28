@@ -2,14 +2,14 @@
 
 ## Install on the homelab cluster
 
-The chart targets a plain k3s cluster with NFS storage classes (`nfs-fast`, `nfs`), Traefik (`websecure` entrypoint), cert-manager (`letsencrypt-dns` ClusterIssuer) and Flux with SealedSecrets. The defaults in `charts/agenthub/values.yaml` already match that.
+The chart targets a plain k3s cluster with NFS storage classes (`nfs-fast`, `nfs`), Traefik (`websecure` entrypoint), cert-manager (`letsencrypt-dns` ClusterIssuer) and Flux with SealedSecrets. The defaults in `charts/agents-operator/values.yaml` already match that.
 
 ```yaml
 # clusters/homelab/manual/repos.yaml
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
-  name: agenthub
+  name: agents-operator
   namespace: flux-system
 spec:
   interval: 1h
@@ -18,24 +18,24 @@ spec:
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: agenthub
-  namespace: agenthub
+  name: agents-operator
+  namespace: agents-operator
 spec:
   interval: 10m
   chart:
     spec:
-      chart: agenthub
+      chart: agents-operator
       version: ">=0.1.0"
       sourceRef:
         kind: HelmRepository
-        name: agenthub
+        name: agents-operator
         namespace: flux-system
   values:
-    publicUrl: https://agenthub.homelab.seifert.id
+    publicUrl: https://agents-operator.homelab.seifert.id
     ingress:
-      host: agenthub.homelab.seifert.id
+      host: agents-operator.homelab.seifert.id
     auth:
-      existingSecret: agenthub-auth        # SealedSecret: cookieSecret + adminPasswordHash
+      existingSecret: agents-operator-auth        # SealedSecret: cookieSecret + adminPasswordHash
     runner:
       networkPolicy:
         egressCIDRs: []                    # add the cliproxyapi ClusterIP/32 if you use it
@@ -44,13 +44,13 @@ spec:
 Create the sealed secret from:
 
 ```sh
-kubectl create secret generic agenthub-auth -n agenthub --dry-run=client -o yaml \
+kubectl create secret generic agents-operator-auth -n agents-operator --dry-run=client -o yaml \
   --from-literal=cookieSecret="$(openssl rand -hex 32)" \
-  --from-literal=adminPasswordHash="$(AGENTHUB_PASSWORD='...' go run ./cmd/agenthub hash-password)" \
-  | kubeseal --format yaml > agenthub-auth-sealed.yaml
+  --from-literal=adminPasswordHash="$(AGENTS_OPERATOR_PASSWORD='...' go run ./cmd/agents-operator hash-password)" \
+  | kubeseal --format yaml > agents-operator-auth-sealed.yaml
 ```
 
-Or let the chart generate both (`auth.existingSecret` empty). The generated password is printed in the NOTES and readable from the `<release>-agenthub-auth` Secret. It carries `helm.sh/resource-policy: keep` so it survives upgrades.
+Or let the chart generate both (`auth.existingSecret` empty). The generated password is printed in the NOTES and readable from the `<release>-agents-operator-auth` Secret. It carries `helm.sh/resource-policy: keep` so it survives upgrades.
 
 ## Single replica
 
@@ -75,7 +75,7 @@ External database instead:
 postgresql:
   enabled: false
 database:
-  existingSecret: agenthub-db     # key: url = postgres://user:pass@host:5432/agenthub?sslmode=require
+  existingSecret: agents-operator-db     # key: url = postgres://user:pass@host:5432/agents-operator?sslmode=require
 ```
 
 Migrations run at hub startup under a Postgres session advisory lock. Readiness (`/readyz`) goes red while Postgres is unreachable; already open terminal connections keep working because the proxy does not touch the database.
@@ -83,17 +83,17 @@ Migrations run at hub startup under a Postgres session advisory lock. Readiness 
 **Backup** (the only state besides session PVCs):
 
 ```sh
-kubectl -n agenthub exec agenthub-postgresql-0 -- \
-  env PGPASSWORD="$(kubectl -n agenthub get secret agenthub-postgresql -o jsonpath='{.data.password}' | base64 -d)" \
-  pg_dump -U agenthub agenthub > agenthub.sql
+kubectl -n agents-operator exec agents-operator-postgresql-0 -- \
+  env PGPASSWORD="$(kubectl -n agents-operator get secret agents-operator-postgresql -o jsonpath='{.data.password}' | base64 -d)" \
+  pg_dump -U agents_operator agents_operator > agents-operator.sql
 ```
 
 ## Releases
 
 Tags are the release trigger. `git tag v1.2.3 && git push --tags` produces:
 
-1. `release-images.yml`: multi-arch images `ghcr.io/dseif0x/agenthub:1.2.3` and `ghcr.io/dseif0x/agenthub-runner:1.2.3` (plus `latest`, `1.2`, `sha-…`), SBOM and provenance attestations, keyless cosign signatures (non-blocking), and a GitHub Release listing the digests.
-2. `release-chart.yml` (runs when the first succeeds): sets `version`/`appVersion` to `1.2.3`, packages the chart with `helm/chart-releaser-action`, attaches `agenthub-1.2.3.tgz` to a release and updates `index.yaml` on the `gh-pages` branch.
+1. `release-images.yml`: multi-arch images `ghcr.io/dseif0x/agents-operator:1.2.3` and `ghcr.io/dseif0x/agents-operator-runner:1.2.3` (plus `latest`, `1.2`, `sha-…`), SBOM and provenance attestations, keyless cosign signatures (non-blocking), and a GitHub Release listing the digests.
+2. `release-chart.yml` (runs when the first succeeds): sets `version`/`appVersion` to `1.2.3`, packages the chart with `helm/chart-releaser-action`, attaches `agents-operator-1.2.3.tgz` to a release and updates `index.yaml` on the `gh-pages` branch.
 
 One-time repository setup:
 
@@ -121,7 +121,7 @@ The root filesystem is read-only in the pod; `/tmp` is an emptyDir and everythin
 
 ## Metrics
 
-`GET /metrics` exposes `agenthub_sessions_total{state}` (gauge), `agenthub_runner_status_poll_errors_total` and the Go runtime metrics. Enable `metrics.serviceMonitor.enabled=true` with the label your kube-prometheus-stack selects (usually `release: kube-prometheus-stack`).
+`GET /metrics` exposes `agents_operator_sessions_total{state}` (gauge), `agents_operator_runner_status_poll_errors_total` and the Go runtime metrics. Enable `metrics.serviceMonitor.enabled=true` with the label your kube-prometheus-stack selects (usually `release: kube-prometheus-stack`).
 
 ## Idle stop
 
@@ -131,9 +131,9 @@ The root filesystem is read-only in the pod; `/tmp` is an emptyDir and everythin
 
 | Symptom | Look at |
 | --- | --- |
-| session stuck in `creating` | the session drawer (events) and `kubectl -n agenthub describe pod agenthub-<id>`: usually an image pull or an unschedulable PVC (RWO on NFS pins the pod to the node that mounted it) |
+| session stuck in `creating` | the session drawer (events) and `kubectl -n agents-operator describe pod agents-operator-<id>`: usually an image pull or an unschedulable PVC (RWO on NFS pins the pod to the node that mounted it) |
 | session `failed` | the drawer's *logs* tab (proxied `kubectl logs`); the pod is kept until the next start or delete |
-| terminal shows "runner unreachable" | the pod IP changed or the NetworkPolicy blocks the hub; check `kubectl -n agenthub get pod -o wide` and the hub logs |
+| terminal shows "runner unreachable" | the pod IP changed or the NetworkPolicy blocks the hub; check `kubectl -n agents-operator get pod -o wide` and the hub logs |
 | login says too many failed logins | 15 minute lockout per source IP; the ingress must forward `X-Forwarded-For` |
 | `421 host not allowed` | add the host to `allowedHosts` or fix `publicUrl` |
 | orphaned pods/PVCs | the reconciler deletes labelled objects without a row after 2 minutes and logs it |

@@ -53,7 +53,7 @@ func (a PasswordAuthenticator) Login(ctx context.Context, username, password str
 }
 
 // CookieName is the session cookie.
-const CookieName = "agenthub_session"
+const CookieName = "agents_operator_session"
 
 // SessionTTL is how long a login lasts.
 const SessionTTL = 30 * 24 * time.Hour
