@@ -2,7 +2,13 @@ import { useState } from "preact/hooks";
 
 // Sticky key bar for phones: keys the on-screen keyboard lacks. A Ctrl
 // toggle applies to the next key sent (from the bar or typed).
-export function KeyBar(props: { onKey: (seq: string) => void; onFocus: () => void }) {
+export function KeyBar(props: {
+  onKey: (seq: string) => void;
+  onFocus: () => void;
+  onPaste: () => void;
+  onSelect: () => void;
+  onLinks: () => void;
+}) {
   const [ctrl, setCtrl] = useState(false);
 
   const send = (seq: string) => {
@@ -35,6 +41,15 @@ export function KeyBar(props: { onKey: (seq: string) => void; onFocus: () => voi
 
   return (
     <div class="keybar" onTouchStart={(e) => e.stopPropagation()}>
+      <button class="action" onMouseDown={(e) => e.preventDefault()} onClick={props.onPaste} title="Paste from the clipboard">
+        Paste
+      </button>
+      <button class="action" onMouseDown={(e) => e.preventDefault()} onClick={props.onSelect} title="Select and copy screen text">
+        Select
+      </button>
+      <button class="action" onMouseDown={(e) => e.preventDefault()} onClick={props.onLinks} title="Links on screen">
+        Links
+      </button>
       <button class={ctrl ? "active" : ""} onClick={() => setCtrl(!ctrl)} aria-pressed={ctrl}>
         Ctrl
       </button>

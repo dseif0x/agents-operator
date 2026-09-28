@@ -11,7 +11,61 @@ export function SessionPage({ id }: { id: string }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [drawer, setDrawer] = useState<null | "events" | "logs" | "info">(null);
+  const [sheet, setSheet] = useState<null | "select" | "links">(null);
+  const [notice, setNotice] = useState("");
   const term = useRef<TerminalHandle>(null);
+  const page = useRef<HTMLDivElement>(null);
+
+  // iOS Safari does not shrink position:fixed layouts when the on-screen
+  // keyboard opens; it only shrinks the visual viewport. Track that and size
+  // the page from it so the terminal and key bar stay above the keyboard.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      const el = page.current;
+      if (!el) return;
+      el.style.height = `${Math.round(vv.height)}px`;
+      el.style.top = `${Math.round(vv.offsetTop)}px`;
+      // Safari sometimes scrolls the document to reveal the focused input.
+      if (window.scrollY) window.scrollTo(0, 0);
+    };
+    apply();
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+    return () => {
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
+    };
+  }, []);
+
+  const flash = (msg: string) => {
+    setNotice(msg);
+    setTimeout(() => setNotice(""), 1800);
+  };
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      flash("Copied");
+    } catch {
+      flash("Copy failed; long-press the text instead");
+    }
+  };
+
+  const pasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        term.current?.paste(text);
+        term.current?.focus();
+      } else {
+        flash("Clipboard is empty");
+      }
+    } catch {
+      flash("Clipboard access denied; allow paste for this site");
+    }
+  };
 
   const load = () =>
     api
@@ -61,7 +115,7 @@ export function SessionPage({ id }: { id: string }) {
   const canAttach = s?.state === "running";
 
   return (
-    <div class="term-page">
+    <div class="term-page" ref={page}>
       <div class="topbar">
         <Link href="/" class="btn small" title="Back to sessions">
           ←
@@ -137,14 +191,74 @@ export function SessionPage({ id }: { id: string }) {
           </div>
         )}
         {drawer && s && <Drawer session={s} tab={drawer} setTab={setDrawer} onClose={() => setDrawer(null)} />}
+        {sheet === "select" && (
+          <TextSheet
+            title="Screen text"
+            text={term.current?.selection() || term.current?.screenText() || ""}
+            onCopy={copy}
+            onClose={() => setSheet(null)}
+          />
+        )}
+        {sheet === "links" && <LinksSheet links={term.current?.links() ?? []} onCopy={copy} onClose={() => setSheet(null)} />}
+        {notice && <div class="toast">{notice}</div>}
       </div>
 
       {canAttach && (
         <KeyBar
           onKey={(seq) => term.current?.send(seq)}
           onFocus={() => term.current?.focus()}
+          onPaste={pasteFromClipboard}
+          onSelect={() => setSheet(sheet === "select" ? null : "select")}
+          onLinks={() => setSheet(sheet === "links" ? null : "links")}
         />
       )}
+    </div>
+  );
+}
+
+// TextSheet shows terminal text in a natively selectable box, because xterm
+// swallows touch selection gestures on phones.
+function TextSheet(props: { title: string; text: string; onCopy: (t: string) => void; onClose: () => void }) {
+  return (
+    <div class="sheet">
+      <header>
+        <b>{props.title}</b>
+        <span style="flex:1" />
+        <button class="btn small" onClick={() => props.onCopy(props.text)}>
+          Copy all
+        </button>
+        <button class="btn small" onClick={props.onClose}>
+          ✕
+        </button>
+      </header>
+      <pre class="selectable">{props.text || "(nothing on screen)"}</pre>
+    </div>
+  );
+}
+
+function LinksSheet(props: { links: string[]; onCopy: (t: string) => void; onClose: () => void }) {
+  return (
+    <div class="sheet">
+      <header>
+        <b>Links on screen</b>
+        <span style="flex:1" />
+        <button class="btn small" onClick={props.onClose}>
+          ✕
+        </button>
+      </header>
+      <div class="body">
+        {props.links.length === 0 && <div class="muted">No links on screen.</div>}
+        {props.links.map((l) => (
+          <div class="link-row">
+            <a href={l} target="_blank" rel="noopener noreferrer" class="mono">
+              {l}
+            </a>
+            <button class="btn small" onClick={() => props.onCopy(l)}>
+              Copy
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
