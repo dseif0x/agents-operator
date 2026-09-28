@@ -83,6 +83,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("GET /api/v1/sessions/{id}/events", s.sessionEventLog)
 	authed.HandleFunc("GET /api/v1/sessions/{id}/logs", s.sessionLogs)
 	authed.HandleFunc("GET /api/v1/me/credentials", s.listCredentials)
+	authed.HandleFunc("GET /api/v1/me/github/repos", s.githubRepos)
 	authed.HandleFunc("PUT /api/v1/me/credentials", s.putCredentials)
 	authed.HandleFunc("DELETE /api/v1/me/credentials/{kind}", s.deleteCredential)
 	mux.Handle("/api/v1/", s.requireAuth(s.requireCSRF(authed)))
@@ -514,6 +515,26 @@ func (s *Server) sessionEvents(w http.ResponseWriter, r *http.Request) {
 			_ = rc.Flush()
 		}
 	}
+}
+
+// githubRepos lists repositories reachable with the user's GitHub token for
+// the session form. {"configured": false} when no token is set.
+func (s *Server) githubRepos(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	repos, configured, err := s.Sessions.GitHubRepos(r.Context(), p.User.ID, r.URL.Query().Get("refresh") == "1")
+	if err != nil {
+		var ve *session.ValidationError
+		if errors.As(err, &ve) {
+			writeJSON(w, http.StatusOK, map[string]any{"configured": configured, "repos": []any{}, "error": ve.Msg})
+			return
+		}
+		writeErr(w, http.StatusBadGateway, "github: "+err.Error())
+		return
+	}
+	if repos == nil {
+		repos = []session.GitHubRepo{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"configured": configured, "repos": repos})
 }
 
 // ---- credentials ----

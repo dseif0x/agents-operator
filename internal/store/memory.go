@@ -14,6 +14,7 @@ type Memory struct {
 	sessions    map[string]*Session
 	credentials map[string]map[string]*Credential
 	events      map[string][]*Event
+	usage       map[string]map[string]int
 	nextEvent   int64
 }
 
@@ -24,7 +25,32 @@ func NewMemory() *Memory {
 		sessions:    map[string]*Session{},
 		credentials: map[string]map[string]*Credential{},
 		events:      map[string][]*Event{},
+		usage:       map[string]map[string]int{},
 	}
+}
+
+func (m *Memory) RepoUsage() RepoUsage { return memRepoUsage{m} }
+
+type memRepoUsage struct{ m *Memory }
+
+func (r memRepoUsage) Increment(_ context.Context, userID, repoKey string) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	if r.m.usage[userID] == nil {
+		r.m.usage[userID] = map[string]int{}
+	}
+	r.m.usage[userID][repoKey]++
+	return nil
+}
+
+func (r memRepoUsage) List(_ context.Context, userID string) (map[string]int, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	out := map[string]int{}
+	for k, v := range r.m.usage[userID] {
+		out[k] = v
+	}
+	return out, nil
 }
 
 func (m *Memory) Users() Users             { return memUsers{m} }

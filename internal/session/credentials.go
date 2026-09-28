@@ -74,6 +74,23 @@ func (c *Credentials) Set(ctx context.Context, userID, kind string, value []byte
 	return c.Store.Credentials().Upsert(ctx, &store.Credential{UserID: userID, Kind: kind, SecretRef: kind})
 }
 
+// Get returns the raw value of one credential kind, or nil when unset. It
+// exists for hub-side integrations (the GitHub repository picker); values
+// are never returned through the API.
+func (c *Credentials) Get(ctx context.Context, userID, kind string) ([]byte, error) {
+	if !store.ValidCredentialKind(kind) {
+		return nil, &ValidationError{"unknown credential kind " + kind}
+	}
+	sec, err := c.CS.CoreV1().Secrets(c.Namespace).Get(ctx, reconcile.UserSecretName(userID), metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read user secret: %w", err)
+	}
+	return sec.Data[kind], nil
+}
+
 // Delete removes kind from the user's Secret.
 func (c *Credentials) Delete(ctx context.Context, userID, kind string) error {
 	if !store.ValidCredentialKind(kind) {

@@ -109,6 +109,35 @@ func (p *Postgres) Credentials() Credentials { return pgCredentials{p.pool} }
 // Events returns the event aggregate.
 func (p *Postgres) Events() Events { return pgEvents{p.pool} }
 
+// RepoUsage returns the repo usage aggregate.
+func (p *Postgres) RepoUsage() RepoUsage { return pgRepoUsage{p.pool} }
+
+type pgRepoUsage struct{ pool *pgxpool.Pool }
+
+func (r pgRepoUsage) Increment(ctx context.Context, userID, repoKey string) error {
+	_, err := r.pool.Exec(ctx, `INSERT INTO repo_usage (user_id, repo_key, count, last_used_at) VALUES ($1,$2,1,now())
+		ON CONFLICT (user_id, repo_key) DO UPDATE SET count = repo_usage.count + 1, last_used_at = now()`, userID, repoKey)
+	return mapErr(err)
+}
+
+func (r pgRepoUsage) List(ctx context.Context, userID string) (map[string]int, error) {
+	rows, err := r.pool.Query(ctx, `SELECT repo_key, count FROM repo_usage WHERE user_id=$1`, userID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var k string
+		var n int
+		if err := rows.Scan(&k, &n); err != nil {
+			return nil, err
+		}
+		out[k] = n
+	}
+	return out, rows.Err()
+}
+
 func mapErr(err error) error {
 	if err == nil {
 		return nil

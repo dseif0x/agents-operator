@@ -23,7 +23,7 @@ func stores(t *testing.T) map[string]Store {
 			t.Fatalf("open postgres: %v", err)
 		}
 		// Start from a clean slate; tests share one database.
-		_, _ = pg.pool.Exec(ctx, "TRUNCATE session_events, sessions, user_credentials, users")
+		_, _ = pg.pool.Exec(ctx, "TRUNCATE session_events, sessions, user_credentials, repo_usage, users")
 		t.Cleanup(pg.Close)
 		out["postgres"] = pg
 	} else {
@@ -173,6 +173,32 @@ func exercise(t *testing.T, st Store) {
 	cs, _ = st.Credentials().List(ctx, u.ID)
 	if len(cs) != 1 {
 		t.Fatalf("after delete = %d", len(cs))
+	}
+
+	// repo usage
+	for _, k := range []string{"github.com/a/b", "github.com/a/b", "github.com/c/d"} {
+		if err := st.RepoUsage().Increment(ctx, u.ID, k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	usage, err := st.RepoUsage().List(ctx, u.ID)
+	if err != nil || usage["github.com/a/b"] != 2 || usage["github.com/c/d"] != 1 || len(usage) != 2 {
+		t.Fatalf("usage = %v, %v", usage, err)
+	}
+	if other, _ := st.RepoUsage().List(ctx, adm.ID); len(other) != 0 {
+		t.Fatalf("usage leaked across users: %v", other)
+	}
+}
+
+func TestRepoKey(t *testing.T) {
+	want := "github.com/owner/repo"
+	for _, in := range []string{
+		"https://github.com/Owner/Repo.git", "git@github.com:owner/repo.git", "ssh://git@github.com/owner/repo",
+		"https://github.com/owner/repo/", "HTTPS://GITHUB.COM/owner/repo.git", "https://x-access-token:abc@github.com/owner/repo.git",
+	} {
+		if got := RepoKey(in); got != want {
+			t.Errorf("RepoKey(%q) = %q", in, got)
+		}
 	}
 }
 
