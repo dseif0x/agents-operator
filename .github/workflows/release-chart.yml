@@ -41,11 +41,34 @@ jobs:
           cat charts/agents-operator/Chart.yaml
       - run: helm dependency update charts/agents-operator
       - run: helm lint charts/agents-operator --strict
-      - uses: helm/chart-releaser-action@v1
+      - name: install chart-releaser
+        uses: helm/chart-releaser-action@v1
         with:
-          charts_dir: charts
-          pages_branch: gh-pages
-          skip_existing: true
+          install_only: true
+      - name: package chart
+        run: |
+          mkdir -p .cr-release-packages
+          helm package charts/agents-operator -d .cr-release-packages
+          ls -l .cr-release-packages
+      # The chart is attached to the vX.Y.Z release that release-images
+      # created, so this workflow never has to create a tag or a release of
+      # its own (which the Actions token cannot do once immutable releases
+      # or tag rules are enabled).
+      - name: attach chart to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" .cr-release-packages/agents-operator-${TAG#v}.tgz --clobber
+      - name: update index.yaml on gh-pages
         env:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CR_RELEASE_NAME_TEMPLATE: "{{ .Name }}-{{ .Version }}"
+        run: |
+          cr index \
+            --owner "${GITHUB_REPOSITORY%%/*}" \
+            --git-repo "${GITHUB_REPOSITORY#*/}" \
+            --pages-branch gh-pages \
+            --package-path .cr-release-packages \
+            --release-name-template "v{{ .Version }}" \
+            --index-path .cr-index/index.yaml \
+            --push
