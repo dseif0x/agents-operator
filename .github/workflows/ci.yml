@@ -130,6 +130,9 @@ jobs:
 
   images:
     name: cross-build images (no push)
+    # The arm64 build runs under QEMU and takes long, so it only runs on
+    # main, not on pull requests. Tags build and push the real images.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     strategy:
       matrix:
