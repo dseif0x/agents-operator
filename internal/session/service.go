@@ -336,7 +336,7 @@ func (s *Service) RestartAgent(ctx context.Context, owner *store.User, id string
 // SaveLogin exports the CLI's credential file from the running session and
 // stores it in the user's Secret so later sessions start logged in.
 func (s *Service) SaveLogin(ctx context.Context, owner *store.User, id, kind string) error {
-	if _, ok := runner.LoginFile[kind]; !ok {
+	if _, ok := runner.LoginFiles[kind]; !ok {
 		return &ValidationError{"unknown login kind"}
 	}
 	sess, err := s.Get(ctx, owner.ID, id)

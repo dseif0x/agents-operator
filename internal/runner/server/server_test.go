@@ -3,10 +3,13 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +72,7 @@ type testEnv struct {
 	proc *Process
 	srv  *httptest.Server
 	tok  string
+	home string
 }
 
 func newTestEnv(t *testing.T, script string) *testEnv {
@@ -81,10 +85,11 @@ func newTestEnv(t *testing.T, script string) *testEnv {
 		t.Fatalf("start: %v", err)
 	}
 	t.Cleanup(proc.Close)
-	s := &Server{Proc: proc, Token: "secret", Agent: "shell", Home: t.TempDir(), Log: log}
+	home := t.TempDir()
+	s := &Server{Proc: proc, Token: "secret", Agent: "shell", Home: home, Log: log}
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
-	return &testEnv{proc: proc, srv: srv, tok: "secret"}
+	return &testEnv{proc: proc, srv: srv, tok: "secret", home: home}
 }
 
 func (e *testEnv) dial(t *testing.T) *websocket.Conn {
@@ -295,5 +300,35 @@ func TestExportLogin(t *testing.T) {
 	m := readControl(t, c, runner.MsgError)
 	if !strings.Contains(m.Message, "not found") {
 		t.Fatalf("unexpected: %+v", m)
+	}
+
+	// With the credential file and the companion state file present, both
+	// travel in one bundle; a missing companion is fine.
+	home := e.home
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", ".credentials.json"), []byte(`{"tok":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"hasCompletedOnboarding":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Write(context.Background(), websocket.MessageText, []byte(`{"t":"export_login","kind":"claude_login"}`)); err != nil {
+		t.Fatal(err)
+	}
+	m = readControl(t, c, runner.MsgLogin)
+	raw, err := base64.StdEncoding.DecodeString(m.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := runner.DecodeLoginBundle(runner.LoginClaude, raw)
+	if string(b.Files[".claude/.credentials.json"]) != `{"tok":1}` || string(b.Files[".claude.json"]) != `{"hasCompletedOnboarding":true}` {
+		t.Fatalf("bundle = %+v", b.Files)
+	}
+	// Legacy raw saves decode as a one-file bundle.
+	legacy := runner.DecodeLoginBundle(runner.LoginClaude, []byte(`{"tok":2}`))
+	if string(legacy.Files[".claude/.credentials.json"]) != `{"tok":2}` || len(legacy.Files) != 1 {
+		t.Fatalf("legacy = %+v", legacy.Files)
 	}
 }

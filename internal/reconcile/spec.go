@@ -140,7 +140,7 @@ func BuildSecret(s *store.Session, cfg Config, token string, userSecret map[stri
 		}
 	}
 	// Saved CLI logins are seeded on first boot; the runner expects base64.
-	for kind := range runner.LoginFile {
+	for kind := range runner.LoginFiles {
 		if v, ok := userSecret[kind]; ok && len(v) > 0 {
 			data[runner.EnvSeedPrefix+strings.ToUpper(kind)] = []byte(base64.StdEncoding.EncodeToString(v))
 		}
