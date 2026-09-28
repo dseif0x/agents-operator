@@ -24,7 +24,7 @@ export function Login(props: { onLogin: (u: User, csrf: string) => void }) {
   return (
     <div class="page">
       <form class="card login" onSubmit={submit}>
-        <h2 style="margin:0 0 6px">agenthub</h2>
+        <h2 style="margin:0 0 6px">agents-operator</h2>
         <p class="muted" style="margin:0 0 10px">
           Mission control for your coding agents.
         </p>

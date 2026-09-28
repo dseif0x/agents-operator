@@ -1,7 +1,7 @@
 // Dark by default, one light theme, both via CSS variables on <html>.
 export type Theme = "dark" | "light";
 
-const KEY = "agenthub.theme";
+const KEY = "agents-operator.theme";
 
 export function currentTheme(): Theme {
   try {
@@ -22,7 +22,7 @@ export function applyTheme(theme: Theme) {
   } catch {
     /* ignore */
   }
-  dispatchEvent(new CustomEvent("agenthub:theme", { detail: theme }));
+  dispatchEvent(new CustomEvent("agents-operator:theme", { detail: theme }));
 }
 
 export function toggleTheme() {

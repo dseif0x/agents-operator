@@ -8,7 +8,7 @@ tests:
           of: NetworkPolicy
       - equal:
           path: spec.podSelector.matchExpressions[0].key
-          value: agenthub.io/session
+          value: agents-operator.io/session
       - equal:
           path: spec.policyTypes
           value: [Ingress, Egress]
@@ -25,7 +25,7 @@ tests:
           value: 7681
       - equal:
           path: spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/name"]
-          value: agenthub
+          value: agents-operator
       - equal:
           path: spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/instance"]
           value: hub

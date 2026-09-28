@@ -31,11 +31,11 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].image
-          value: ghcr.io/dseif0x/agenthub:1.2.3
+          value: ghcr.io/dseif0x/agents-operator:1.2.3
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: AGENTHUB_RUNNER_IMAGE_TAG
+            name: AGENTS_OPERATOR_RUNNER_IMAGE_TAG
             value: "1.2.3"
 
   - it: builds the database url from the bundled postgresql secret
@@ -45,12 +45,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: AGENTHUB_DATABASE_URL
-            value: "postgres://agenthub:$(AGENTHUB_DB_PASSWORD)@hub-postgresql:5432/agenthub?sslmode=disable"
+            name: AGENTS_OPERATOR_DATABASE_URL
+            value: "postgres://agents_operator:$(AGENTS_OPERATOR_DB_PASSWORD)@hub-postgresql:5432/agents_operator?sslmode=disable"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: AGENTHUB_DB_PASSWORD
+            name: AGENTS_OPERATOR_DB_PASSWORD
             valueFrom:
               secretKeyRef:
                 name: hub-postgresql
@@ -59,17 +59,17 @@ tests:
   - it: uses database.url when postgresql is disabled
     set:
       postgresql.enabled: false
-      database.url: postgres://u:p@db.example:5432/agenthub
+      database.url: postgres://u:p@db.example:5432/agents-operator
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: AGENTHUB_DATABASE_URL
-            value: postgres://u:p@db.example:5432/agenthub
+            name: AGENTS_OPERATOR_DATABASE_URL
+            value: postgres://u:p@db.example:5432/agents-operator
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: AGENTHUB_DB_PASSWORD
+            name: AGENTS_OPERATOR_DB_PASSWORD
           any: true
 
   - it: fails when postgresql is disabled and no database url is given
@@ -86,7 +86,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: AGENTHUB_COOKIE_SECRET
+            name: AGENTS_OPERATOR_COOKIE_SECRET
             valueFrom:
               secretKeyRef:
                 name: my-sealed-secret
@@ -102,15 +102,15 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: AGENTHUB_RUNNER_NODE_SELECTOR
+            name: AGENTS_OPERATOR_RUNNER_NODE_SELECTOR
             value: '{"kubernetes.io/arch":"arm64"}'
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: AGENTHUB_IDLE_STOP_AFTER
+            name: AGENTS_OPERATOR_IDLE_STOP_AFTER
             value: "4h"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: AGENTHUB_RUNNER_RUNTIME_CLASS
+            name: AGENTS_OPERATOR_RUNNER_RUNTIME_CLASS
             value: gvisor

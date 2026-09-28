@@ -318,7 +318,7 @@ func (r *Reconciler) reconcileCreating(ctx context.Context, sess *store.Session,
 		return r.fail(ctx, sess, "create pod: "+err.Error())
 	}
 	r.event(ctx, sess, "pod", "created "+pod.Name)
-	r.k8sEvent(ctx, pod.Name, "Created", "agenthub created session pod")
+	r.k8sEvent(ctx, pod.Name, "Created", "agents-operator created session pod")
 	return nil
 }
 
@@ -327,7 +327,7 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, sess *store.Session, 
 	case o.pod == nil:
 		return r.fail(ctx, sess, "pod disappeared")
 	case o.pod.DeletionTimestamp != nil:
-		return r.fail(ctx, sess, "pod was deleted outside agenthub")
+		return r.fail(ctx, sess, "pod was deleted outside agents-operator")
 	case PodTerminal(o.pod):
 		return r.fail(ctx, sess, PodReason(o.pod))
 	}
@@ -447,7 +447,7 @@ func (r *Reconciler) k8sEvent(ctx context.Context, podName, reason, msg string) 
 			Kind: "Pod", Namespace: r.cfg.Namespace, Name: podName, APIVersion: "v1",
 		},
 		Reason: reason, Message: msg, Type: corev1.EventTypeNormal,
-		Source:         corev1.EventSource{Component: "agenthub"},
+		Source:         corev1.EventSource{Component: "agents-operator"},
 		FirstTimestamp: now, LastTimestamp: now, Count: 1,
 	}
 	if _, err := r.cs.CoreV1().Events(r.cfg.Namespace).Create(ctx, ev, metav1.CreateOptions{}); err != nil {

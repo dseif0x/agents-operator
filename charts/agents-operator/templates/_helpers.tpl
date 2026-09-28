@@ -1,14 +1,14 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "agenthub.name" -}}
+{{- define "agents-operator.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "agenthub.fullname" -}}
+{{- define "agents-operator.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -21,50 +21,50 @@ Create a default fully qualified app name.
 {{- end }}
 {{- end }}
 
-{{- define "agenthub.chart" -}}
+{{- define "agents-operator.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{- define "agenthub.labels" -}}
-helm.sh/chart: {{ include "agenthub.chart" . }}
-{{ include "agenthub.selectorLabels" . }}
+{{- define "agents-operator.labels" -}}
+helm.sh/chart: {{ include "agents-operator.chart" . }}
+{{ include "agents-operator.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
-{{- define "agenthub.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "agenthub.name" . }}
+{{- define "agents-operator.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "agents-operator.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: hub
 {{- end }}
 
-{{- define "agenthub.serviceAccountName" -}}
+{{- define "agents-operator.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "agenthub.fullname" .) .Values.serviceAccount.name }}
+{{- default (include "agents-operator.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
 
 {{/* Name of the Secret holding cookieSecret and the admin password. */}}
-{{- define "agenthub.authSecretName" -}}
+{{- define "agents-operator.authSecretName" -}}
 {{- if .Values.auth.existingSecret }}
 {{- .Values.auth.existingSecret }}
 {{- else }}
-{{- printf "%s-auth" (include "agenthub.fullname" .) }}
+{{- printf "%s-auth" (include "agents-operator.fullname" .) }}
 {{- end }}
 {{- end }}
 
-{{- define "agenthub.publicHost" -}}
+{{- define "agents-operator.publicHost" -}}
 {{- .Values.publicUrl | trimPrefix "https://" | trimPrefix "http://" | trimSuffix "/" }}
 {{- end }}
 
-{{- define "agenthub.postgresqlHost" -}}
+{{- define "agents-operator.postgresqlHost" -}}
 {{- printf "%s-postgresql" .Release.Name }}
 {{- end }}
 
-{{- define "agenthub.tlsSecretName" -}}
-{{- default (printf "%s-tls" (include "agenthub.fullname" .)) .Values.ingress.tlsSecretName }}
+{{- define "agents-operator.tlsSecretName" -}}
+{{- default (printf "%s-tls" (include "agents-operator.fullname" .)) .Values.ingress.tlsSecretName }}
 {{- end }}

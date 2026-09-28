@@ -24,7 +24,7 @@ ARG CLAUDE_CODE_VERSION=latest
 ARG OPENCODE_VERSION=latest
 ARG CODEX_VERSION=latest
 
-LABEL org.opencontainers.image.title="agenthub-runner" \
+LABEL org.opencontainers.image.title="agents-operator-runner" \
       org.opencontainers.image.description="Session pod image: agent CLIs under a PTY served over WebSocket" \
       org.opencontainers.image.source="https://github.com/dseif0x/agents-operator" \
       org.opencontainers.image.version="${VERSION}" \
@@ -37,6 +37,14 @@ RUN apt-get update \
       python3 build-essential locales \
  && sed -i 's/^# *C.UTF-8/C.UTF-8/' /etc/locale.gen && locale-gen \
  && rm -rf /var/lib/apt/lists/*
+
+# GitHub CLI from GitHub's apt repository (amd64 and arm64).
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+ && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+ && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=${TARGETARCH} signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/* \
+ && gh --version
 
 # Node 22 LTS from nodejs.org, arch-aware.
 RUN case "${TARGETARCH}" in amd64) NODE_ARCH=x64 ;; arm64) NODE_ARCH=arm64 ;; *) echo "unsupported arch ${TARGETARCH}" && exit 1 ;; esac \

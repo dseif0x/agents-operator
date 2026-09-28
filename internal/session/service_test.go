@@ -27,7 +27,7 @@ func newService(t *testing.T) (*Service, *fakeOrch, *store.User) {
 	orch := &fakeOrch{}
 	svc := &Service{
 		Store: st, Orch: orch, Broker: NewBroker(),
-		Creds:    &Credentials{Store: st, CS: fake.NewClientset(), Namespace: "agenthub"},
+		Creds:    &Credentials{Store: st, CS: fake.NewClientset(), Namespace: "agents-operator"},
 		Defaults: Defaults{PVCSize: "20Gi", StorageClass: "nfs-fast", Autonomous: true},
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -47,8 +47,11 @@ func TestCreateValidation(t *testing.T) {
 		{"bad size", CreateRequest{Name: "ok", Agent: "claude", PVCSize: "lots"}},
 		{"reserved env", CreateRequest{Name: "ok", Agent: "claude", Env: map[string]string{"RUNNER_TOKEN": "x"}}},
 		{"bad env key", CreateRequest{Name: "ok", Agent: "claude", Env: map[string]string{"bad key": "x"}}},
-		{"bad branch", CreateRequest{Name: "ok", Agent: "claude", Branch: "-x"}},
+		{"bad branch", CreateRequest{Name: "ok", Agent: "claude", RepoURL: "https://x/y.git", Branch: "-x"}},
 		{"bad tag", CreateRequest{Name: "ok", Agent: "claude", ImageTag: "a/b"}},
+		{"bad path", CreateRequest{Name: "ok", Agent: "claude", Repos: []store.Repo{{URL: "https://x/y.git", Path: "../etc"}}}},
+		{"reserved path", CreateRequest{Name: "ok", Agent: "claude", Repos: []store.Repo{{URL: "https://x/y.git", Path: "home"}}}},
+		{"duplicate path", CreateRequest{Name: "ok", Agent: "claude", RepoURL: "https://x/y.git", Repos: []store.Repo{{URL: "https://z/y.git"}}}},
 	}
 	for _, c := range cases {
 		if _, err := svc.Create(ctx, u, c.req); err == nil {
@@ -72,7 +75,23 @@ func TestLifecycle(t *testing.T) {
 	if sess.State != store.StateCreating || sess.PVCSize != "20Gi" || sess.StorageClass != "nfs-fast" || !sess.Autonomous {
 		t.Fatalf("defaults not applied: %+v", sess)
 	}
-	if len(orch.notified) != 1 || orch.notified[0] != sess.ID {
+	if len(sess.Repos) != 1 || sess.Repos[0].Path != "y" || sess.Repos[0].URL != "git@github.com:x/y.git" {
+		t.Fatalf("shorthand repo not normalised: %+v", sess.Repos)
+	}
+	multi, err := svc.Create(ctx, u, CreateRequest{Name: "multi", Agent: "shell", RepoURL: "https://github.com/a/app.git", Branch: "dev",
+		Repos: []store.Repo{{URL: "https://github.com/a/lib/", Path: "shared-lib"}, {URL: "ssh://git@host/x/tools.git"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(multi.Repos) != 3 || multi.Repos[0].Path != "app" || multi.Repos[0].Branch != "dev" || multi.Repos[1].Path != "shared-lib" || multi.Repos[2].Path != "tools" {
+		t.Fatalf("multi repos = %+v", multi.Repos)
+	}
+	for in, want := range map[string]string{"git@github.com:x/y.git": "y", "https://h/a/b": "b", "https://h/a/b.git/": "b", "weird": "weird", "": "repo"} {
+		if got := RepoPathFromURL(in); got != want {
+			t.Errorf("RepoPathFromURL(%q)=%q want %q", in, got, want)
+		}
+	}
+	if len(orch.notified) < 1 || orch.notified[0] != sess.ID {
 		t.Fatalf("orchestrator not notified: %v", orch.notified)
 	}
 	select {
@@ -185,7 +204,7 @@ func TestViewAndBroker(t *testing.T) {
 	svc, _, u := newService(t)
 	sess, _ := svc.Create(context.Background(), u, CreateRequest{Name: "v", Agent: "shell"})
 	v := svc.View(sess)
-	if v.ID != sess.ID || v.PodName != "agenthub-"+sess.ID || v.Env == nil || v.NeedsAttention {
+	if v.ID != sess.ID || v.PodName != "agents-operator-"+sess.ID || v.Env == nil || v.NeedsAttention {
 		t.Fatalf("view = %+v", v)
 	}
 	b := NewBroker()

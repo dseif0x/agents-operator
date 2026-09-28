@@ -1,5 +1,5 @@
 {
-  "name": "agenthub-web",
+  "name": "agents-operator-web",
   "private": true,
   "version": "0.0.0",
   "type": "module",

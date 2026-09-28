@@ -16,8 +16,15 @@ export function repoShort(url: string): string {
   if (!url) return "no repo";
   return url
     .replace(/^git@[^:]+:/, "")
-    .replace(/^https?:\/\/[^/]+\//, "")
-    .replace(/\.git$/, "");
+    .replace(/^(https?|ssh):\/\/[^/]+\//, "")
+    .replace(/\.git\/?$/, "");
+}
+
+/** "owner/repo@branch (+2 more)" for a session's repo list. */
+export function reposSummary(repos: { url: string; branch?: string }[] | undefined): string {
+  if (!repos || repos.length === 0) return "no repo";
+  const first = repoShort(repos[0].url) + (repos[0].branch ? `@${repos[0].branch}` : "");
+  return repos.length > 1 ? `${first} +${repos.length - 1}` : first;
 }
 
 export function stateLabel(state: string): string {

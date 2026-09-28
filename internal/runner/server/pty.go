@@ -255,7 +255,7 @@ func (p *Process) Restart(ctx context.Context) error {
 	p.mu.Lock()
 	p.restarts++
 	p.mu.Unlock()
-	p.broadcast([]byte("\r\n\x1b[2m[agenthub] restarting agent\x1b[0m\r\n"))
+	p.broadcast([]byte("\r\n\x1b[2m[agents-operator] restarting agent\x1b[0m\r\n"))
 	return p.Start()
 }
 

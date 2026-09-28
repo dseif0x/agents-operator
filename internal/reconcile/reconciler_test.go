@@ -31,14 +31,14 @@ func newHarness(t *testing.T) *harness {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	cs := fake.NewClientset()
-	inf := k8s.NewInformers(cs, "agenthub", 0)
+	inf := k8s.NewInformers(cs, "agents-operator", 0)
 	if err := inf.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	st := store.NewMemory()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	r := New(testCfg(), st, cs, inf, nil, time.Hour, log)
-	return &harness{t: t, ctx: ctx, cs: cs, st: st, r: r, ns: "agenthub"}
+	return &harness{t: t, ctx: ctx, cs: cs, st: st, r: r, ns: "agents-operator"}
 }
 
 // eventually polls until fn returns true; informer caches are async.
@@ -120,7 +120,7 @@ func (h *harness) converge(id string) {
 }
 
 func newSession(h *harness) *store.Session {
-	s := &store.Session{OwnerID: "u1", Name: "one", Agent: "claude", RepoURL: "https://x/y.git", State: store.StateCreating, PVCSize: "5Gi"}
+	s := &store.Session{OwnerID: "u1", Name: "one", Agent: "claude", Repos: []store.Repo{{URL: "https://x/y.git", Path: "y"}}, State: store.StateCreating, PVCSize: "5Gi"}
 	if err := h.st.Sessions().Create(h.ctx, s); err != nil {
 		h.t.Fatal(err)
 	}

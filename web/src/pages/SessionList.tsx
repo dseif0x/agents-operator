@@ -2,7 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { api, subscribeSessions, type Session, type User } from "../api";
 import { Nav } from "../components/Nav";
 import { Link } from "../router";
-import { repoShort, stateLabel, timeAgo } from "../util";
+import { reposSummary, stateLabel, timeAgo } from "../util";
 
 export function SessionList(props: { user: User; onLogout: () => void }) {
   const [sessions, setSessions] = useState<Session[] | null>(null);
@@ -85,8 +85,7 @@ function SessionCard({ s }: { s: Session }) {
           {s.state !== "running" && <span class="badge">{stateLabel(s.state)}</span>}
         </div>
         <div class="sub">
-          {repoShort(s.repo_url)}
-          {s.branch ? `@${s.branch}` : ""} · output {timeAgo(s.last_output_at)}
+          {reposSummary(s.repos)} · output {timeAgo(s.last_output_at)}
           {s.state_reason ? ` · ${s.state_reason}` : ""}
         </div>
         {s.tail && <div class="tail">{s.tail}</div>}

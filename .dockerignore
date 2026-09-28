@@ -5,7 +5,7 @@ dist
 web/node_modules
 web/dist
 internal/ui/dist
-charts/agenthub/charts
+charts/agents-operator/charts
 hack/dev.env
 *.test
 coverage.out

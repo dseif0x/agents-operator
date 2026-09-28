@@ -1,4 +1,4 @@
-// Command agenthub is the hub: REST API, WebSocket terminal proxy,
+// Command agents-operator is the hub: REST API, WebSocket terminal proxy,
 // Kubernetes reconciler and the embedded web UI, in one binary.
 package main
 
@@ -42,19 +42,19 @@ func main() {
 		}
 	}
 	if err := run(); err != nil {
-		slog.Error("agenthub exited", "err", err)
+		slog.Error("agents-operator exited", "err", err)
 		os.Exit(1)
 	}
 }
 
 // hashPassword prints an argon2id hash for auth.adminPasswordHash. The
-// password is read from the AGENTHUB_PASSWORD env var or stdin.
+// password is read from the AGENTS_OPERATOR_PASSWORD env var or stdin.
 func hashPassword(_ []string) int {
-	pw := os.Getenv("AGENTHUB_PASSWORD")
+	pw := os.Getenv("AGENTS_OPERATOR_PASSWORD")
 	if pw == "" {
 		var line string
 		if _, err := fmt.Fscanln(os.Stdin, &line); err != nil {
-			fmt.Fprintln(os.Stderr, "usage: AGENTHUB_PASSWORD=... agenthub hash-password  (or pipe the password on stdin)")
+			fmt.Fprintln(os.Stderr, "usage: AGENTS_OPERATOR_PASSWORD=... agents-operator hash-password  (or pipe the password on stdin)")
 			return 2
 		}
 		pw = line
@@ -79,7 +79,7 @@ func run() error {
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
-	log.Info("agenthub starting", "version", version, "namespace", cfg.Namespace, "public_url", cfg.PublicURL.String(), "ui", ui.Built)
+	log.Info("agents-operator starting", "version", version, "namespace", cfg.Namespace, "public_url", cfg.PublicURL.String(), "ui", ui.Built)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

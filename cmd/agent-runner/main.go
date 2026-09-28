@@ -20,6 +20,7 @@ import (
 
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/runner/server"
+	"github.com/dseif0x/agents-operator/internal/store"
 )
 
 func main() {
@@ -55,7 +56,7 @@ func run() int {
 		return 2
 	}
 
-	ws := Workspace{Root: *workspace, Log: log}
+	ws := &Workspace{Root: *workspace, Log: log}
 	if !*skipBoot {
 		if err := ws.Bootstrap(context.Background()); err != nil {
 			log.Error("bootstrap failed", "err", err)
@@ -166,23 +167,26 @@ func parseLevel(s string) slog.Level {
 	return l
 }
 
-// Workspace is the PVC layout: /workspace/home is HOME, /workspace/repo is
-// the checkout.
+// Workspace is the PVC layout: /workspace/home is HOME and every repo is
+// checked out into /workspace/<path>.
 type Workspace struct {
-	Root string
-	Log  *slog.Logger
+	Root  string
+	Log   *slog.Logger
+	repos []store.Repo
 }
 
 // HomeDir is the agent's HOME on the PVC.
-func (w Workspace) HomeDir() string { return filepath.Join(w.Root, "home") }
+func (w *Workspace) HomeDir() string { return filepath.Join(w.Root, "home") }
 
-// RepoDir is the checkout directory on the PVC.
-func (w Workspace) RepoDir() string { return filepath.Join(w.Root, "repo") }
-
-// WorkDir is the directory the agent starts in: the checkout when it
+// WorkDir is the directory the agent starts in: the first repo when it
 // exists, otherwise the workspace root, otherwise the current directory.
-func (w Workspace) WorkDir() string {
-	for _, d := range []string{w.RepoDir(), w.Root} {
+func (w *Workspace) WorkDir() string {
+	candidates := []string{}
+	if repos, err := w.Repos(); err == nil && len(repos) > 0 {
+		candidates = append(candidates, filepath.Join(w.Root, repos[0].Path))
+	}
+	candidates = append(candidates, w.Root)
+	for _, d := range candidates {
 		if st, err := os.Stat(d); err == nil && st.IsDir() {
 			return d
 		}

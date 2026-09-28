@@ -48,6 +48,7 @@ const (
 	CredOpenAIAPIKey     = "openai_api_key"
 	CredGitSSHKey        = "git_ssh_key"
 	CredGitHTTPSToken    = "git_https_token"
+	CredGitHubToken      = "github_token"
 	CredGitUserName      = "git_user_name"
 	CredGitUserEmail     = "git_user_email"
 	CredClaudeLogin      = "claude_login"
@@ -57,7 +58,7 @@ const (
 // CredentialKinds lists every accepted kind.
 var CredentialKinds = []string{
 	CredAnthropicAPIKey, CredAnthropicBaseURL, CredOpenAIAPIKey,
-	CredGitSSHKey, CredGitHTTPSToken, CredGitUserName, CredGitUserEmail,
+	CredGitSSHKey, CredGitHTTPSToken, CredGitHubToken, CredGitUserName, CredGitUserEmail,
 	CredClaudeLogin, CredCodexLogin,
 }
 
@@ -65,7 +66,7 @@ var CredentialKinds = []string{
 // back by the API. The others (base URL, git identity) are plain settings.
 var SecretKinds = map[string]bool{
 	CredAnthropicAPIKey: true, CredOpenAIAPIKey: true, CredGitSSHKey: true,
-	CredGitHTTPSToken: true, CredClaudeLogin: true, CredCodexLogin: true,
+	CredGitHTTPSToken: true, CredGitHubToken: true, CredClaudeLogin: true, CredCodexLogin: true,
 }
 
 // ValidCredentialKind reports whether kind is known.
@@ -87,14 +88,21 @@ type Credential struct {
 	UpdatedAt time.Time
 }
 
+// Repo is one repository checked out into /workspace/<Path> on first boot.
+// The first repo of a session is where the agent starts.
+type Repo struct {
+	URL    string `json:"url"`
+	Branch string `json:"branch,omitempty"`
+	Path   string `json:"path"`
+}
+
 // Session is one row of the sessions table.
 type Session struct {
 	ID             string
 	OwnerID        string
 	Name           string
 	Agent          string
-	RepoURL        string
-	Branch         string
+	Repos          []Repo
 	ImageTag       string
 	PVCSize        string
 	StorageClass   string

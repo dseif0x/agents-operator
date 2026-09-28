@@ -26,13 +26,13 @@ func TestLoadRequired(t *testing.T) {
 
 func TestLoadDefaults(t *testing.T) {
 	c, err := load(env(map[string]string{
-		"AGENTHUB_DATABASE_URL":       "postgres://x",
-		"AGENTHUB_PUBLIC_URL":         "https://agenthub.example.com",
-		"AGENTHUB_COOKIE_SECRET":      strings.Repeat("ab", 32),
-		"AGENTHUB_NAMESPACE":          "agenthub",
-		"AGENTHUB_ALLOWED_HOSTS":      "localhost:8080, Other.Example.com",
-		"AGENTHUB_RUNNER_TOLERATIONS": `[{"key":"arm","operator":"Exists"}]`,
-		"AGENTHUB_IDLE_STOP_AFTER":    "4h",
+		"AGENTS_OPERATOR_DATABASE_URL":       "postgres://x",
+		"AGENTS_OPERATOR_PUBLIC_URL":         "https://agents-operator.example.com",
+		"AGENTS_OPERATOR_COOKIE_SECRET":      strings.Repeat("ab", 32),
+		"AGENTS_OPERATOR_NAMESPACE":          "agents-operator",
+		"AGENTS_OPERATOR_ALLOWED_HOSTS":      "localhost:8080, Other.Example.com",
+		"AGENTS_OPERATOR_RUNNER_TOLERATIONS": `[{"key":"arm","operator":"Exists"}]`,
+		"AGENTS_OPERATOR_IDLE_STOP_AFTER":    "4h",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -40,10 +40,10 @@ func TestLoadDefaults(t *testing.T) {
 	if c.ListenAddr != ":8080" || c.DefaultPVCSize != "20Gi" || c.RunnerImageTag != "latest" {
 		t.Errorf("defaults wrong: %+v", c)
 	}
-	if !c.Secure() || c.PublicHost() != "agenthub.example.com" {
+	if !c.Secure() || c.PublicHost() != "agents-operator.example.com" {
 		t.Errorf("public url wrong: %+v", c.PublicURL)
 	}
-	want := []string{"localhost:8080", "other.example.com", "agenthub.example.com"}
+	want := []string{"localhost:8080", "other.example.com", "agents-operator.example.com"}
 	if strings.Join(c.AllowedHosts, ",") != strings.Join(want, ",") {
 		t.Errorf("allowed hosts = %v", c.AllowedHosts)
 	}
@@ -60,10 +60,10 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadBadValues(t *testing.T) {
 	_, err := load(env(map[string]string{
-		"AGENTHUB_DATABASE_URL":  "postgres://x",
-		"AGENTHUB_PUBLIC_URL":    "not a url",
-		"AGENTHUB_COOKIE_SECRET": "abcd",
-		"AGENTHUB_LISTEN_ADDR":   "nope",
+		"AGENTS_OPERATOR_DATABASE_URL":  "postgres://x",
+		"AGENTS_OPERATOR_PUBLIC_URL":    "not a url",
+		"AGENTS_OPERATOR_COOKIE_SECRET": "abcd",
+		"AGENTS_OPERATOR_LISTEN_ADDR":   "nope",
 	}))
 	if err == nil {
 		t.Fatal("expected error")

@@ -11,11 +11,11 @@ import (
 )
 
 // stores returns the implementations under test: always Memory, and
-// Postgres when AGENTHUB_TEST_DATABASE_URL is set (CI provides one).
+// Postgres when AGENTS_OPERATOR_TEST_DATABASE_URL is set (CI provides one).
 func stores(t *testing.T) map[string]Store {
 	t.Helper()
 	out := map[string]Store{"memory": NewMemory()}
-	if url := os.Getenv("AGENTHUB_TEST_DATABASE_URL"); url != "" {
+	if url := os.Getenv("AGENTS_OPERATOR_TEST_DATABASE_URL"); url != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		pg, err := Open(ctx, url, slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -27,7 +27,7 @@ func stores(t *testing.T) map[string]Store {
 		t.Cleanup(pg.Close)
 		out["postgres"] = pg
 	} else {
-		t.Log("AGENTHUB_TEST_DATABASE_URL not set; skipping postgres")
+		t.Log("AGENTS_OPERATOR_TEST_DATABASE_URL not set; skipping postgres")
 	}
 	return out
 }
@@ -70,7 +70,7 @@ func exercise(t *testing.T, st Store) {
 
 	// sessions
 	s := &Session{
-		OwnerID: u.ID, Name: "one", Agent: "claude", RepoURL: "https://example.com/r.git", Branch: "main",
+		OwnerID: u.ID, Name: "one", Agent: "claude", Repos: []Repo{{URL: "https://example.com/r.git", Branch: "main", Path: "r"}},
 		PVCSize: "20Gi", StorageClass: "nfs-fast", State: StateCreating, Autonomous: true,
 		Resources:    config.Resources{Requests: config.ResourceList{CPU: "250m"}, Limits: config.ResourceList{Memory: "1Gi"}},
 		NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"},
@@ -84,7 +84,7 @@ func exercise(t *testing.T, st Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.Name != "one" || g.Generation != 1 || g.Resources.Limits.Memory != "1Gi" || g.NodeSelector["kubernetes.io/arch"] != "amd64" ||
+	if g.Name != "one" || g.Generation != 1 || len(g.Repos) != 1 || g.Repos[0].Path != "r" || g.Repos[0].Branch != "main" || g.Resources.Limits.Memory != "1Gi" || g.NodeSelector["kubernetes.io/arch"] != "amd64" ||
 		len(g.Tolerations) != 1 || g.Env["FOO"] != "bar" || !g.Autonomous || g.LastOutputAt != nil {
 		t.Fatalf("round trip lost data: %+v", g)
 	}

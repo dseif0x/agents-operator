@@ -57,7 +57,7 @@ tests:
           value: Role
       - equal:
           path: subjects[0].name
-          value: hub-agenthub
+          value: hub-agents-operator
       - equal:
           path: subjects[0].namespace
           value: agents

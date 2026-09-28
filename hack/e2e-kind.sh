@@ -4,7 +4,7 @@
 # start, delete, and check the objects go away. Nice to have, not run in CI.
 set -euo pipefail
 
-NS=${NS:-agenthub}
+NS=${NS:-agents-operator}
 HUB=${HUB:-http://localhost:8080}
 JAR=$(mktemp)
 trap 'rm -f "$JAR"' EXIT
@@ -24,7 +24,7 @@ for _ in $(seq 1 60); do
 done
 [ "$state" = running ]
 
-kubectl -n "$NS" get pod,pvc,secret -l "agenthub.io/session=$ID"
+kubectl -n "$NS" get pod,pvc,secret -l "agents-operator.io/session=$ID"
 sleep 3
 api "$HUB/api/v1/sessions/$ID/scrollback" | tail -c 300; echo
 
@@ -33,7 +33,7 @@ for _ in $(seq 1 30); do
   [ "$(api "$HUB/api/v1/sessions/$ID" | jq -r .state)" = stopped ] && break
   sleep 2
 done
-kubectl -n "$NS" get pvc "agenthub-$ID" >/dev/null && echo "pvc kept after stop"
+kubectl -n "$NS" get pvc "agents-operator-$ID" >/dev/null && echo "pvc kept after stop"
 
 api -X POST "$HUB/api/v1/sessions/$ID/start" >/dev/null
 for _ in $(seq 1 60); do
@@ -44,7 +44,7 @@ echo "restarted on the same pvc"
 
 api -X DELETE "$HUB/api/v1/sessions/$ID" >/dev/null
 for _ in $(seq 1 60); do
-  if ! kubectl -n "$NS" get pod,pvc,secret -l "agenthub.io/session=$ID" 2>/dev/null | grep -q agenthub; then
+  if ! kubectl -n "$NS" get pod,pvc,secret -l "agents-operator.io/session=$ID" 2>/dev/null | grep -q agents-operator; then
     echo "all objects gone"; exit 0
   fi
   sleep 2

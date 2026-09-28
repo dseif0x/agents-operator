@@ -5,13 +5,13 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "agenthub.fullname" . }}-sessions
+  name: {{ include "agents-operator.fullname" . }}-sessions
   labels:
-    {{- include "agenthub.labels" . | nindent 4 }}
+    {{- include "agents-operator.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchExpressions:
-      - key: agenthub.io/session
+      - key: agents-operator.io/session
         operator: Exists
   policyTypes:
     - Ingress
@@ -20,7 +20,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              {{- include "agenthub.selectorLabels" . | nindent 14 }}
+              {{- include "agents-operator.selectorLabels" . | nindent 14 }}
       ports:
         - protocol: TCP
           port: 7681

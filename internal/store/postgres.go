@@ -168,13 +168,13 @@ func (r pgUsers) UpsertPassword(ctx context.Context, username, hash string) (*Us
 
 type pgSessions struct{ pool *pgxpool.Pool }
 
-const sessionCols = `id, owner_id, name, agent, repo_url, branch, image_tag, pvc_size, storage_class,
+const sessionCols = `id, owner_id, name, agent, repos, image_tag, pvc_size, storage_class,
 	resources, node_selector, tolerations, env, autonomous, state, state_reason, generation,
 	created_at, updated_at, last_attached_at, last_output_at, deleted_at`
 
 func scanSession(row pgx.Row) (*Session, error) {
 	var s Session
-	err := row.Scan(&s.ID, &s.OwnerID, &s.Name, &s.Agent, &s.RepoURL, &s.Branch, &s.ImageTag, &s.PVCSize, &s.StorageClass,
+	err := row.Scan(&s.ID, &s.OwnerID, &s.Name, &s.Agent, &s.Repos, &s.ImageTag, &s.PVCSize, &s.StorageClass,
 		&s.Resources, &s.NodeSelector, &s.Tolerations, &s.Env, &s.Autonomous, &s.State, &s.StateReason, &s.Generation,
 		&s.CreatedAt, &s.UpdatedAt, &s.LastAttachedAt, &s.LastOutputAt, &s.DeletedAt)
 	if err != nil {
@@ -205,6 +205,9 @@ func (r pgSessions) Create(ctx context.Context, s *Session) error {
 	if s.Generation == 0 {
 		s.Generation = 1
 	}
+	if s.Repos == nil {
+		s.Repos = []Repo{}
+	}
 	if s.NodeSelector == nil {
 		s.NodeSelector = map[string]string{}
 	}
@@ -215,8 +218,8 @@ func (r pgSessions) Create(ctx context.Context, s *Session) error {
 		s.Env = map[string]string{}
 	}
 	_, err := r.pool.Exec(ctx, `INSERT INTO sessions (`+sessionCols+`) VALUES
-		($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
-		s.ID, s.OwnerID, s.Name, s.Agent, s.RepoURL, s.Branch, s.ImageTag, s.PVCSize, s.StorageClass,
+		($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+		s.ID, s.OwnerID, s.Name, s.Agent, s.Repos, s.ImageTag, s.PVCSize, s.StorageClass,
 		s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous, s.State, s.StateReason, s.Generation,
 		s.CreatedAt, s.UpdatedAt, s.LastAttachedAt, s.LastOutputAt, s.DeletedAt)
 	return mapErr(err)

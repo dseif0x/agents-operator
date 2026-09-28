@@ -12,7 +12,7 @@ import (
 
 func testCfg() Config {
 	return Config{
-		Namespace: "agenthub", RunnerImage: "ghcr.io/x/agenthub-runner", RunnerImageTag: "1.0.0",
+		Namespace: "agents-operator", RunnerImage: "ghcr.io/x/agents-operator-runner", RunnerImageTag: "1.0.0",
 		DefaultStorageClass: "nfs-fast", DefaultPVCSize: "20Gi",
 		DefaultResources: config.Resources{
 			Requests: config.ResourceList{CPU: "250m", Memory: "512Mi"},
@@ -28,7 +28,8 @@ func testCfg() Config {
 func testSession() *store.Session {
 	return &store.Session{
 		ID: "11111111-2222-4333-8444-555555555555", OwnerID: "u1", Name: "My Session!", Agent: "claude",
-		RepoURL: "git@github.com:x/y.git", Branch: "main", Autonomous: true, Generation: 3,
+		Repos:      []store.Repo{{URL: "git@github.com:x/y.git", Branch: "main", Path: "y"}, {URL: "https://github.com/x/z.git", Path: "z"}},
+		Autonomous: true, Generation: 3,
 		Env:          map[string]string{"FOO": "bar"},
 		NodeSelector: map[string]string{"kubernetes.io/arch": "arm64"},
 	}
@@ -37,7 +38,7 @@ func testSession() *store.Session {
 func TestBuildPVC(t *testing.T) {
 	s := testSession()
 	pvc := BuildPVC(s, testCfg())
-	if pvc.Name != "agenthub-"+s.ID || *pvc.Spec.StorageClassName != "nfs-fast" {
+	if pvc.Name != "agents-operator-"+s.ID || *pvc.Spec.StorageClassName != "nfs-fast" {
 		t.Fatalf("pvc = %+v", pvc)
 	}
 	if pvc.Spec.Resources.Requests.Storage().String() != "20Gi" || pvc.Spec.AccessModes[0] != corev1.ReadWriteOnce {
@@ -58,14 +59,15 @@ func TestBuildSecret(t *testing.T) {
 	sec := BuildSecret(s, testCfg(), "tok", map[string][]byte{
 		store.CredAnthropicAPIKey: []byte("sk-ant"),
 		store.CredGitSSHKey:       []byte("-----BEGIN"),
+		store.CredGitHubToken:     []byte("ghp_x"),
 		store.CredClaudeLogin:     []byte(`{"a":1}`),
 		"unknown":                 []byte("x"),
 	})
-	if string(sec.Data["RUNNER_TOKEN"]) != "tok" || string(sec.Data["ANTHROPIC_API_KEY"]) != "sk-ant" || string(sec.Data["GIT_SSH_KEY"]) != "-----BEGIN" {
+	if string(sec.Data["RUNNER_TOKEN"]) != "tok" || string(sec.Data["ANTHROPIC_API_KEY"]) != "sk-ant" || string(sec.Data["GIT_SSH_KEY"]) != "-----BEGIN" || string(sec.Data["GH_TOKEN"]) != "ghp_x" {
 		t.Fatalf("data = %v", sec.Data)
 	}
-	if string(sec.Data["AGENTHUB_LOGIN_CLAUDE_LOGIN"]) != "eyJhIjoxfQ==" {
-		t.Fatalf("login seed = %q", sec.Data["AGENTHUB_LOGIN_CLAUDE_LOGIN"])
+	if string(sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"]) != "eyJhIjoxfQ==" {
+		t.Fatalf("login seed = %q", sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"])
 	}
 	if _, ok := sec.Data["unknown"]; ok {
 		t.Fatal("unknown key projected")
@@ -116,7 +118,7 @@ func TestHostname(t *testing.T) {
 func TestBuildPod(t *testing.T) {
 	s := testSession()
 	pod := BuildPod(s, testCfg())
-	if pod.Name != ObjectName(s.ID) || pod.Namespace != "agenthub" || pod.Spec.Hostname != "my-session" {
+	if pod.Name != ObjectName(s.ID) || pod.Namespace != "agents-operator" || pod.Spec.Hostname != "my-session" {
 		t.Fatalf("meta: %+v", pod.ObjectMeta)
 	}
 	if pod.Spec.RestartPolicy != corev1.RestartPolicyNever || *pod.Spec.AutomountServiceAccountToken || *pod.Spec.RuntimeClassName != "gvisor" {
@@ -130,7 +132,7 @@ func TestBuildPod(t *testing.T) {
 		t.Fatal("one container expected")
 	}
 	c := pod.Spec.Containers[0]
-	if c.Image != "ghcr.io/x/agenthub-runner:1.0.0" {
+	if c.Image != "ghcr.io/x/agents-operator-runner:1.0.0" {
 		t.Fatalf("image = %s", c.Image)
 	}
 	csc := c.SecurityContext
@@ -149,8 +151,11 @@ func TestBuildPod(t *testing.T) {
 	for _, e := range c.Env {
 		env[e.Name] = e.Value
 	}
-	if env["AGENT"] != "claude" || env["AUTONOMOUS"] != "true" || env["REPO_URL"] != s.RepoURL || env["REPO_BRANCH"] != "main" || env["FOO"] != "bar" || env["ANTHROPIC_BASE_URL"] != "http://cliproxy" {
+	if env["AGENT"] != "claude" || env["AUTONOMOUS"] != "true" || env["FOO"] != "bar" || env["ANTHROPIC_BASE_URL"] != "http://cliproxy" {
 		t.Fatalf("env = %v", env)
+	}
+	if env["REPOS"] != `[{"url":"git@github.com:x/y.git","branch":"main","path":"y"},{"url":"https://github.com/x/z.git","path":"z"}]` {
+		t.Fatalf("REPOS = %s", env["REPOS"])
 	}
 	if len(c.EnvFrom) != 1 || c.EnvFrom[0].SecretRef.Name != ObjectName(s.ID) {
 		t.Fatalf("envFrom = %+v", c.EnvFrom)
@@ -175,7 +180,7 @@ func TestBuildPod(t *testing.T) {
 		t.Fatalf("mounts = %v", mounts)
 	}
 	s.ImageTag = "dev"
-	if BuildPod(s, testCfg()).Spec.Containers[0].Image != "ghcr.io/x/agenthub-runner:dev" {
+	if BuildPod(s, testCfg()).Spec.Containers[0].Image != "ghcr.io/x/agents-operator-runner:dev" {
 		t.Fatal("image tag override ignored")
 	}
 }
