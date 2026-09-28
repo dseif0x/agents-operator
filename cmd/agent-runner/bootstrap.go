@@ -179,13 +179,10 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 	if len(repos) == 0 {
 		b.WriteString("No repository was cloned. `" + w.Root + "` is an empty workspace.\n")
 	} else {
-		for i, r := range repos {
+		for _, r := range repos {
 			line := fmt.Sprintf("- `%s` ← %s", filepath.Join(w.Root, r.Path), r.URL)
 			if r.Branch != "" {
 				line += " (branch `" + r.Branch + "`)"
-			}
-			if i == 0 && len(repos) > 1 {
-				line += " — primary"
 			}
 			b.WriteString(line + "\n")
 		}

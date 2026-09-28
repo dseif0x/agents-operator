@@ -150,13 +150,17 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     const onTouchEnd = (e: TouchEvent) => {
       if (!touch) return;
       const t = touch;
+      // Always swallow the synthetic mouse/click events iOS would send after
+      // a touch. When a tap opens the keyboard the layout shrinks and the key
+      // bar slides up under the finger, so the late click would land on a key
+      // bar button and close the keyboard again (or send a stray key).
+      // Links on phones go through the Links sheet instead.
+      e.preventDefault();
       if (!t.moved) {
-        // A tap: focus (opens the keyboard). Let the click through for links.
-        if (e.timeStamp - t.t0 < 500) term.focus();
+        if (e.timeStamp - t.t0 < 500 && document.activeElement !== term.textarea) term.focus();
         touch = null;
         return;
       }
-      e.preventDefault();
       // Inertia: keep scrolling with the last velocity, decaying.
       let v = t.v;
       let last = performance.now();
