@@ -100,7 +100,9 @@ git push origin v1.2.3
 That tag produces:
 
 1. `release-images.yml`: multi-arch images `ghcr.io/dseif0x/agents-operator:1.2.3` and `ghcr.io/dseif0x/agents-operator-runner:1.2.3` (plus `latest`, `1.2`, `sha-…`), SBOM and provenance attestations, keyless cosign signatures (non-blocking), and a GitHub Release listing the digests.
-2. `release-chart.yml` (runs when the first succeeds): checks out the tag, rewrites `version` and `appVersion` in `Chart.yaml` to `1.2.3`, packages the chart with `helm/chart-releaser-action`, attaches `agents-operator-1.2.3.tgz` to a release and updates `index.yaml` on the `gh-pages` branch. The chart's default image tags follow `appVersion`, so chart `1.2.3` runs images `1.2.3`.
+2. `release-chart.yml` (runs when the first succeeds): checks out the tag, rewrites `version` and `appVersion` in `Chart.yaml` to `1.2.3`, packages the chart, attaches `agents-operator-1.2.3.tgz` to the same `v1.2.3` GitHub release and regenerates `index.yaml` on the `gh-pages` branch with `cr index`. It never creates a tag or a second release, so it keeps working with immutable releases or tag rulesets enabled. The chart's default image tags follow `appVersion`, so chart `1.2.3` runs images `1.2.3`.
+
+If the chart step ever fails after the images are out, re-run it by hand: Actions → release-chart → Run workflow → tag `v1.2.3`.
 
 Because the version is rewritten at release time, the tag can point at any commit; the value committed in `Chart.yaml` is irrelevant. Use semver for the tags: patch for fixes, minor for features, major for breaking changes to values or the API.
 
