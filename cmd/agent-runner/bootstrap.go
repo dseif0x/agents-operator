@@ -45,6 +45,9 @@ func (w *Workspace) Bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := w.writeAgentsFile(repos); err != nil {
+		w.Log.Warn("cannot write AGENTS.md", "err", err)
+	}
 	var firstErr error
 	for _, r := range repos {
 		dst := filepath.Join(w.Root, r.Path)
@@ -121,14 +124,115 @@ func (w *Workspace) Env() []string {
 		"XDG_CACHE_HOME="+filepath.Join(w.HomeDir(), ".cache"),
 		"npm_config_cache="+filepath.Join(w.HomeDir(), ".npm"),
 	)
-	if os.Getenv(runner.EnvGitSSHKey) != "" {
+	hasSSHKey := os.Getenv(runner.EnvGitSSHKey) != ""
+	if hasSSHKey {
 		env = append(env, "GIT_SSH_COMMAND=ssh -i "+w.sshKeyPath()+" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new")
 	}
 	// gh reads GH_TOKEN; some tools (and GitHub Actions conventions) want GITHUB_TOKEN.
-	if tok := os.Getenv(runner.EnvGitHubToken); tok != "" && !hasGitHubToken {
-		env = append(env, "GITHUB_TOKEN="+tok)
+	ghToken := os.Getenv(runner.EnvGitHubToken)
+	if ghToken != "" && !hasGitHubToken {
+		env = append(env, "GITHUB_TOKEN="+ghToken)
+	}
+	// Git configuration through the environment (git >= 2.31), so it never
+	// depends on ~/.gitconfig and follows the credentials of *this* boot.
+	var gitcfg [][2]string
+	if os.Getenv(runner.EnvGitHTTPSToken) != "" || ghToken != "" {
+		gitcfg = append(gitcfg, [2]string{"credential.helper", "!agent-runner git-credential"})
+	}
+	if ghToken != "" && !hasSSHKey {
+		// Only a token, no SSH key: make git@github.com: and ssh://git@github.com/
+		// remotes go over HTTPS so private repos still clone and push.
+		gitcfg = append(gitcfg,
+			[2]string{"url.https://github.com/.insteadOf", "git@github.com:"},
+			[2]string{"url.https://github.com/.insteadOf", "ssh://git@github.com/"},
+		)
+	}
+	if len(gitcfg) > 0 {
+		env = append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", len(gitcfg)))
+		for i, kv := range gitcfg {
+			env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, kv[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, kv[1]))
+		}
 	}
 	return env
+}
+
+// agentsMarker identifies files this runner generated, so a file the user
+// wrote by hand is never overwritten.
+const agentsMarker = "<!-- agents-operator:generated -->"
+
+// AgentsFile is the path of the generated workspace guide.
+func (w *Workspace) AgentsFile() string { return filepath.Join(w.Root, "AGENTS.md") }
+
+// writeAgentsFile generates /workspace/AGENTS.md describing the environment
+// and the cloned repositories, then links it into each CLI's global
+// instructions file (created only when absent or previously generated):
+// Claude Code reads ~/.claude/CLAUDE.md, Codex ~/.codex/AGENTS.md and
+// OpenCode ~/.config/opencode/AGENTS.md.
+func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
+	var b strings.Builder
+	b.WriteString(agentsMarker + "\n")
+	b.WriteString("# Your workspace\n\n")
+	b.WriteString("You are running inside an agents-operator session: a Kubernetes pod created for this task, with its own persistent volume mounted at `" + w.Root + "`.\n\n")
+	b.WriteString("## Repositories\n\n")
+	if len(repos) == 0 {
+		b.WriteString("No repository was cloned. `" + w.Root + "` is an empty workspace.\n")
+	} else {
+		for i, r := range repos {
+			line := fmt.Sprintf("- `%s` ← %s", filepath.Join(w.Root, r.Path), r.URL)
+			if r.Branch != "" {
+				line += " (branch `" + r.Branch + "`)"
+			}
+			if i == 0 {
+				line += " — your working directory"
+			}
+			b.WriteString(line + "\n")
+		}
+	}
+	b.WriteString("\n## Environment\n\n")
+	b.WriteString("- Everything under `" + w.Root + "` (including `HOME=" + w.HomeDir() + "`) survives stops, restarts and reconnects. `/tmp` is scratch. The rest of the filesystem is read-only.\n")
+	b.WriteString("- You run as an unprivileged user (UID 1000) with no Kubernetes credentials. Network access is limited to DNS, HTTPS (443) and SSH (22) outside the cluster.\n")
+	b.WriteString("- Available tools: git, ripgrep, jq, curl, tmux, Node.js, Python 3, build-essential.\n")
+	if os.Getenv(runner.EnvGitHubToken) != "" {
+		b.WriteString("- The GitHub CLI `gh` is installed and authenticated (`GH_TOKEN`). Use it for pull requests, reviews, issues, checks and Actions runs, e.g. `gh pr view`, `gh pr create`, `gh run list`, `gh run view <id> --log-failed`. HTTPS pushes to github.com use the same token.\n")
+	} else {
+		b.WriteString("- The GitHub CLI `gh` is installed but no GitHub token is configured; it will not be able to call the API.\n")
+	}
+	switch {
+	case os.Getenv(runner.EnvGitSSHKey) != "":
+		b.WriteString("- Git over SSH is configured with a deploy key at `~/.ssh/id_ed25519`.\n")
+	case os.Getenv(runner.EnvGitHubToken) != "":
+		b.WriteString("- No SSH key is configured; `git@github.com:` remotes are rewritten to HTTPS automatically.\n")
+	}
+	if name := os.Getenv(runner.EnvGitUserName); name != "" {
+		b.WriteString("- Commits are authored as " + name + " <" + os.Getenv(runner.EnvGitUserEmail) + ">.\n")
+	}
+	b.WriteString("\n## Conventions\n\n")
+	b.WriteString("- Work on branches and open pull requests rather than pushing to the default branch, unless told otherwise.\n")
+	b.WriteString("- Never write credentials to files inside the repositories; tokens come from the environment.\n")
+	b.WriteString("- Each repository may contain its own AGENTS.md or CLAUDE.md with project rules; those take precedence over this file.\n")
+	content := b.String()
+
+	if err := os.WriteFile(w.AgentsFile(), []byte(content), 0o644); err != nil {
+		return err
+	}
+	// Global instruction files: only touch ours.
+	home := w.HomeDir()
+	for _, p := range []string{
+		filepath.Join(home, ".claude", "CLAUDE.md"),
+		filepath.Join(home, ".codex", "AGENTS.md"),
+		filepath.Join(home, ".config", "opencode", "AGENTS.md"),
+	} {
+		if old, err := os.ReadFile(p); err == nil && !strings.HasPrefix(string(old), agentsMarker) {
+			continue // the user wrote their own
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *Workspace) sshKeyPath() string { return filepath.Join(w.HomeDir(), ".ssh", "id_ed25519") }
@@ -146,9 +250,6 @@ func (w *Workspace) seedGitConfig() error {
 		return nil // never overwrite what the user changed
 	}
 	content := fmt.Sprintf("[user]\n\tname = %s\n\temail = %s\n[init]\n\tdefaultBranch = main\n[safe]\n\tdirectory = *\n", name, email)
-	if os.Getenv(runner.EnvGitHTTPSToken) != "" || os.Getenv(runner.EnvGitHubToken) != "" {
-		content += "[credential]\n\thelper = !agent-runner git-credential\n"
-	}
 	return os.WriteFile(cfg, []byte(content), 0o644)
 }
 

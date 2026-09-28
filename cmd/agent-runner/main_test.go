@@ -5,9 +5,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dseif0x/agents-operator/internal/runner"
+	"github.com/dseif0x/agents-operator/internal/store"
 )
 
 func TestReposAndWorkDir(t *testing.T) {
@@ -57,7 +59,7 @@ func TestEnvHidesSecretsAndAddsGitHubToken(t *testing.T) {
 	ws := &Workspace{Root: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	env := map[string]string{}
 	for _, kv := range ws.Env() {
-		k, v, _ := splitKV(kv)
+		k, v, _ := strings.Cut(kv, "=")
 		env[k] = v
 	}
 	if _, ok := env[runner.EnvRunnerToken]; ok {
@@ -75,15 +77,71 @@ func TestEnvHidesSecretsAndAddsGitHubToken(t *testing.T) {
 	if env["HOME"] != ws.HomeDir() || env["GIT_SSH_COMMAND"] == "" {
 		t.Fatalf("env = %v", env)
 	}
+	// With an SSH key present, remotes are not rewritten but the helper is on.
+	if env["GIT_CONFIG_COUNT"] != "1" || env["GIT_CONFIG_KEY_0"] != "credential.helper" {
+		t.Fatalf("git config env = %v", env)
+	}
+
+	// Token only: git@github.com: remotes go over HTTPS.
+	t.Setenv(runner.EnvGitSSHKey, "")
+	env = map[string]string{}
+	for _, kv := range ws.Env() {
+		k, v, _ := strings.Cut(kv, "=")
+		env[k] = v
+	}
+	if env["GIT_CONFIG_COUNT"] != "3" || env["GIT_CONFIG_KEY_1"] != "url.https://github.com/.insteadOf" || env["GIT_CONFIG_VALUE_1"] != "git@github.com:" {
+		t.Fatalf("rewrite config env = %v", env)
+	}
+	// The test host may carry its own GIT_SSH_COMMAND; ours must not be there.
+	if v := env["GIT_SSH_COMMAND"]; strings.Contains(v, ws.sshKeyPath()) {
+		t.Fatal("GIT_SSH_COMMAND points at a key that was not installed")
+	}
 }
 
-func splitKV(kv string) (string, string, bool) {
-	for i := 0; i < len(kv); i++ {
-		if kv[i] == '=' {
-			return kv[:i], kv[i+1:], true
+func TestAgentsFile(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv(runner.EnvGitHubToken, "ghp_x")
+	t.Setenv(runner.EnvGitSSHKey, "")
+	t.Setenv(runner.EnvGitUserName, "Alice")
+	t.Setenv(runner.EnvGitUserEmail, "a@b.c")
+	ws := &Workspace{Root: root, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := os.MkdirAll(filepath.Join(ws.HomeDir(), ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A hand-written global file must survive.
+	own := filepath.Join(ws.HomeDir(), ".claude", "CLAUDE.md")
+	if err := os.WriteFile(own, []byte("# mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repos := []store.Repo{{URL: "git@github.com:x/app.git", Branch: "main", Path: "app"}, {URL: "https://github.com/x/lib.git", Path: "lib"}}
+	if err := ws.writeAgentsFile(repos); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(ws.AgentsFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{agentsMarker, filepath.Join(root, "app"), "git@github.com:x/app.git", "branch `main`", "your working directory", filepath.Join(root, "lib"), "`gh` is installed and authenticated", "rewritten to HTTPS", "Alice <a@b.c>"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("AGENTS.md missing %q", want)
 		}
 	}
-	return kv, "", false
+	if got, _ := os.ReadFile(own); string(got) != "# mine\n" {
+		t.Fatal("user's CLAUDE.md was overwritten")
+	}
+	for _, p := range []string{filepath.Join(ws.HomeDir(), ".codex", "AGENTS.md"), filepath.Join(ws.HomeDir(), ".config", "opencode", "AGENTS.md")} {
+		if got, err := os.ReadFile(p); err != nil || string(got) != s {
+			t.Errorf("%s not generated: %v", p, err)
+		}
+	}
+	// A second boot regenerates the generated files.
+	if err := ws.writeAgentsFile(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(ws.HomeDir(), ".codex", "AGENTS.md")); !strings.Contains(string(got), "No repository was cloned") {
+		t.Fatal("generated file not refreshed")
+	}
 }
 
 func TestAgentCommand(t *testing.T) {

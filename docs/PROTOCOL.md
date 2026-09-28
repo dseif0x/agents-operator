@@ -79,5 +79,5 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | `GIT_USER_NAME`, `GIT_USER_EMAIL` | per-session Secret | seeded into `~/.gitconfig` |
 | `GIT_SSH_KEY` | per-session Secret | written to `~/.ssh/id_ed25519` (0600); removed from the agent's env |
 | `GIT_HTTPS_TOKEN` | per-session Secret | served by `agent-runner git-credential` for every host, never written to disk |
-| `GH_TOKEN` | per-session Secret | GitHub token for `gh` (also exported as `GITHUB_TOKEN`); the credential helper uses it for `https://github.com` when no `GIT_HTTPS_TOKEN` is set |
+| `GH_TOKEN` | per-session Secret | GitHub token for `gh` (also exported as `GITHUB_TOKEN`); the credential helper uses it for `https://github.com` when no `GIT_HTTPS_TOKEN` is set, and without an SSH key `git@github.com:` remotes are rewritten to HTTPS |
 | `AGENTS_OPERATOR_LOGIN_<KIND>` | per-session Secret | base64 credential file seeded into HOME on first boot |
