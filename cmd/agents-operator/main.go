@@ -20,6 +20,7 @@ import (
 	"github.com/dseif0x/agents-operator/internal/api"
 	"github.com/dseif0x/agents-operator/internal/auth"
 	"github.com/dseif0x/agents-operator/internal/config"
+	"github.com/dseif0x/agents-operator/internal/github"
 	"github.com/dseif0x/agents-operator/internal/k8s"
 	"github.com/dseif0x/agents-operator/internal/reconcile"
 	"github.com/dseif0x/agents-operator/internal/session"
@@ -128,7 +129,7 @@ func run() error {
 	proxy := &term.Proxy{Resolver: &reconcile.Resolver{Informers: inf, Namespace: cfg.Namespace}, OriginPatterns: cfg.AllowedHosts, Log: log}
 	creds := &session.Credentials{Store: st, CS: cs, Namespace: cfg.Namespace}
 	svc := &session.Service{
-		Store: st, Term: proxy, Broker: session.NewBroker(), Creds: creds, IdleStopAfter: cfg.IdleStopAfter, Log: log,
+		Store: st, Term: proxy, Broker: session.NewBroker(), Creds: creds, GitHub: &github.Client{}, IdleStopAfter: cfg.IdleStopAfter, Log: log,
 		Defaults: session.Defaults{PVCSize: cfg.DefaultPVCSize, StorageClass: cfg.DefaultStorageClass, Autonomous: true},
 	}
 	rec := reconcile.New(rcfg, st, cs, inf, svc, cfg.ReconcileInterval, log)

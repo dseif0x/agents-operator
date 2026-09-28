@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/dseif0x/agents-operator/internal/config"
+	"github.com/dseif0x/agents-operator/internal/github"
 	"github.com/dseif0x/agents-operator/internal/reconcile"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/store"
@@ -48,6 +49,7 @@ type Service struct {
 	Term          *term.Proxy
 	Broker        *Broker
 	Creds         *Credentials
+	GitHub        *github.Client
 	Defaults      Defaults
 	IdleStopAfter time.Duration
 	Log           *slog.Logger
@@ -213,6 +215,11 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 		return nil, err
 	}
 	s.event(ctx, sess.ID, "user", "created by "+owner.Username)
+	for _, r := range repos {
+		if err := s.Store.RepoUsage().Increment(ctx, owner.ID, store.RepoKey(r.URL)); err != nil {
+			s.Log.Debug("record repo usage failed", "err", err)
+		}
+	}
 	s.Orch.Notify(sess.ID)
 	s.SessionChanged(ctx, sess)
 	return sess, nil

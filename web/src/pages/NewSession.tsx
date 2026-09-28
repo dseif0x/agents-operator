@@ -1,5 +1,5 @@
-import { useEffect, useState } from "preact/hooks";
-import { api, type CreateSessionRequest, type Repo, type User } from "../api";
+import { useEffect, useMemo, useState } from "preact/hooks";
+import { api, type CreateSessionRequest, type GitHubRepo, type Repo, type User } from "../api";
 import { Nav } from "../components/Nav";
 import { navigate } from "../router";
 
@@ -33,10 +33,39 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
   const [autonomous, setAutonomous] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [gh, setGh] = useState<{ configured: boolean; repos: GitHubRepo[]; error?: string } | null>(null);
+  const [ghLoading, setGhLoading] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const loadGitHub = (refresh = false) => {
+    setGhLoading(true);
+    api
+      .githubRepos(refresh)
+      .then(setGh)
+      .catch((e) => setGh({ configured: true, repos: [], error: (e as Error).message }))
+      .finally(() => setGhLoading(false));
+  };
 
   useEffect(() => {
     api.sessions().then((r) => r.agents?.length && setAgents(r.agents)).catch(() => undefined);
+    loadGitHub();
   }, []);
+
+  // Search across name and description; the server already sorted by usage, then name.
+  const filtered = useMemo(() => {
+    const list = gh?.repos ?? [];
+    const q = query.trim().toLowerCase();
+    const terms = q ? q.split(/\s+/) : [];
+    return list.filter((r) => terms.every((t) => r.full_name.toLowerCase().includes(t) || (r.description || "").toLowerCase().includes(t))).slice(0, 60);
+  }, [gh, query]);
+
+  const selectedUrls = useMemo(() => new Set(parseRepos(repos).repos.map((r) => r.url.toLowerCase())), [repos]);
+
+  const addRepo = (r: GitHubRepo) => {
+    const line = `${r.clone_url} ${r.default_branch}`;
+    setRepos((cur) => (cur.trim() ? cur.replace(/\s*$/, "") + "\n" + line + "\n" : line + "\n"));
+    if (!name) setName(r.full_name.split("/")[1] ?? "");
+  };
 
   const submit = async (e: Event) => {
     e.preventDefault();
@@ -93,6 +122,43 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
             </select>
           </div>
         </div>
+        {gh?.configured && (
+          <div class="repo-browser">
+            <label style="margin-top:14px">Browse your GitHub repositories</label>
+            <div class="row">
+              <input
+                value={query}
+                onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
+                placeholder="Search by name or description…"
+                style="flex:1"
+              />
+              <button type="button" class="btn small" onClick={() => loadGitHub(true)} disabled={ghLoading} title="Reload from GitHub">
+                {ghLoading ? "…" : "↻"}
+              </button>
+            </div>
+            {gh.error && <div class="error">{gh.error}</div>}
+            <ul class="repo-list">
+              {filtered.map((r) => {
+                const selected = selectedUrls.has(r.clone_url.toLowerCase()) || selectedUrls.has(r.ssh_url?.toLowerCase());
+                return (
+                  <li key={r.full_name}>
+                    <button type="button" class={`repo-row ${selected ? "selected" : ""}`} onClick={() => !selected && addRepo(r)} disabled={selected}>
+                      <span class="repo-name">
+                        {r.full_name}
+                        {r.private && <span class="badge">private</span>}
+                        {r.archived && <span class="badge">archived</span>}
+                        {r.uses > 0 && <span class="badge agent">used {r.uses}×</span>}
+                      </span>
+                      {r.description && <span class="repo-desc">{r.description}</span>}
+                    </button>
+                  </li>
+                );
+              })}
+              {!ghLoading && filtered.length === 0 && <li class="muted" style="padding:8px">No repositories match.</li>}
+              {ghLoading && gh.repos.length === 0 && <li class="muted" style="padding:8px">Loading repositories…</li>}
+            </ul>
+          </div>
+        )}
         <label>Repositories (one per line: url, optional branch, optional directory name)</label>
         <textarea
           value={repos}

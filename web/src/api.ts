@@ -60,6 +60,18 @@ export interface Credential {
   updated_at: string;
 }
 
+export interface GitHubRepo {
+  full_name: string;
+  clone_url: string;
+  ssh_url: string;
+  default_branch: string;
+  private: boolean;
+  archived: boolean;
+  description: string;
+  pushed_at: string;
+  uses: number;
+}
+
 export interface CreateSessionRequest {
   name: string;
   agent: string;
@@ -138,6 +150,8 @@ export const api = {
   },
 
   credentials: () => request<{ credentials: Credential[]; kinds: string[] }>("GET", "/me/credentials"),
+  githubRepos: (refresh = false) =>
+    request<{ configured: boolean; repos: GitHubRepo[]; error?: string }>("GET", `/me/github/repos${refresh ? "?refresh=1" : ""}`),
   putCredentials: (values: Record<string, string>) =>
     request<{ credentials: Credential[]; kinds: string[] }>("PUT", "/me/credentials", { values }),
   deleteCredential: (kind: string) => request<{ ok: boolean }>("DELETE", `/me/credentials/${kind}`),

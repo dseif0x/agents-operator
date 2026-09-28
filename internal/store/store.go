@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/dseif0x/agents-operator/internal/config"
@@ -170,12 +171,36 @@ type Events interface {
 	Prune(ctx context.Context, sessionID string, keep int) error
 }
 
+// RepoUsage counts how often a user started a session with a repository.
+// It survives session deletion so the picker can rank by real use.
+type RepoUsage interface {
+	Increment(ctx context.Context, userID, repoKey string) error
+	// List returns repoKey -> count for the user.
+	List(ctx context.Context, userID string) (map[string]int, error)
+}
+
+// RepoKey normalises a git URL so https, ssh and git@ spellings of the same
+// repository count together: "github.com/owner/repo" in lower case.
+func RepoKey(u string) string {
+	s := strings.TrimSpace(strings.ToLower(u))
+	s = strings.TrimSuffix(strings.TrimRight(s, "/"), ".git")
+	for _, prefix := range []string{"https://", "http://", "ssh://"} {
+		s = strings.TrimPrefix(s, prefix)
+	}
+	if i := strings.Index(s, "@"); i >= 0 && !strings.Contains(s[:i], "/") {
+		s = s[i+1:] // drop user@
+	}
+	s = strings.Replace(s, ":", "/", 1) // git@host:owner/repo -> host/owner/repo
+	return strings.TrimSuffix(s, "/")
+}
+
 // Store bundles the aggregates.
 type Store interface {
 	Users() Users
 	Sessions() Sessions
 	Credentials() Credentials
 	Events() Events
+	RepoUsage() RepoUsage
 	Ping(ctx context.Context) error
 	Close()
 }

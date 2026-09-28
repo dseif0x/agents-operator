@@ -2,13 +2,18 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/dseif0x/agents-operator/internal/github"
 	"github.com/dseif0x/agents-operator/internal/store"
 )
 
@@ -197,6 +202,60 @@ func TestCredentials(t *testing.T) {
 	list, _ = svc.Creds.List(ctx, u.ID)
 	if len(list) != 1 {
 		t.Fatalf("after delete = %d", len(list))
+	}
+}
+
+func TestGitHubRepos(t *testing.T) {
+	svc, _, u := newService(t)
+	ctx := context.Background()
+	// No token: not configured, no error.
+	repos, configured, err := svc.GitHubRepos(ctx, u.ID, false)
+	if err != nil || configured || len(repos) != 0 {
+		t.Fatalf("unconfigured = %v %v %v", repos, configured, err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer ghp_x" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		fmt.Fprint(w, `[
+			{"full_name":"me/zeta","clone_url":"https://github.com/me/zeta.git","default_branch":"main"},
+			{"full_name":"me/Alpha","clone_url":"https://github.com/me/Alpha.git","default_branch":"main"},
+			{"full_name":"org/used","clone_url":"https://github.com/org/used.git","default_branch":"dev","private":true}]`)
+	}))
+	defer srv.Close()
+	svc.GitHub = &github.Client{BaseURL: srv.URL}
+	if err := svc.Creds.Set(ctx, u.ID, store.CredGitHubToken, []byte("ghp_x")); err != nil {
+		t.Fatal(err)
+	}
+	// Two sessions with org/used (one via git@ spelling), one deleted afterwards: usage persists.
+	s1, err := svc.Create(ctx, u, CreateRequest{Name: "a", Agent: "shell", RepoURL: "git@github.com:org/used.git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Create(ctx, u, CreateRequest{Name: "b", Agent: "shell", RepoURL: "https://github.com/org/used.git"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = svc.Store.Sessions().Delete(ctx, s1.ID)
+
+	repos, configured, err = svc.GitHubRepos(ctx, u.ID, false)
+	if err != nil || !configured {
+		t.Fatalf("configured = %v err = %v", configured, err)
+	}
+	got := []string{}
+	for _, r := range repos {
+		got = append(got, fmt.Sprintf("%s:%d", r.FullName, r.Uses))
+	}
+	want := "org/used:2,me/Alpha:0,me/zeta:0"
+	if strings.Join(got, ",") != want {
+		t.Fatalf("order = %v, want %s", got, want)
+	}
+	// Bad token surfaces as a validation error, still "configured".
+	_ = svc.Creds.Set(ctx, u.ID, store.CredGitHubToken, []byte("bad"))
+	svc.GitHub = &github.Client{BaseURL: srv.URL}
+	_, configured, err = svc.GitHubRepos(ctx, u.ID, true)
+	if err == nil || !configured {
+		t.Fatalf("bad token: configured=%v err=%v", configured, err)
 	}
 }
 
