@@ -13,6 +13,7 @@ export function SessionPage({ id }: { id: string }) {
   const [drawer, setDrawer] = useState<null | "events" | "logs" | "info">(null);
   const [sheet, setSheet] = useState<null | "select" | "links">(null);
   const [notice, setNotice] = useState("");
+  const [kbd, setKbd] = useState(false);
   const term = useRef<TerminalHandle>(null);
   const page = useRef<HTMLDivElement>(null);
 
@@ -26,16 +27,18 @@ export function SessionPage({ id }: { id: string }) {
       const el = page.current;
       if (!el) return;
       el.style.height = `${Math.round(vv.height)}px`;
-      el.style.top = `${Math.round(vv.offsetTop)}px`;
-      // Safari sometimes scrolls the document to reveal the focused input.
-      if (window.scrollY) window.scrollTo(0, 0);
+    };
+    // If Safari still pans the visual viewport (a drag that started on the
+    // top bar, say), snap it back instead of following it.
+    const snap = () => {
+      if (vv.offsetTop > 0 || window.scrollY > 0) window.scrollTo(0, 0);
     };
     apply();
     vv.addEventListener("resize", apply);
-    vv.addEventListener("scroll", apply);
+    vv.addEventListener("scroll", snap);
     return () => {
       vv.removeEventListener("resize", apply);
-      vv.removeEventListener("scroll", apply);
+      vv.removeEventListener("scroll", snap);
     };
   }, []);
 
@@ -163,7 +166,7 @@ export function SessionPage({ id }: { id: string }) {
       <div class="term-wrap">
         {error && <div class="banner error">{error}</div>}
         {canAttach ? (
-          <Terminal ref={term} sessionId={id} />
+          <Terminal ref={term} sessionId={id} onFocusChange={setKbd} />
         ) : (
           <div class="overlay">
             {s ? (
@@ -207,6 +210,8 @@ export function SessionPage({ id }: { id: string }) {
         <KeyBar
           onKey={(seq) => term.current?.send(seq)}
           onFocus={() => term.current?.focus()}
+          onKeyboard={() => term.current?.toggleKeyboard()}
+          keyboardOpen={kbd}
           onPaste={pasteFromClipboard}
           onSelect={() => setSheet(sheet === "select" ? null : "select")}
           onLinks={() => setSheet(sheet === "links" ? null : "links")}
