@@ -63,6 +63,15 @@ func TestNeedsAttention(t *testing.T) {
 			t.Errorf("NeedsAttention(%q)=%v want %v", c.tail, got, c.want)
 		}
 	}
+	// Charset designations, keypad modes, cursor save/restore, DCS strings
+	// and a trailing half-written escape are all invisible.
+	raw := "\x1b(B\x1b)0\x1b=\x1b>\x1b7\x1b[?25h\x1bPq;1\x1b\\\x1b#8❯ done\x1b8\x1b[K\x1b"
+	if got := LastLine([]byte(raw)); got != "❯ done" {
+		t.Errorf("LastLine=%q", got)
+	}
+	if got := LastLine([]byte("\x1b(B\r\n(B\r\n")); got != "(B" { // real text stays
+		t.Errorf("LastLine=%q", got)
+	}
 	if got := LastLine([]byte("\x1b[32mhello\x1b[0m\r\nworld \x1b[K\r\n\r\n")); got != "world" {
 		t.Errorf("LastLine=%q", got)
 	}

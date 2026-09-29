@@ -78,7 +78,7 @@ func TestEnvHidesSecretsAndAddsGitHubToken(t *testing.T) {
 	if env["GITHUB_TOKEN"] != "ghp_x" || env["GH_TOKEN"] != "ghp_x" {
 		t.Fatalf("github token env = %q / %q", env["GH_TOKEN"], env["GITHUB_TOKEN"])
 	}
-	if env["HOME"] != ws.HomeDir() || env["GIT_SSH_COMMAND"] == "" {
+	if env["HOME"] != ws.HomeDir() || env["GIT_SSH_COMMAND"] == "" || env["TMPDIR"] != ws.TempDir() {
 		t.Fatalf("env = %v", env)
 	}
 	// With an SSH key present, remotes are not rewritten but the helper is on.
@@ -297,5 +297,62 @@ func TestPrepareClaudeConfig(t *testing.T) {
 	other.prepareClaudeConfig(repos)
 	if _, err := os.Stat(filepath.Join(other.HomeDir(), ".claude.json")); err == nil {
 		t.Fatal(".claude.json written for a codex session")
+	}
+}
+
+func TestPrepareClaudeSettings(t *testing.T) {
+	root := t.TempDir()
+	ws := &Workspace{Root: root, Agent: runner.AgentClaude, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	settings := filepath.Join(ws.HomeDir(), ".claude", "settings.json")
+	read := func() map[string]any {
+		b, err := os.ReadFile(settings)
+		if err != nil {
+			return nil
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatalf("invalid settings.json: %v\n%s", err, b)
+		}
+		return m
+	}
+
+	// Not autonomous: the consent dialog stays, nothing is written.
+	t.Setenv(runner.EnvAutonomous, "false")
+	ws.prepareClaudeSettings()
+	if read() != nil {
+		t.Fatal("settings written for a supervised session")
+	}
+
+	// Autonomous: consent recorded; the user's other settings survive.
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"model":"opus","permissions":{"allow":["Bash(ls)"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(runner.EnvAutonomous, "true")
+	ws.prepareClaudeSettings()
+	m := read()
+	if m["skipDangerousModePermissionPrompt"] != true || m["model"] != "opus" {
+		t.Fatalf("settings = %v", m)
+	}
+	if perms, _ := m["permissions"].(map[string]any); perms == nil || perms["allow"] == nil {
+		t.Fatalf("permissions lost: %v", m)
+	}
+	// A user who turned it off explicitly keeps their choice.
+	if err := os.WriteFile(settings, []byte(`{"skipDangerousModePermissionPrompt":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws.prepareClaudeSettings()
+	if m := read(); m["skipDangerousModePermissionPrompt"] != false {
+		t.Fatalf("explicit false overridden: %v", m)
+	}
+	// A missing file is created.
+	if err := os.Remove(settings); err != nil {
+		t.Fatal(err)
+	}
+	ws.prepareClaudeSettings()
+	if m := read(); m == nil || m["skipDangerousModePermissionPrompt"] != true {
+		t.Fatalf("settings not created: %v", m)
 	}
 }

@@ -9,7 +9,7 @@ const FIELDS: { kind: string; label: string; help: string; multiline?: boolean; 
   {
     kind: "claude_oauth_token",
     label: "Claude Code OAuth token",
-    help: "Long-lived token for a Claude subscription, exposed as CLAUDE_CODE_OAUTH_TOKEN. Run `claude setup-token` in any session, log in through the printed link and paste the token here. It does not rotate, so every session starts signed in, however many run at once.",
+    help: "Long-lived token for a Claude subscription, exposed as CLAUDE_CODE_OAUTH_TOKEN. Run `claude setup-token` in any session, log in through the printed link and paste the token (sk-ant-oat…) here. On a narrow screen the terminal prints it across several lines; copy all of them, line breaks and spaces are removed. It does not rotate, so every session starts signed in, however many run at once.",
     secret: true,
   },
   { kind: "openai_api_key", label: "OpenAI API key", help: "OPENAI_API_KEY for Codex.", secret: true },

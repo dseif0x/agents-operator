@@ -6,8 +6,13 @@ import (
 	"time"
 )
 
-// ansiRE matches CSI, OSC and simple two-byte escape sequences.
-var ansiRE = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[@-Z\\-_]`)
+// ansiRE matches, in order: CSI sequences; OSC strings; DCS, APC, PM and
+// SOS strings (ESC P, ESC _, ESC ^, ESC X … ESC \); charset designations
+// and other nF sequences with intermediate bytes (ESC ( B, ESC # 8); every
+// other two-byte escape (ESC =, ESC >, ESC 7, ESC c …); and a dangling ESC
+// at the end of a buffer. TUIs emit ESC ( B constantly, and without the nF
+// branch "(B" leaked into the session list.
+var ansiRE = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[P_^X][^\x1b]*\x1b\\|\x1b[ -/]+[0-~]|\x1b[0-~]|\x1b`)
 
 // StripANSI removes terminal escape sequences from s.
 func StripANSI(s string) string {

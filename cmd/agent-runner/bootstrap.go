@@ -25,7 +25,8 @@ import (
 //   - seed ~/.gitconfig from GIT_USER_NAME / GIT_USER_EMAIL
 //   - install the SSH key or HTTPS credential helper
 //   - seed saved CLI logins (AGENTS_OPERATOR_LOGIN_<KIND>) when the file is absent
-//   - answer Claude Code's first-run prompts in ~/.claude.json when credentials exist
+//   - answer Claude Code's first-run prompts in ~/.claude.json when credentials exist,
+//     and its bypass-permissions consent in ~/.claude/settings.json when autonomous
 //   - clone every entry of REPOS into /workspace/<path> when that directory is empty
 func (w *Workspace) Bootstrap(ctx context.Context) error {
 	home := w.HomeDir()
@@ -35,6 +36,12 @@ func (w *Workspace) Bootstrap(ctx context.Context) error {
 		}
 	}
 	_ = os.Chmod(filepath.Join(home, ".ssh"), 0o700)
+	// /tmp in the pod is an emptyDir: world-writable, no sticky bit. Claude
+	// Code refuses to put its sockets in such a directory, so the agent gets
+	// a private temp dir of its own (TMPDIR in Env).
+	if err := os.MkdirAll(w.TempDir(), 0o700); err != nil {
+		w.Log.Warn("cannot create agent temp dir", "dir", w.TempDir(), "err", err)
+	}
 
 	if err := w.seedGitConfig(); err != nil {
 		return err
@@ -49,6 +56,7 @@ func (w *Workspace) Bootstrap(ctx context.Context) error {
 		return err
 	}
 	w.prepareClaudeConfig(repos)
+	w.prepareClaudeSettings()
 	if err := w.writeAgentsFile(repos); err != nil {
 		w.Log.Warn("cannot write AGENTS.md", "err", err)
 	}
@@ -127,6 +135,7 @@ func (w *Workspace) Env() []string {
 		"XDG_CONFIG_HOME="+filepath.Join(w.HomeDir(), ".config"),
 		"XDG_CACHE_HOME="+filepath.Join(w.HomeDir(), ".cache"),
 		"npm_config_cache="+filepath.Join(w.HomeDir(), ".npm"),
+		"TMPDIR="+w.TempDir(),
 	)
 	hasSSHKey := os.Getenv(runner.EnvGitSSHKey) != ""
 	if hasSSHKey {
@@ -408,6 +417,69 @@ func (w *Workspace) prepareClaudeConfig(repos []store.Repo) {
 		return
 	}
 	w.Log.Info("prepared Claude Code config", "onboarding_done", haveAuth, "trusted_dirs", len(dirs))
+}
+
+// prepareClaudeSettings answers the consent dialog behind
+// --dangerously-skip-permissions for autonomous sessions. The CLI records
+// that consent in ~/.claude/settings.json (older versions kept it in
+// .claude.json and migrate it there); the user gave it by ticking
+// "autonomous" when creating the session. Other settings are left as they are.
+func (w *Workspace) prepareClaudeSettings() {
+	if w.Agent != runner.AgentClaude || !autonomousEnv() {
+		return
+	}
+	path := filepath.Join(w.HomeDir(), ".claude", "settings.json")
+	changed, err := setJSONDefaults(path, map[string]any{"skipDangerousModePermissionPrompt": true})
+	if err != nil {
+		w.Log.Warn("cannot prepare Claude Code settings", "err", err)
+		return
+	}
+	if changed {
+		w.Log.Info("accepted bypass-permissions consent for the autonomous session")
+	}
+}
+
+// setJSONDefaults adds the given keys to the JSON object in path when they
+// are absent, creating the file if needed. Existing keys are never changed
+// and numbers are kept exactly as written.
+func setJSONDefaults(path string, defaults map[string]any) (bool, error) {
+	obj := map[string]any{}
+	raw, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
+		if err := dec.Decode(&obj); err != nil || obj == nil {
+			return false, fmt.Errorf("%s is not a JSON object: %w", path, err)
+		}
+	case os.IsNotExist(err):
+	default:
+		return false, err
+	}
+	changed := false
+	for k, v := range defaults {
+		if _, ok := obj[k]; !ok {
+			obj[k] = v
+			changed = true
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	out, err := json.MarshalIndent(obj, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return false, err
+	}
+	return true, os.WriteFile(path, out, 0o600)
+}
+
+// autonomousEnv reports whether the hub asked for an autonomous session.
+func autonomousEnv() bool {
+	v := os.Getenv(runner.EnvAutonomous)
+	return strings.EqualFold(v, "true") || v == "1"
 }
 
 func (w *Workspace) clone(ctx context.Context, url, branch, dst string) error {

@@ -50,13 +50,17 @@ interface Props {
   sessionId: string;
   /** Called when xterm gains or loses focus, i.e. the keyboard opens or closes on phones. */
   onFocusChange?: (focused: boolean) => void;
+  /** Called after selected text was put on the clipboard. */
+  onCopied?: (text: string) => void;
 }
 
 // Terminal wraps xterm.js and a reconnecting WebSocket to the hub. Binary
 // frames are PTY bytes; text frames are JSON control messages.
-export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ sessionId, onFocusChange }, ref) {
+export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ sessionId, onFocusChange, onCopied }, ref) {
   const focusChange = useRef(onFocusChange);
   focusChange.current = onFocusChange;
+  const copied = useRef(onCopied);
+  copied.current = onCopied;
   const el = useRef<HTMLDivElement>(null);
   const ws = useRef<WebSocket | null>(null);
   const xterm = useRef<XTerm | null>(null);
@@ -185,6 +189,38 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     const onBlur = () => focusChange.current?.(false);
     term.textarea?.addEventListener("focus", onFocus);
     term.textarea?.addEventListener("blur", onBlur);
+
+    // Clipboard. xterm draws its own selection, so the browser's copy
+    // shortcut has nothing to copy, and TUIs like Claude Code turn on mouse
+    // reporting, so a plain drag goes to the app (shift+drag selects).
+    // Selecting therefore copies by itself, ctrl/cmd+shift+c copies
+    // explicitly, and ctrl+c with a selection copies instead of interrupting
+    // the agent, as desktop terminals do.
+    const copySelection = () => {
+      const text = term.getSelection();
+      if (!text) return;
+      navigator.clipboard
+        .writeText(text)
+        .then(() => copied.current?.(text))
+        .catch(() => undefined);
+    };
+    const onMouseUp = () => setTimeout(() => term.hasSelection() && copySelection(), 0);
+    host.addEventListener("mouseup", onMouseUp);
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown") return true;
+      const key = e.key.toLowerCase();
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.shiftKey && key === "c") {
+        copySelection();
+        return false;
+      }
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && key === "c" && term.hasSelection()) {
+        copySelection();
+        term.clearSelection();
+        return false;
+      }
+      return true;
+    });
     // WebGL renderer with a canvas/DOM fallback when the context is lost or unavailable.
     import("@xterm/addon-webgl")
       .then(({ WebglAddon }) => {
@@ -314,6 +350,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
+      host.removeEventListener("mouseup", onMouseUp);
       onData.dispose();
       onBinary.dispose();
       onResize.dispose();
