@@ -136,11 +136,6 @@ func (w *Workspace) Env() []string {
 		"npm_config_cache="+filepath.Join(w.HomeDir(), ".npm"),
 		"TMPDIR="+w.TempDir(),
 	)
-	if w.Agent == runner.AgentClaude {
-		// See runner.EnvClaudeMessaging: /tmp in the pod can never pass the
-		// CLI's socket-directory check, so the feature behind it is off.
-		env = append(env, runner.EnvClaudeMessaging+"=0")
-	}
 	hasSSHKey := os.Getenv(runner.EnvGitSSHKey) != ""
 	if hasSSHKey {
 		env = append(env, "GIT_SSH_COMMAND=ssh -i "+w.sshKeyPath()+" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new")

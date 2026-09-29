@@ -75,6 +75,8 @@ spec:
               value: {{ .Values.runner.tolerations | toJson | quote }}
             - name: AGENTS_OPERATOR_RUNNER_RUNTIME_CLASS
               value: {{ .Values.runner.runtimeClassName | quote }}
+            - name: AGENTS_OPERATOR_RUNNER_TMP_INIT
+              value: {{ .Values.runner.tmpInit | quote }}
             - name: AGENTS_OPERATOR_RUNNER_EXTRA_ENV
               value: {{ .Values.runner.extraEnv | toJson | quote }}
             - name: AGENTS_OPERATOR_IDLE_STOP_AFTER

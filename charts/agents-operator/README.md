@@ -84,6 +84,7 @@ Kubernetes: `>=1.27.0-0`
 | runner.resources | object | `{"limits":{"cpu":"2","memory":"4Gi"},"requests":{"cpu":"250m","memory":"512Mi"}}` | Default (and maximum) resources for session pods; a session can only lower them |
 | runner.runtimeClassName | string | `""` | runtimeClassName for session pods (gVisor, Kata); empty = default runtime |
 | runner.storageClass | string | `"nfs-fast"` | StorageClass for session PVCs (empty = cluster default) |
+| runner.tmpInit | bool | `true` | Run a root init container (`chmod 1777 /tmp`) so the /tmp emptyDir gets the sticky bit Claude Code demands for its sockets; disable under the "restricted" Pod Security Standard (the CLI then only warns) |
 | runner.tolerations | list | `[]` | Tolerations applied to every session pod |
 | service.port | int | `80` | Service port |
 | service.type | string | `"ClusterIP"` | Service type |
