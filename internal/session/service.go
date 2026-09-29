@@ -97,6 +97,10 @@ var (
 	labelValRE  = regexp.MustCompile(`^([A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?)?$`)
 )
 
+// extendedResourceRE matches Kubernetes extended resource names: a
+// domain-qualified name (nvidia.com/gpu, example.com/fpga-1) or hugepages.
+var extendedResourceRE = regexp.MustCompile(`^(hugepages-[A-Za-z0-9]+|([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?)$`)
+
 var tolerationEffects = map[string]bool{"": true, "NoSchedule": true, "PreferNoSchedule": true, "NoExecute": true}
 
 // validateScheduling checks the per-session runtime class, node selector
@@ -249,6 +253,21 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 			if _, err := resource.ParseQuantity(q); err != nil {
 				return nil, &ValidationError{"invalid resource quantity " + q}
 			}
+		}
+	}
+	if len(req.Resources.Requests.Extended) > 0 {
+		return nil, &ValidationError{"extended resources go under limits; Kubernetes sets the request to the same amount"}
+	}
+	for name, v := range req.Resources.Limits.Extended {
+		if !extendedResourceRE.MatchString(name) {
+			return nil, &ValidationError{"invalid extended resource name " + name + " (expected vendor.com/name or hugepages-<size>)"}
+		}
+		q, err := resource.ParseQuantity(v)
+		if err != nil || q.Sign() <= 0 {
+			return nil, &ValidationError{"invalid quantity for " + name}
+		}
+		if !strings.HasPrefix(name, "hugepages-") && q.MilliValue()%1000 != 0 {
+			return nil, &ValidationError{name + " must be a whole number"}
 		}
 	}
 	for k := range req.Env {

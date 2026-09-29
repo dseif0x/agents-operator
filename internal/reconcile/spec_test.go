@@ -247,3 +247,31 @@ func TestBuildPodRuntimeClass(t *testing.T) {
 		t.Fatalf("runtime class set without one: %v", *pod.Spec.RuntimeClassName)
 	}
 }
+
+func TestClampExtendedResources(t *testing.T) {
+	def := testCfg().DefaultResources
+	// Nothing asked: nothing set, even when the chart lists a ceiling.
+	def.Limits.Extended = map[string]string{"nvidia.com/gpu": "2"}
+	rr := ClampResources(config.Resources{}, def)
+	if _, ok := rr.Limits["nvidia.com/gpu"]; ok {
+		t.Fatalf("gpu handed out by default: %+v", rr)
+	}
+	qty := func(l corev1.ResourceList, name string) string {
+		q := l[corev1.ResourceName(name)]
+		return q.String()
+	}
+	// Asked within the ceiling: limit and request both set, equal.
+	rr = ClampResources(config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "1"}}}, def)
+	if qty(rr.Limits, "nvidia.com/gpu") != "1" || qty(rr.Requests, "nvidia.com/gpu") != "1" {
+		t.Fatalf("gpu: %+v", rr)
+	}
+	// Above the ceiling: clamped. Unknown to the chart: passed through.
+	rr = ClampResources(config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "8", "hugepages-2Mi": "64Mi"}}}, def)
+	if qty(rr.Limits, "nvidia.com/gpu") != "2" || qty(rr.Limits, "hugepages-2Mi") != "64Mi" {
+		t.Fatalf("clamp: %+v", rr)
+	}
+	// CPU and memory are untouched by all this.
+	if rr.Limits.Cpu().String() != "2" || rr.Limits.Memory().String() != "4Gi" {
+		t.Fatalf("cpu/mem: %+v", rr)
+	}
+}

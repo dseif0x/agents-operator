@@ -324,7 +324,12 @@ function Drawer(props: { session: Session; tab: "events" | "logs" | "info"; setT
                 : ["repos:         (none)"]),
               `image tag:     ${s.image_tag || "(default)"}`,
               `pvc:           ${s.pvc_size} ${s.storage_class}`,
-              `limits:        cpu ${s.resources?.limits?.cpu || "default"}, memory ${s.resources?.limits?.memory || "default"}`,
+              `limits:        cpu ${s.resources?.limits?.cpu || "default"}, memory ${s.resources?.limits?.memory || "default"}${Object.entries(
+                s.resources?.limits || {},
+              )
+                .filter(([k, v]) => k !== "cpu" && k !== "memory" && v)
+                .map(([k, v]) => `, ${k} ${v}`)
+                .join("")}`,
               `runtime class: ${s.runtime_class || "(chart default)"}`,
               Object.keys(s.node_selector || {}).length
                 ? `node selector: ${Object.entries(s.node_selector)

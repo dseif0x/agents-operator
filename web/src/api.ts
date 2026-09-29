@@ -5,9 +5,12 @@ export interface User {
   username: string;
 }
 
+/** A Kubernetes-style resource list: cpu, memory and extended resources such as nvidia.com/gpu. */
+export type ResourceList = { cpu?: string; memory?: string } & Record<string, string | undefined>;
+
 export interface Resources {
-  requests: { cpu?: string; memory?: string };
-  limits: { cpu?: string; memory?: string };
+  requests: ResourceList;
+  limits: ResourceList;
 }
 
 export interface Repo {

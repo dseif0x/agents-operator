@@ -30,7 +30,7 @@ runner:
   storageClass: nfs-fast
   # -- Default PVC size for new sessions
   defaultSize: 20Gi
-  # -- Default (and maximum) resources for session pods; a session can only lower them
+  # -- Default (and maximum) cpu/memory for session pods; a session can only lower them. Extended resources listed under limits (e.g. `nvidia.com/gpu: 2`) are ceilings only: a session gets one when it asks, never by default
   resources:
     requests:
       cpu: 250m

@@ -74,6 +74,10 @@ func TestCreateValidation(t *testing.T) {
 		{"exists with value", CreateRequest{Name: "ok", Agent: "claude", Tolerations: []config.Toleration{{Key: "k", Operator: "Exists", Value: "v"}}}},
 		{"equal without key", CreateRequest{Name: "ok", Agent: "claude", Tolerations: []config.Toleration{{Operator: "Equal", Value: "v"}}}},
 		{"bad effect", CreateRequest{Name: "ok", Agent: "claude", Tolerations: []config.Toleration{{Key: "k", Operator: "Exists", Effect: "Never"}}}},
+		{"extended in requests", CreateRequest{Name: "ok", Agent: "claude", Resources: config.Resources{Requests: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "1"}}}}},
+		{"bad extended name", CreateRequest{Name: "ok", Agent: "claude", Resources: config.Resources{Limits: config.ResourceList{Extended: map[string]string{"gpu": "1"}}}}},
+		{"fractional gpu", CreateRequest{Name: "ok", Agent: "claude", Resources: config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "500m"}}}}},
+		{"zero gpu", CreateRequest{Name: "ok", Agent: "claude", Resources: config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "0"}}}}},
 		{"seconds without NoExecute", CreateRequest{Name: "ok", Agent: "claude", Tolerations: []config.Toleration{{Key: "k", Operator: "Exists", Effect: "NoSchedule", TolerationSeconds: ptr.To[int64](5)}}}},
 	}
 	for _, c := range cases {
@@ -85,12 +89,13 @@ func TestCreateValidation(t *testing.T) {
 	}
 	// Valid scheduling settings are kept as given.
 	sess, err := svc.Create(ctx, u, CreateRequest{Name: "sched", Agent: "claude", RuntimeClass: "gvisor",
+		Resources:    config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "1", "hugepages-2Mi": "64Mi"}}},
 		NodeSelector: map[string]string{"kubernetes.io/arch": "arm64", "example.com/gpu": ""},
 		Tolerations:  []config.Toleration{{Key: "nvidia.com/gpu", Operator: "Exists", Effect: "NoSchedule"}, {Operator: "Exists"}, {Key: "k", Value: "v", Effect: "NoExecute", TolerationSeconds: ptr.To[int64](30)}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v := svc.View(sess); v.RuntimeClass != "gvisor" || v.NodeSelector["kubernetes.io/arch"] != "arm64" || len(v.Tolerations) != 3 {
+	if v := svc.View(sess); v.RuntimeClass != "gvisor" || v.NodeSelector["kubernetes.io/arch"] != "arm64" || len(v.Tolerations) != 3 || v.Resources.Limits.Extended["nvidia.com/gpu"] != "1" {
 		t.Fatalf("view = %+v", v)
 	}
 }

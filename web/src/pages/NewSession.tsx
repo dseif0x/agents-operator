@@ -76,6 +76,7 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
   const [runtimeClass, setRuntimeClass] = useState("");
   const [nodeSelector, setNodeSelector] = useState("");
   const [tolerations, setTolerations] = useState("");
+  const [extended, setExtended] = useState("");
   const [autonomous, setAutonomous] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -126,7 +127,15 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
     if (imageTag) req.image_tag = imageTag;
     if (pvcSize) req.pvc_size = pvcSize;
     if (storageClass) req.storage_class = storageClass;
-    if (cpu || memory) req.resources = { requests: {}, limits: { cpu: cpu || undefined, memory: memory || undefined } };
+    const ext = parseKeyValues(extended);
+    if (ext.error) {
+      setError(ext.error);
+      setBusy(false);
+      return;
+    }
+    if (cpu || memory || Object.keys(ext.values).length) {
+      req.resources = { requests: {}, limits: { ...ext.values, cpu: cpu || undefined, memory: memory || undefined } };
+    }
     const envMap: Record<string, string> = {};
     for (const line of env.split("\n")) {
       const t = line.trim();
@@ -266,6 +275,17 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
               <label>Runtime class (default from chart)</label>
               <input value={runtimeClass} onInput={(e) => setRuntimeClass((e.target as HTMLInputElement).value)} placeholder="gvisor" />
             </div>
+          </div>
+          <label>Extended resources (name=amount per line; whole numbers, request equals limit)</label>
+          <textarea
+            value={extended}
+            onInput={(e) => setExtended((e.target as HTMLTextAreaElement).value)}
+            placeholder={"nvidia.com/gpu=1\nhugepages-2Mi=64Mi"}
+            spellcheck={false}
+          />
+          <div class="muted" style="font-size:12px;margin-top:3px">
+            Only set when asked for; an entry in the chart's <code>runner.resources.limits</code> caps the amount. A GPU usually needs the matching
+            toleration below.
           </div>
           <label>Node selector (key=value per line; added to the chart's)</label>
           <textarea
