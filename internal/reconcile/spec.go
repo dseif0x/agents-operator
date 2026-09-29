@@ -36,6 +36,16 @@ type Config struct {
 	Tolerations         []config.Toleration
 	RuntimeClass        string
 	ExtraEnv            map[string]string
+	// TmpInit adds an init container, running as root, that gives the /tmp
+	// emptyDir the sticky bit (chmod 1777). Kubernetes creates emptyDirs
+	// world-writable without it, and Claude Code refuses such a directory
+	// for its cross-session messaging sockets (it vets every ancestor and
+	// warns on every start). The non-root runner cannot change the mount's
+	// mode, so this is the one place a session pod runs as root: one chmod,
+	// with every capability dropped, before the runner starts. Clusters that
+	// enforce the "restricted" Pod Security Standard cannot admit it and
+	// turn it off; the warning is cosmetic.
+	TmpInit bool
 	// OrphanGrace is how old a labelled object without a row must be
 	// before it is deleted.
 	OrphanGrace time.Duration
@@ -320,6 +330,28 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 	}
 	if cfg.RuntimeClass != "" {
 		pod.Spec.RuntimeClassName = ptr.To(cfg.RuntimeClass)
+	}
+	if cfg.TmpInit {
+		pod.Spec.InitContainers = []corev1.Container{{
+			Name:            "tmp-sticky",
+			Image:           cfg.RunnerImage + ":" + tag,
+			ImagePullPolicy: corev1.PullPolicy(cfg.ImagePullPolicy),
+			Command:         []string{"chmod", "1777", "/tmp"},
+			VolumeMounts:    []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")},
+				Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
+			},
+			SecurityContext: &corev1.SecurityContext{
+				// Root owns the emptyDir, so chmod needs no capability.
+				RunAsUser:                ptr.To[int64](0),
+				RunAsGroup:               ptr.To[int64](0),
+				RunAsNonRoot:             ptr.To(false),
+				AllowPrivilegeEscalation: ptr.To(false),
+				ReadOnlyRootFilesystem:   ptr.To(true),
+				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			},
+		}}
 	}
 	return pod
 }

@@ -59,6 +59,9 @@ type Config struct {
 	RunnerRuntimeClass    string
 	// RunnerExtraEnv is injected into every session pod (non-secret).
 	RunnerExtraEnv map[string]string
+	// RunnerTmpInit adds the root init container that gives /tmp the sticky
+	// bit (see reconcile.Config.TmpInit).
+	RunnerTmpInit bool
 
 	CookieSecret      []byte
 	AdminUsername     string
@@ -120,6 +123,17 @@ func load(get lookup) (*Config, error) {
 		}
 		return d
 	}
+	boolean := func(key string, def bool) bool {
+		v := str(key, "")
+		if v == "" {
+			return def
+		}
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s%s: %w", Prefix, key, err))
+		}
+		return b
+	}
 	jsonInto := func(key string, dst any) {
 		v := str(key, "")
 		if v == "" {
@@ -140,6 +154,7 @@ func load(get lookup) (*Config, error) {
 		DefaultStorageClass:   str("DEFAULT_STORAGE_CLASS", ""),
 		DefaultPVCSize:        str("DEFAULT_PVC_SIZE", "20Gi"),
 		RunnerRuntimeClass:    str("RUNNER_RUNTIME_CLASS", ""),
+		RunnerTmpInit:         boolean("RUNNER_TMP_INIT", true),
 		AdminUsername:         str("ADMIN_USERNAME", "admin"),
 		AdminPasswordHash:     str("ADMIN_PASSWORD_HASH", ""),
 		AdminPassword:         str("ADMIN_PASSWORD", ""),

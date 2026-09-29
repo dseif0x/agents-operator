@@ -123,7 +123,7 @@ The root filesystem is read-only in the pod; `/tmp` is an emptyDir and everythin
 
 ## Security checklist
 
-- Session pods: non-root 1000, read-only root, no capabilities, seccomp RuntimeDefault, no SA token, no host namespaces or paths. Not configurable.
+- Session pods: non-root 1000, read-only root, no capabilities, seccomp RuntimeDefault, no SA token, no host namespaces or paths. Not configurable, with one exception: a `tmp-sticky` init container runs `chmod 1777 /tmp` as root (read-only root, every capability dropped, no privilege escalation) so the `/tmp` emptyDir gets the sticky bit Claude Code demands for its socket directory; without it the CLI warns on every start that cross-session messaging is off. Namespaces enforcing the "restricted" Pod Security Standard reject a root init container; set `runner.tmpInit=false` there and live with the warning.
 - Resource limits always set; the chart default is the ceiling, sessions can only lower them.
 - `runner.networkPolicy.enabled=true` (default): session pods reach DNS, 443 and 22 anywhere except `blockedCIDRs` (k3s pod and service ranges by default; adjust for your CNI), plus `egressCIDRs`. Only the hub reaches them, on 7681. They cannot reach each other or the API server. Verify from inside a pod: `curl -m3 https://kubernetes.default` must fail, `git ls-remote git@github.com:x/y` and `curl https://api.anthropic.com` must succeed.
 - Hub: distroless, non-root, read-only root. Cookies `HttpOnly; Secure; SameSite=Lax`, rotated on login. CSRF header on every non-GET API call. WebSocket `Origin` checked against the public host. Host header allowlist (`allowedHosts` + the public host). Login lockout after 10 failures per IP for 15 minutes. argon2id passwords.

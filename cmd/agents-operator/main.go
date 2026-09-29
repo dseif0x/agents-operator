@@ -124,7 +124,7 @@ func run() error {
 	rcfg := reconcile.Config{
 		Namespace: cfg.Namespace, RunnerImage: cfg.RunnerImage, RunnerImageTag: cfg.RunnerImageTag, ImagePullPolicy: cfg.RunnerImagePullPolicy,
 		DefaultStorageClass: cfg.DefaultStorageClass, DefaultPVCSize: cfg.DefaultPVCSize, DefaultResources: cfg.DefaultResources,
-		NodeSelector: cfg.RunnerNodeSelector, Tolerations: cfg.RunnerTolerations, RuntimeClass: cfg.RunnerRuntimeClass, ExtraEnv: cfg.RunnerExtraEnv,
+		NodeSelector: cfg.RunnerNodeSelector, Tolerations: cfg.RunnerTolerations, RuntimeClass: cfg.RunnerRuntimeClass, ExtraEnv: cfg.RunnerExtraEnv, TmpInit: cfg.RunnerTmpInit,
 	}
 	proxy := &term.Proxy{Resolver: &reconcile.Resolver{Informers: inf, Namespace: cfg.Namespace}, OriginPatterns: cfg.AllowedHosts, Log: log}
 	creds := &session.Credentials{Store: st, CS: cs, Namespace: cfg.Namespace}

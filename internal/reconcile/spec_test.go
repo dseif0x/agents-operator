@@ -204,3 +204,32 @@ func TestPodHelpers(t *testing.T) {
 		t.Fatal("nil reason")
 	}
 }
+
+func TestBuildPodTmpInit(t *testing.T) {
+	s := testSession()
+	cfg := testCfg()
+	cfg.TmpInit = true
+	pod := BuildPod(s, cfg)
+	if len(pod.Spec.InitContainers) != 1 {
+		t.Fatalf("init containers = %+v", pod.Spec.InitContainers)
+	}
+	ic := pod.Spec.InitContainers[0]
+	if ic.Image != pod.Spec.Containers[0].Image || len(ic.Command) != 3 || ic.Command[0] != "chmod" || ic.Command[1] != "1777" || ic.Command[2] != "/tmp" {
+		t.Fatalf("init container = %+v", ic)
+	}
+	if len(ic.VolumeMounts) != 1 || ic.VolumeMounts[0].Name != "tmp" || ic.VolumeMounts[0].MountPath != "/tmp" {
+		t.Fatalf("init mounts = %+v", ic.VolumeMounts)
+	}
+	sc := ic.SecurityContext
+	if *sc.RunAsUser != 0 || *sc.RunAsNonRoot || *sc.AllowPrivilegeEscalation || !*sc.ReadOnlyRootFilesystem || len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
+		t.Fatalf("init security context = %+v", sc)
+	}
+	// The runner itself stays non-root.
+	if !*pod.Spec.Containers[0].SecurityContext.RunAsNonRoot || !*pod.Spec.SecurityContext.RunAsNonRoot {
+		t.Fatal("runner container lost its non-root setting")
+	}
+	cfg.TmpInit = false
+	if pod := BuildPod(s, cfg); len(pod.Spec.InitContainers) != 0 {
+		t.Fatalf("init container present when disabled: %+v", pod.Spec.InitContainers)
+	}
+}

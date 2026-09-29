@@ -36,9 +36,8 @@ func (w *Workspace) Bootstrap(ctx context.Context) error {
 		}
 	}
 	_ = os.Chmod(filepath.Join(home, ".ssh"), 0o700)
-	// /tmp in the pod is an emptyDir: world-writable, no sticky bit. Claude
-	// Code refuses to put its sockets in such a directory, so the agent gets
-	// a private temp dir of its own (TMPDIR in Env).
+	// /tmp in the pod is an emptyDir shared with nothing, but a private 0700
+	// temp dir is still the tidier default for the agent (TMPDIR in Env).
 	if err := os.MkdirAll(w.TempDir(), 0o700); err != nil {
 		w.Log.Warn("cannot create agent temp dir", "dir", w.TempDir(), "err", err)
 	}

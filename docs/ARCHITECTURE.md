@@ -81,7 +81,7 @@ Closing the tab changes nothing in the pod. Reopening replays the last 2 MiB of 
 
 ## Frontend
 
-Preact + TypeScript + Vite, xterm.js 6 with fit, WebGL (falls back to DOM), web-links and unicode11 addons. Selecting text copies it (the TUIs enable mouse reporting, so selecting takes shift+drag); ctrl/cmd+shift+c copies explicitly and ctrl+c with a selection copies rather than interrupting the agent. Phones get a key bar and a selectable text sheet instead. No state library: the URL is the state, the list page follows `GET /api/v1/sessions/events` (SSE). Built into `internal/ui/dist` and embedded with `go build -tags ui`; a build without the tag compiles a stub so backend tests never need Node.
+Preact + TypeScript + Vite, xterm.js 6 with fit, WebGL (falls back to DOM), web-links, clipboard and unicode11 addons. The clipboard addon implements OSC 52, which is how Claude Code and other TUIs copy the text selected inside them; xterm's own selection (shift+drag while an app has mouse reporting on) copies with the browser's usual shortcut. Phones get a key bar and a selectable text sheet instead. No state library: the URL is the state, the list page follows `GET /api/v1/sessions/events` (SSE). Built into `internal/ui/dist` and embedded with `go build -tags ui`; a build without the tag compiles a stub so backend tests never need Node.
 
 ## Deliberate deviations from the spec
 

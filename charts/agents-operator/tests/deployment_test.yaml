@@ -98,7 +98,13 @@ tests:
         kubernetes.io/arch: arm64
       runner.idleStopAfter: 4h
       runner.runtimeClassName: gvisor
+      runner.tmpInit: false
     asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_RUNNER_TMP_INIT
+            value: "false"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
