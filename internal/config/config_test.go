@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -72,5 +73,28 @@ func TestLoadBadValues(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should mention %s: %v", want, err)
 		}
+	}
+}
+
+func TestResourceListJSON(t *testing.T) {
+	var r Resources
+	// A chart value with a bare number and an extended resource.
+	if err := json.Unmarshal([]byte(`{"requests":{"cpu":"250m"},"limits":{"cpu":2,"memory":"4Gi","nvidia.com/gpu":"1"}}`), &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Limits.CPU != "2" || r.Limits.Memory != "4Gi" || r.Limits.Extended["nvidia.com/gpu"] != "1" || r.Requests.CPU != "250m" || r.Requests.Extended != nil {
+		t.Fatalf("parsed = %+v", r)
+	}
+	out, _ := json.Marshal(r.Limits)
+	if string(out) != `{"cpu":"2","memory":"4Gi","nvidia.com/gpu":"1"}` {
+		t.Fatalf("marshal = %s", out)
+	}
+	// Empty sides marshal as {} and round-trip.
+	out, _ = json.Marshal(ResourceList{})
+	if string(out) != `{}` {
+		t.Fatalf("empty = %s", out)
+	}
+	if err := json.Unmarshal([]byte(`{"cpu":true}`), &r.Limits); err == nil {
+		t.Fatal("non-quantity accepted")
 	}
 }

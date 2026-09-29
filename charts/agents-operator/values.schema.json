@@ -134,7 +134,8 @@
       "properties": {
         "cpu": { "type": ["string", "number"] },
         "memory": { "type": "string" }
-      }
+      },
+      "additionalProperties": { "type": ["string", "number"] }
     }
   }
 }

@@ -5,15 +5,26 @@ export interface User {
   username: string;
 }
 
+/** A Kubernetes-style resource list: cpu, memory and extended resources such as nvidia.com/gpu. */
+export type ResourceList = { cpu?: string; memory?: string } & Record<string, string | undefined>;
+
 export interface Resources {
-  requests: { cpu?: string; memory?: string };
-  limits: { cpu?: string; memory?: string };
+  requests: ResourceList;
+  limits: ResourceList;
 }
 
 export interface Repo {
   url: string;
   branch?: string;
   path: string;
+}
+
+export interface Toleration {
+  key?: string;
+  operator?: "Equal" | "Exists";
+  value?: string;
+  effect?: "NoSchedule" | "PreferNoSchedule" | "NoExecute";
+  tolerationSeconds?: number;
 }
 
 export interface Session {
@@ -24,9 +35,10 @@ export interface Session {
   image_tag: string;
   pvc_size: string;
   storage_class: string;
+  runtime_class: string;
   resources: Resources;
   node_selector: Record<string, string>;
-  tolerations: unknown[];
+  tolerations: Toleration[];
   env: Record<string, string>;
   autonomous: boolean;
   state: SessionState;
@@ -79,7 +91,10 @@ export interface CreateSessionRequest {
   image_tag?: string;
   pvc_size?: string;
   storage_class?: string;
+  runtime_class?: string;
   resources?: Resources;
+  node_selector?: Record<string, string>;
+  tolerations?: Toleration[];
   env?: Record<string, string>;
   autonomous?: boolean;
 }

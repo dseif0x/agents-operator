@@ -18,7 +18,9 @@ import (
 
 	"github.com/coder/websocket"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/utils/ptr"
 
+	"github.com/dseif0x/agents-operator/internal/config"
 	"github.com/dseif0x/agents-operator/internal/github"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/store"
@@ -65,6 +67,18 @@ func TestCreateValidation(t *testing.T) {
 		{"bad path", CreateRequest{Name: "ok", Agent: "claude", Repos: []store.Repo{{URL: "https://x/y.git", Path: "../etc"}}}},
 		{"reserved path", CreateRequest{Name: "ok", Agent: "claude", Repos: []store.Repo{{URL: "https://x/y.git", Path: "home"}}}},
 		{"duplicate path", CreateRequest{Name: "ok", Agent: "claude", RepoURL: "https://x/y.git", Repos: []store.Repo{{URL: "https://z/y.git"}}}},
+		{"bad runtime class", CreateRequest{Name: "ok", Agent: "claude", RuntimeClass: "gVisor!"}},
+		{"bad selector key", CreateRequest{Name: "ok", Agent: "claude", NodeSelector: map[string]string{"bad key": "x"}}},
+		{"bad selector value", CreateRequest{Name: "ok", Agent: "claude", NodeSelector: map[string]string{"k": "a b"}}},
+		{"bad toleration operator", CreateRequest{Name: "ok", Agent: "claude", Tolerations: []config.Toleration{{Key: "k", Operator: "Like"}}}},
+		{"exists with value", CreateRequest{Name: "ok", Agent: "claude", Tolerations: []config.Toleration{{Key: "k", Operator: "Exists", Value: "v"}}}},
+		{"equal without key", CreateRequest{Name: "ok", Agent: "claude", Tolerations: []config.Toleration{{Operator: "Equal", Value: "v"}}}},
+		{"bad effect", CreateRequest{Name: "ok", Agent: "claude", Tolerations: []config.Toleration{{Key: "k", Operator: "Exists", Effect: "Never"}}}},
+		{"extended in requests", CreateRequest{Name: "ok", Agent: "claude", Resources: config.Resources{Requests: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "1"}}}}},
+		{"bad extended name", CreateRequest{Name: "ok", Agent: "claude", Resources: config.Resources{Limits: config.ResourceList{Extended: map[string]string{"gpu": "1"}}}}},
+		{"fractional gpu", CreateRequest{Name: "ok", Agent: "claude", Resources: config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "500m"}}}}},
+		{"zero gpu", CreateRequest{Name: "ok", Agent: "claude", Resources: config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "0"}}}}},
+		{"seconds without NoExecute", CreateRequest{Name: "ok", Agent: "claude", Tolerations: []config.Toleration{{Key: "k", Operator: "Exists", Effect: "NoSchedule", TolerationSeconds: ptr.To[int64](5)}}}},
 	}
 	for _, c := range cases {
 		if _, err := svc.Create(ctx, u, c.req); err == nil {
@@ -72,6 +86,17 @@ func TestCreateValidation(t *testing.T) {
 		} else if _, ok := err.(*ValidationError); !ok {
 			t.Errorf("%s: err type %T", c.name, err)
 		}
+	}
+	// Valid scheduling settings are kept as given.
+	sess, err := svc.Create(ctx, u, CreateRequest{Name: "sched", Agent: "claude", RuntimeClass: "gvisor",
+		Resources:    config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "1", "hugepages-2Mi": "64Mi"}}},
+		NodeSelector: map[string]string{"kubernetes.io/arch": "arm64", "example.com/gpu": ""},
+		Tolerations:  []config.Toleration{{Key: "nvidia.com/gpu", Operator: "Exists", Effect: "NoSchedule"}, {Operator: "Exists"}, {Key: "k", Value: "v", Effect: "NoExecute", TolerationSeconds: ptr.To[int64](30)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := svc.View(sess); v.RuntimeClass != "gvisor" || v.NodeSelector["kubernetes.io/arch"] != "arm64" || len(v.Tolerations) != 3 || v.Resources.Limits.Extended["nvidia.com/gpu"] != "1" {
+		t.Fatalf("view = %+v", v)
 	}
 }
 

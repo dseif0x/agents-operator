@@ -4,6 +4,7 @@
 package reconcile
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -187,6 +188,23 @@ func ClampResources(want, def config.Resources) corev1.ResourceRequirements {
 	set(out.Requests, corev1.ResourceMemory, reqMem)
 	set(out.Limits, corev1.ResourceCPU, limitCPU)
 	set(out.Limits, corev1.ResourceMemory, limitMem)
+	// Extended resources (nvidia.com/gpu …) are only ever added when a
+	// session asks: an entry in the chart's limits is a ceiling, not a
+	// default, so sessions do not all get a GPU. Kubernetes requires
+	// requests to equal limits for them.
+	for name, v := range want.Limits.Extended {
+		q, err := resource.ParseQuantity(v)
+		if err != nil || q.Sign() <= 0 {
+			continue
+		}
+		if capV, ok := def.Limits.Extended[name]; ok {
+			if capQ, err := resource.ParseQuantity(capV); err == nil && q.Cmp(capQ) > 0 {
+				q = capQ
+			}
+		}
+		out.Limits[corev1.ResourceName(name)] = q
+		out.Requests[corev1.ResourceName(name)] = q
+	}
 	return out
 }
 
@@ -328,8 +346,9 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 			},
 		},
 	}
-	if cfg.RuntimeClass != "" {
-		pod.Spec.RuntimeClassName = ptr.To(cfg.RuntimeClass)
+	// A session may pick its own runtime class; the chart's is the default.
+	if rc := cmp.Or(s.RuntimeClass, cfg.RuntimeClass); rc != "" {
+		pod.Spec.RuntimeClassName = ptr.To(rc)
 	}
 	if cfg.TmpInit {
 		pod.Spec.InitContainers = []corev1.Container{{

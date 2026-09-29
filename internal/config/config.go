@@ -3,6 +3,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,10 +25,65 @@ type Resources struct {
 	Limits   ResourceList `json:"limits"`
 }
 
-// ResourceList is one side of Resources.
+// ResourceList is one side of Resources. On the wire it is a flat map like
+// a Kubernetes resource list: cpu and memory plus any extended resource
+// (nvidia.com/gpu, hugepages-2Mi …), which land in Extended.
 type ResourceList struct {
-	CPU    string `json:"cpu,omitempty"`
-	Memory string `json:"memory,omitempty"`
+	CPU      string
+	Memory   string
+	Extended map[string]string
+}
+
+// MarshalJSON writes the flat map form.
+func (r ResourceList) MarshalJSON() ([]byte, error) {
+	m := make(map[string]string, len(r.Extended)+2)
+	for k, v := range r.Extended {
+		m[k] = v
+	}
+	if r.CPU != "" {
+		m["cpu"] = r.CPU
+	}
+	if r.Memory != "" {
+		m["memory"] = r.Memory
+	}
+	return json.Marshal(m)
+}
+
+// UnmarshalJSON reads the flat map form; numbers (a chart value such as
+// `cpu: 2`) are accepted and kept as written.
+func (r *ResourceList) UnmarshalJSON(b []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var m map[string]any
+	if err := dec.Decode(&m); err != nil {
+		return err
+	}
+	*r = ResourceList{}
+	for k, v := range m {
+		var s string
+		switch t := v.(type) {
+		case string:
+			s = t
+		case json.Number:
+			s = t.String()
+		case nil:
+			continue
+		default:
+			return fmt.Errorf("resource %s: expected a quantity string, got %T", k, v)
+		}
+		switch k {
+		case "cpu":
+			r.CPU = s
+		case "memory":
+			r.Memory = s
+		default:
+			if r.Extended == nil {
+				r.Extended = map[string]string{}
+			}
+			r.Extended[k] = s
+		}
+	}
+	return nil
 }
 
 // Toleration mirrors corev1.Toleration without importing it.

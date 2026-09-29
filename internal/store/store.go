@@ -103,14 +103,16 @@ type Repo struct {
 
 // Session is one row of the sessions table.
 type Session struct {
-	ID             string
-	OwnerID        string
-	Name           string
-	Agent          string
-	Repos          []Repo
-	ImageTag       string
-	PVCSize        string
-	StorageClass   string
+	ID           string
+	OwnerID      string
+	Name         string
+	Agent        string
+	Repos        []Repo
+	ImageTag     string
+	PVCSize      string
+	StorageClass string
+	// RuntimeClass overrides the chart-wide runtimeClassName; empty = default.
+	RuntimeClass   string
 	Resources      config.Resources
 	NodeSelector   map[string]string
 	Tolerations    []config.Toleration
