@@ -186,7 +186,16 @@ const (
 	// runner only looks at them to skip the CLI's onboarding prompts.
 	EnvClaudeOAuthToken = "CLAUDE_CODE_OAUTH_TOKEN"
 	EnvAnthropicAPIKey  = "ANTHROPIC_API_KEY"
-	EnvWorkspace        = "WORKSPACE"               // defaults to /workspace
-	EnvListen           = "RUNNER_LISTEN"           // defaults to :7681
-	EnvSessionName      = "AGENTS_OPERATOR_SESSION" // human name, used for the prompt/hostname
+	// EnvClaudeMessaging is Claude Code's switch for cross-session
+	// messaging (sessions on one machine talking over a Unix socket). The
+	// CLI vets every ancestor of its socket directory and refuses a
+	// world-writable directory without the sticky bit, which is what a
+	// Kubernetes emptyDir at /tmp is, so it warns on every start; nothing
+	// below the pod's non-root user can change that. A session pod runs one
+	// agent, so the feature is turned off instead. The name is the CLI's
+	// internal one for the feature (there is no documented setting).
+	EnvClaudeMessaging = "CLAUDE_CODE_HARBOR_KITE"
+	EnvWorkspace       = "WORKSPACE"               // defaults to /workspace
+	EnvListen          = "RUNNER_LISTEN"           // defaults to :7681
+	EnvSessionName     = "AGENTS_OPERATOR_SESSION" // human name, used for the prompt/hostname
 )

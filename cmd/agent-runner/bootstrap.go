@@ -36,9 +36,8 @@ func (w *Workspace) Bootstrap(ctx context.Context) error {
 		}
 	}
 	_ = os.Chmod(filepath.Join(home, ".ssh"), 0o700)
-	// /tmp in the pod is an emptyDir: world-writable, no sticky bit. Claude
-	// Code refuses to put its sockets in such a directory, so the agent gets
-	// a private temp dir of its own (TMPDIR in Env).
+	// /tmp in the pod is an emptyDir shared with nothing, but a private 0700
+	// temp dir is still the tidier default for the agent (TMPDIR in Env).
 	if err := os.MkdirAll(w.TempDir(), 0o700); err != nil {
 		w.Log.Warn("cannot create agent temp dir", "dir", w.TempDir(), "err", err)
 	}
@@ -137,6 +136,11 @@ func (w *Workspace) Env() []string {
 		"npm_config_cache="+filepath.Join(w.HomeDir(), ".npm"),
 		"TMPDIR="+w.TempDir(),
 	)
+	if w.Agent == runner.AgentClaude {
+		// See runner.EnvClaudeMessaging: /tmp in the pod can never pass the
+		// CLI's socket-directory check, so the feature behind it is off.
+		env = append(env, runner.EnvClaudeMessaging+"=0")
+	}
 	hasSSHKey := os.Getenv(runner.EnvGitSSHKey) != ""
 	if hasSSHKey {
 		env = append(env, "GIT_SSH_COMMAND=ssh -i "+w.sshKeyPath()+" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new")

@@ -166,7 +166,7 @@ export function SessionPage({ id }: { id: string }) {
       <div class="term-wrap">
         {error && <div class="banner error">{error}</div>}
         {canAttach ? (
-          <Terminal ref={term} sessionId={id} onFocusChange={setKbd} onCopied={() => flash("Copied")} />
+          <Terminal ref={term} sessionId={id} onFocusChange={setKbd} />
         ) : (
           <div class="overlay">
             {s ? (

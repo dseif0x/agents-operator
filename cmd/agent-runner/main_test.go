@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -80,6 +81,13 @@ func TestEnvHidesSecretsAndAddsGitHubToken(t *testing.T) {
 	}
 	if env["HOME"] != ws.HomeDir() || env["GIT_SSH_COMMAND"] == "" || env["TMPDIR"] != ws.TempDir() {
 		t.Fatalf("env = %v", env)
+	}
+	if _, ok := env[runner.EnvClaudeMessaging]; ok {
+		t.Fatal("Claude-only env set for a shell session")
+	}
+	claude := &Workspace{Root: ws.Root, Agent: runner.AgentClaude, Log: ws.Log}
+	if !slices.Contains(claude.Env(), runner.EnvClaudeMessaging+"=0") {
+		t.Fatal("cross-session messaging not switched off for a Claude session")
 	}
 	// With an SSH key present, remotes are not rewritten but the helper is on.
 	if env["GIT_CONFIG_COUNT"] != "1" || env["GIT_CONFIG_KEY_0"] != "credential.helper" {
