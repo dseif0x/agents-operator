@@ -80,11 +80,66 @@ type CreateRequest struct {
 	ImageTag     string              `json:"image_tag"`
 	PVCSize      string              `json:"pvc_size"`
 	StorageClass string              `json:"storage_class"`
+	RuntimeClass string              `json:"runtime_class"`
 	Resources    config.Resources    `json:"resources"`
 	NodeSelector map[string]string   `json:"node_selector"`
 	Tolerations  []config.Toleration `json:"tolerations"`
 	Env          map[string]string   `json:"env"`
 	Autonomous   *bool               `json:"autonomous"`
+}
+
+// Kubernetes name and label syntax, checked here so a bad value is a 400
+// with a message instead of a session stuck in "creating" with an API
+// server error.
+var (
+	dnsLabelRE  = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+	labelNameRE = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$`)
+	labelValRE  = regexp.MustCompile(`^([A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?)?$`)
+)
+
+var tolerationEffects = map[string]bool{"": true, "NoSchedule": true, "PreferNoSchedule": true, "NoExecute": true}
+
+// validateScheduling checks the per-session runtime class, node selector
+// and tolerations.
+func validateScheduling(req CreateRequest) error {
+	if req.RuntimeClass != "" && !dnsLabelRE.MatchString(req.RuntimeClass) {
+		return &ValidationError{"runtime_class must be a lowercase DNS label such as gvisor"}
+	}
+	for k, v := range req.NodeSelector {
+		if !labelNameRE.MatchString(k) || len(k) > 317 {
+			return &ValidationError{"invalid node selector key " + k}
+		}
+		if !labelValRE.MatchString(v) {
+			return &ValidationError{"invalid node selector value for " + k}
+		}
+	}
+	for _, t := range req.Tolerations {
+		switch t.Operator {
+		case "", "Equal":
+			if t.Key == "" {
+				return &ValidationError{"a toleration without a key must use operator Exists"}
+			}
+		case "Exists":
+			if t.Value != "" {
+				return &ValidationError{"a toleration with operator Exists cannot have a value"}
+			}
+		default:
+			return &ValidationError{"toleration operator must be Equal or Exists"}
+		}
+		if t.Key != "" && (!labelNameRE.MatchString(t.Key) || len(t.Key) > 317) {
+			return &ValidationError{"invalid toleration key " + t.Key}
+		}
+		if !labelValRE.MatchString(t.Value) {
+			return &ValidationError{"invalid toleration value " + t.Value}
+		}
+		if !tolerationEffects[t.Effect] {
+			return &ValidationError{"toleration effect must be NoSchedule, PreferNoSchedule or NoExecute"}
+		}
+		if t.TolerationSeconds != nil && t.Effect != "NoExecute" {
+			return &ValidationError{"tolerationSeconds only applies to the NoExecute effect"}
+		}
+	}
+	return nil
 }
 
 var nameRE = regexp.MustCompile(`^[\pL\pN][\pL\pN ._-]{0,62}$`)
@@ -204,13 +259,16 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 	if strings.ContainsAny(req.ImageTag, "/: \t") {
 		return nil, &ValidationError{"invalid image tag"}
 	}
+	if err := validateScheduling(req); err != nil {
+		return nil, err
+	}
 	autonomous := s.Defaults.Autonomous
 	if req.Autonomous != nil {
 		autonomous = *req.Autonomous
 	}
 	sess := &store.Session{
 		OwnerID: owner.ID, Name: req.Name, Agent: req.Agent, Repos: repos,
-		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, Resources: req.Resources,
+		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, RuntimeClass: req.RuntimeClass, Resources: req.Resources,
 		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
 		State: store.StateCreating,
 	}
@@ -590,6 +648,7 @@ type View struct {
 	ImageTag       string              `json:"image_tag"`
 	PVCSize        string              `json:"pvc_size"`
 	StorageClass   string              `json:"storage_class"`
+	RuntimeClass   string              `json:"runtime_class"`
 	Resources      config.Resources    `json:"resources"`
 	NodeSelector   map[string]string   `json:"node_selector"`
 	Tolerations    []config.Toleration `json:"tolerations"`
@@ -615,7 +674,7 @@ type View struct {
 func (s *Service) View(sess *store.Session) View {
 	v := View{
 		ID: sess.ID, Name: sess.Name, Agent: sess.Agent, Repos: sess.Repos,
-		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, Resources: sess.Resources,
+		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, RuntimeClass: sess.RuntimeClass, Resources: sess.Resources,
 		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
 		State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),

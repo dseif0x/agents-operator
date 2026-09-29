@@ -71,7 +71,7 @@ func exercise(t *testing.T, st Store) {
 	// sessions
 	s := &Session{
 		OwnerID: u.ID, Name: "one", Agent: "claude", Repos: []Repo{{URL: "https://example.com/r.git", Branch: "main", Path: "r"}},
-		PVCSize: "20Gi", StorageClass: "nfs-fast", State: StateCreating, Autonomous: true,
+		PVCSize: "20Gi", StorageClass: "nfs-fast", RuntimeClass: "gvisor", State: StateCreating, Autonomous: true,
 		Resources:    config.Resources{Requests: config.ResourceList{CPU: "250m"}, Limits: config.ResourceList{Memory: "1Gi"}},
 		NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"},
 		Tolerations:  []config.Toleration{{Key: "gpu", Operator: "Exists"}},
@@ -85,7 +85,7 @@ func exercise(t *testing.T, st Store) {
 		t.Fatal(err)
 	}
 	if g.Name != "one" || g.Generation != 1 || len(g.Repos) != 1 || g.Repos[0].Path != "r" || g.Repos[0].Branch != "main" || g.Resources.Limits.Memory != "1Gi" || g.NodeSelector["kubernetes.io/arch"] != "amd64" ||
-		len(g.Tolerations) != 1 || g.Env["FOO"] != "bar" || !g.Autonomous || g.LastOutputAt != nil {
+		len(g.Tolerations) != 1 || g.Env["FOO"] != "bar" || !g.Autonomous || g.LastOutputAt != nil || g.RuntimeClass != "gvisor" {
 		t.Fatalf("round trip lost data: %+v", g)
 	}
 	if err := st.Sessions().Create(ctx, &Session{OwnerID: adm.ID, Name: "two", Agent: "codex", PVCSize: "1Gi", State: StateStopped}); err != nil {

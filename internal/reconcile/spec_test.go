@@ -233,3 +233,17 @@ func TestBuildPodTmpInit(t *testing.T) {
 		t.Fatalf("init container present when disabled: %+v", pod.Spec.InitContainers)
 	}
 }
+
+func TestBuildPodRuntimeClass(t *testing.T) {
+	s := testSession()
+	cfg := testCfg() // chart-wide gvisor
+	s.RuntimeClass = "kata"
+	if pod := BuildPod(s, cfg); *pod.Spec.RuntimeClassName != "kata" {
+		t.Fatalf("session runtime class ignored: %v", pod.Spec.RuntimeClassName)
+	}
+	s.RuntimeClass = ""
+	cfg.RuntimeClass = ""
+	if pod := BuildPod(s, cfg); pod.Spec.RuntimeClassName != nil {
+		t.Fatalf("runtime class set without one: %v", *pod.Spec.RuntimeClassName)
+	}
+}

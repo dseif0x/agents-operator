@@ -16,6 +16,14 @@ export interface Repo {
   path: string;
 }
 
+export interface Toleration {
+  key?: string;
+  operator?: "Equal" | "Exists";
+  value?: string;
+  effect?: "NoSchedule" | "PreferNoSchedule" | "NoExecute";
+  tolerationSeconds?: number;
+}
+
 export interface Session {
   id: string;
   name: string;
@@ -24,9 +32,10 @@ export interface Session {
   image_tag: string;
   pvc_size: string;
   storage_class: string;
+  runtime_class: string;
   resources: Resources;
   node_selector: Record<string, string>;
-  tolerations: unknown[];
+  tolerations: Toleration[];
   env: Record<string, string>;
   autonomous: boolean;
   state: SessionState;
@@ -79,7 +88,10 @@ export interface CreateSessionRequest {
   image_tag?: string;
   pvc_size?: string;
   storage_class?: string;
+  runtime_class?: string;
   resources?: Resources;
+  node_selector?: Record<string, string>;
+  tolerations?: Toleration[];
   env?: Record<string, string>;
   autonomous?: boolean;
 }

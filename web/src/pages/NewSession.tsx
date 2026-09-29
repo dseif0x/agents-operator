@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { api, type CreateSessionRequest, type GitHubRepo, type Repo, type User } from "../api";
+import { api, type CreateSessionRequest, type GitHubRepo, type Repo, type Toleration, type User } from "../api";
 import { Nav } from "../components/Nav";
 import { navigate } from "../router";
 
@@ -19,6 +19,49 @@ export function parseRepos(text: string): { repos: Repo[]; error?: string } {
   return { repos };
 }
 
+/** Parse `key=value` lines (a bare key means an empty value). */
+export function parseKeyValues(text: string): { values: Record<string, string>; error?: string } {
+  const values: Record<string, string> = {};
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const i = line.indexOf("=");
+    const key = (i < 0 ? line : line.slice(0, i)).trim();
+    if (!key) return { values, error: `missing key: ${line}` };
+    values[key] = i < 0 ? "" : line.slice(i + 1).trim();
+  }
+  return { values };
+}
+
+/**
+ * Parse one toleration per line: `key=value:Effect`, `key:Effect`, `key`
+ * or `*` (tolerate every taint). A value means operator Equal, no value
+ * means Exists. `:NoExecute/30` limits how long the pod stays after the
+ * taint appears.
+ */
+export function parseTolerations(text: string): { tolerations: Toleration[]; error?: string } {
+  const tolerations: Toleration[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const m = /^([^=:\s]*)(?:=([^:\s]*))?(?::([A-Za-z]+)(?:\/(\d+))?)?$/.exec(line);
+    if (!m) return { tolerations, error: `cannot parse toleration: ${line}` };
+    const [, key, value, effect, seconds] = m;
+    const t: Toleration = {};
+    if (key && key !== "*") t.key = key;
+    if (value !== undefined) {
+      t.operator = "Equal";
+      t.value = value;
+    } else {
+      t.operator = "Exists";
+    }
+    if (effect) t.effect = effect as Toleration["effect"];
+    if (seconds !== undefined) t.tolerationSeconds = Number(seconds);
+    tolerations.push(t);
+  }
+  return { tolerations };
+}
+
 export function NewSession(props: { user: User; onLogout: () => void }) {
   const [agents, setAgents] = useState<string[]>(["claude", "opencode", "codex", "shell"]);
   const [name, setName] = useState("");
@@ -30,6 +73,9 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
   const [cpu, setCpu] = useState("");
   const [memory, setMemory] = useState("");
   const [env, setEnv] = useState("");
+  const [runtimeClass, setRuntimeClass] = useState("");
+  const [nodeSelector, setNodeSelector] = useState("");
+  const [tolerations, setTolerations] = useState("");
   const [autonomous, setAutonomous] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -94,6 +140,16 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
       envMap[t.slice(0, i).trim()] = t.slice(i + 1);
     }
     if (Object.keys(envMap).length) req.env = envMap;
+    if (runtimeClass.trim()) req.runtime_class = runtimeClass.trim();
+    const sel = parseKeyValues(nodeSelector);
+    const tol = parseTolerations(tolerations);
+    if (sel.error || tol.error) {
+      setError(sel.error || tol.error || "");
+      setBusy(false);
+      return;
+    }
+    if (Object.keys(sel.values).length) req.node_selector = sel.values;
+    if (tol.tolerations.length) req.tolerations = tol.tolerations;
     try {
       const s = await api.createSession(req);
       navigate(`/sessions/${s.id}`);
@@ -202,6 +258,34 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
           </div>
           <label>Extra environment (KEY=value per line, not secret)</label>
           <textarea value={env} onInput={(e) => setEnv((e.target as HTMLTextAreaElement).value)} placeholder="NODE_OPTIONS=--max-old-space-size=2048" />
+        </details>
+        <details>
+          <summary>Advanced: scheduling (runtime class, node selector, tolerations)</summary>
+          <div class="form-grid">
+            <div>
+              <label>Runtime class (default from chart)</label>
+              <input value={runtimeClass} onInput={(e) => setRuntimeClass((e.target as HTMLInputElement).value)} placeholder="gvisor" />
+            </div>
+          </div>
+          <label>Node selector (key=value per line; added to the chart's)</label>
+          <textarea
+            value={nodeSelector}
+            onInput={(e) => setNodeSelector((e.target as HTMLTextAreaElement).value)}
+            placeholder={"kubernetes.io/arch=arm64\nnode-role.kubernetes.io/agents=true"}
+            spellcheck={false}
+          />
+          <label>Tolerations (one per line; added to the chart's)</label>
+          <textarea
+            value={tolerations}
+            onInput={(e) => setTolerations((e.target as HTMLTextAreaElement).value)}
+            placeholder={"nvidia.com/gpu:NoSchedule\nagents=true:NoSchedule\nnode.kubernetes.io/unreachable:NoExecute/300"}
+            spellcheck={false}
+          />
+          <div class="muted" style="font-size:12px;margin-top:3px">
+            <code>key=value:Effect</code> tolerates a taint with that value (operator Equal); <code>key:Effect</code> or a bare <code>key</code> tolerates any value
+            (Exists); <code>*</code> tolerates every taint. Effects: NoSchedule, PreferNoSchedule, NoExecute; <code>:NoExecute/300</code> evicts after 300 s. Taint
+            the node itself with <code>kubectl taint nodes &lt;node&gt; agents=true:NoSchedule</code>.
+          </div>
         </details>
         {error && <div class="error">{error}</div>}
         <div class="row" style="margin-top:16px">

@@ -4,6 +4,7 @@
 package reconcile
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -328,8 +329,9 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 			},
 		},
 	}
-	if cfg.RuntimeClass != "" {
-		pod.Spec.RuntimeClassName = ptr.To(cfg.RuntimeClass)
+	// A session may pick its own runtime class; the chart's is the default.
+	if rc := cmp.Or(s.RuntimeClass, cfg.RuntimeClass); rc != "" {
+		pod.Spec.RuntimeClassName = ptr.To(rc)
 	}
 	if cfg.TmpInit {
 		pod.Spec.InitContainers = []corev1.Container{{

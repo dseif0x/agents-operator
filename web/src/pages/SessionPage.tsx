@@ -325,6 +325,17 @@ function Drawer(props: { session: Session; tab: "events" | "logs" | "info"; setT
               `image tag:     ${s.image_tag || "(default)"}`,
               `pvc:           ${s.pvc_size} ${s.storage_class}`,
               `limits:        cpu ${s.resources?.limits?.cpu || "default"}, memory ${s.resources?.limits?.memory || "default"}`,
+              `runtime class: ${s.runtime_class || "(chart default)"}`,
+              Object.keys(s.node_selector || {}).length
+                ? `node selector: ${Object.entries(s.node_selector)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join(", ")}`
+                : "",
+              s.tolerations?.length
+                ? `tolerations:   ${s.tolerations
+                    .map((t) => `${t.key || "*"}${t.operator === "Equal" ? "=" + (t.value ?? "") : ""}${t.effect ? ":" + t.effect : ""}${t.tolerationSeconds !== undefined ? "/" + t.tolerationSeconds : ""}`)
+                    .join(", ")}`
+                : "",
               `created:       ${s.created_at}`,
               `last attached: ${s.last_attached_at || "never"}`,
               `last output:   ${s.last_output_at || "never"}`,
