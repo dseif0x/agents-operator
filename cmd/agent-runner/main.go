@@ -68,7 +68,7 @@ func run() int {
 	// token refresh), not seeded by us; /status reports those to the hub.
 	loginBaseline := time.Now()
 
-	autonomous := strings.EqualFold(os.Getenv(runner.EnvAutonomous), "true") || os.Getenv(runner.EnvAutonomous) == "1"
+	autonomous := autonomousEnv()
 	cmdFn := func() server.Command {
 		if *cmdLine != "" {
 			parts := strings.Fields(*cmdLine)
@@ -182,6 +182,10 @@ type Workspace struct {
 
 // HomeDir is the agent's HOME on the PVC.
 func (w *Workspace) HomeDir() string { return filepath.Join(w.Root, "home") }
+
+// TempDir is the agent's private TMPDIR: a 0700 directory of its own under
+// the pod's /tmp, which is scratch and does not survive a restart.
+func (w *Workspace) TempDir() string { return filepath.Join(os.TempDir(), "agent") }
 
 // WorkDir is the directory the agent starts in: the workspace root, where
 // AGENTS.md lives and every repository is a subdirectory. Falls back to the

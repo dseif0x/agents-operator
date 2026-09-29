@@ -188,8 +188,24 @@ func TestCredentials(t *testing.T) {
 	if err := svc.Creds.Set(ctx, u.ID, "nope", []byte("x")); err == nil {
 		t.Fatal("unknown kind accepted")
 	}
+	// A setup token copied off a phone screen arrives wrapped; whitespace
+	// goes, the token stays whole. Something that is not a token is refused.
+	if err := svc.Creds.Set(ctx, u.ID, store.CredClaudeOAuthToken, []byte("  sk-ant-oat01-abc\n  def \n ghi\n")); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := svc.Creds.Get(ctx, u.ID, store.CredClaudeOAuthToken); string(v) != "sk-ant-oat01-abcdefghi" {
+		t.Fatalf("oauth token stored as %q", v)
+	}
+	if err := svc.Creds.Set(ctx, u.ID, store.CredClaudeOAuthToken, []byte("Store this token securely")); err == nil {
+		t.Fatal("non-token accepted as an OAuth token")
+	} else if _, ok := err.(*ValidationError); !ok {
+		t.Fatalf("err type %T", err)
+	}
+	if v, _ := svc.Creds.Get(ctx, u.ID, store.CredAnthropicAPIKey); string(v) != "sk-ant" {
+		t.Fatalf("api key stored as %q", v)
+	}
 	list, err := svc.Creds.List(ctx, u.ID)
-	if err != nil || len(list) != 2 {
+	if err != nil || len(list) != 3 {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
 	for _, i := range list {
@@ -208,7 +224,7 @@ func TestCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, _ = svc.Creds.List(ctx, u.ID)
-	if len(list) != 1 {
+	if len(list) != 2 {
 		t.Fatalf("after delete = %d", len(list))
 	}
 }

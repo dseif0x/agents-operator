@@ -41,7 +41,10 @@ func (c *Credentials) Set(ctx context.Context, userID, kind string, value []byte
 	if !store.ValidCredentialKind(kind) {
 		return &ValidationError{"unknown credential kind " + kind}
 	}
-	value = normalise(kind, value)
+	value, err := normalise(kind, value)
+	if err != nil {
+		return err
+	}
 	if len(value) == 0 {
 		return &ValidationError{"empty value"}
 	}
@@ -131,20 +134,38 @@ func (c *Credentials) List(ctx context.Context, userID string) ([]Info, error) {
 	return out, nil
 }
 
-// normalise trims whitespace for single-line values and makes sure key
-// material ends with a newline.
-func normalise(kind string, v []byte) []byte {
-	switch kind {
-	case store.CredGitSSHKey:
+// tokenKinds are single tokens that never contain whitespace. Anything
+// pasted from a terminal (Claude Code prints `claude setup-token`'s result
+// wrapped to the terminal width, and on a phone that is several lines) is
+// cleaned up before it is stored.
+var tokenKinds = map[string]bool{
+	store.CredAnthropicAPIKey: true, store.CredClaudeOAuthToken: true, store.CredOpenAIAPIKey: true,
+	store.CredGitHubToken: true, store.CredGitHTTPSToken: true,
+}
+
+// claudeOAuthTokenPrefix is what `claude setup-token` output starts with.
+const claudeOAuthTokenPrefix = "sk-ant-oat"
+
+// normalise trims whitespace for single-line values, removes it altogether
+// from tokens and makes sure key material ends with a newline.
+func normalise(kind string, v []byte) ([]byte, error) {
+	switch {
+	case kind == store.CredGitSSHKey:
 		s := strings.TrimRight(string(v), "\r\n\t ")
 		if s == "" {
-			return nil
+			return nil, nil
 		}
-		return []byte(s + "\n")
-	case store.CredClaudeLogin, store.CredCodexLogin:
-		return v
+		return []byte(s + "\n"), nil
+	case kind == store.CredClaudeLogin || kind == store.CredCodexLogin:
+		return v, nil
+	case tokenKinds[kind]:
+		s := strings.Join(strings.Fields(string(v)), "")
+		if kind == store.CredClaudeOAuthToken && s != "" && !strings.HasPrefix(s, claudeOAuthTokenPrefix) {
+			return nil, &ValidationError{"a Claude Code OAuth token starts with " + claudeOAuthTokenPrefix + "…; paste the whole token printed by `claude setup-token`"}
+		}
+		return []byte(s), nil
 	default:
-		return []byte(strings.TrimSpace(string(v)))
+		return []byte(strings.TrimSpace(string(v))), nil
 	}
 }
 
