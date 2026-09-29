@@ -55,7 +55,10 @@ type Service struct {
 	Log           *slog.Logger
 
 	live sync.Map // session id -> *Live
-	now  func() time.Time
+	// loginSynced remembers, per running session, the credential-file
+	// change the poller last acted on, so each rotation is exported once.
+	loginSynced sync.Map // session id -> time.Time
+	now         func() time.Time
 }
 
 // Live is the last status polled from a session's runner.
@@ -346,7 +349,17 @@ func (s *Service) SaveLogin(ctx context.Context, owner *store.User, id, kind str
 	if sess.State != store.StateRunning {
 		return ErrInvalidTransition
 	}
-	reply, err := s.Term.Control(ctx, id, runner.Control{T: runner.MsgExportLogin, Kind: kind}, runner.MsgLogin)
+	if err := s.exportLogin(ctx, sess, kind); err != nil {
+		return err
+	}
+	s.event(ctx, id, "user", kind+" saved to account by "+owner.Username)
+	return nil
+}
+
+// exportLogin asks the session's runner for the CLI's current login files
+// and stores the bundle in the owner's Secret.
+func (s *Service) exportLogin(ctx context.Context, sess *store.Session, kind string) error {
+	reply, err := s.Term.Control(ctx, sess.ID, runner.Control{T: runner.MsgExportLogin, Kind: kind}, runner.MsgLogin)
 	if err != nil {
 		return err
 	}
@@ -354,11 +367,50 @@ func (s *Service) SaveLogin(ctx context.Context, owner *store.User, id, kind str
 	if err != nil || len(data) == 0 {
 		return errors.New("runner returned an empty login")
 	}
-	if err := s.Creds.Set(ctx, owner.ID, kind, data); err != nil {
-		return err
+	return s.Creds.Set(ctx, sess.OwnerID, kind, data)
+}
+
+// syncLogin keeps a saved login current. Claude Code's OAuth refresh tokens
+// are single use: once the CLI in one session has refreshed, the pair saved
+// earlier is dead and a new session seeded from it lands on the login
+// screen. So whenever a runner reports that its CLI rewrote the credential
+// file, and the owner has that login saved, the account copy is replaced
+// with the fresh one. Users who never saved a login are left alone.
+func (s *Service) syncLogin(ctx context.Context, sess *store.Session, st runner.Status) {
+	if st.LoginUpdatedAt == nil {
+		return
 	}
-	s.event(ctx, id, "user", kind+" saved to account by "+owner.Username)
-	return nil
+	kind := runner.LoginKindForAgent(sess.Agent)
+	if kind == "" {
+		return
+	}
+	at := *st.LoginUpdatedAt
+	if v, ok := s.loginSynced.Load(sess.ID); ok && !at.After(v.(time.Time)) {
+		return
+	}
+	rows, err := s.Store.Credentials().List(ctx, sess.OwnerID)
+	if err != nil {
+		s.Log.Warn("poller: list credentials failed", "session", sess.ID, "err", err)
+		return
+	}
+	var saved *store.Credential
+	for _, r := range rows {
+		if r.Kind == kind {
+			saved = r
+		}
+	}
+	// One attempt per change, success or not: a runner that cannot export
+	// (the CLI logged out, say) must not be asked again every ten seconds.
+	s.loginSynced.Store(sess.ID, at)
+	if saved == nil || !at.After(saved.UpdatedAt) {
+		return
+	}
+	if err := s.exportLogin(ctx, sess, kind); err != nil {
+		s.Log.Warn("poller: refreshing saved login failed", "session", sess.ID, "kind", kind, "err", err)
+		return
+	}
+	s.Log.Info("saved login refreshed from session", "session", sess.ID, "kind", kind)
+	s.event(ctx, sess.ID, "login", kind+" in the account refreshed from this session")
 }
 
 // Events lists the session's event log, newest first.
@@ -466,6 +518,7 @@ func (s *Service) PollOnce(ctx context.Context) {
 		counts[sess.State]++
 		if sess.State != store.StateRunning {
 			s.live.Delete(sess.ID)
+			s.loginSynced.Delete(sess.ID)
 			continue
 		}
 		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -479,6 +532,7 @@ func (s *Service) PollOnce(ctx context.Context) {
 		live := &Live{Status: st, FetchedAt: now}
 		prev, _ := s.live.Load(sess.ID)
 		s.live.Store(sess.ID, live)
+		s.syncLogin(ctx, sess, st)
 		if st.LastOutputAt != nil {
 			_ = s.Store.Sessions().TouchOutput(ctx, sess.ID, *st.LastOutputAt)
 		}

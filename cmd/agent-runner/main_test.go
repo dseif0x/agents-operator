@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -191,5 +193,109 @@ func TestAgentCommand(t *testing.T) {
 	}
 	if c := AgentCommand(runner.AgentShell, true, "/w", nil); c.Path != "bash" {
 		t.Fatalf("shell = %+v", c)
+	}
+}
+
+func TestPrepareClaudeConfig(t *testing.T) {
+	root := t.TempDir()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ws := &Workspace{Root: root, Agent: runner.AgentClaude, Log: log}
+	if err := os.MkdirAll(ws.HomeDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(ws.HomeDir(), ".claude.json")
+	read := func() map[string]any {
+		b, err := os.ReadFile(cfgPath)
+		if err != nil {
+			return nil
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatalf("invalid .claude.json: %v\n%s", err, b)
+		}
+		return m
+	}
+	trusted := func(m map[string]any, dir string) bool {
+		projects, _ := m["projects"].(map[string]any)
+		p, _ := projects[dir].(map[string]any)
+		return p["hasTrustDialogAccepted"] == true
+	}
+	repos := []store.Repo{{URL: "https://x/app.git", Path: "app"}}
+	t.Setenv(runner.EnvClaudeOAuthToken, "")
+	t.Setenv(runner.EnvAnthropicAPIKey, "")
+
+	// No credentials: the directories are trusted, onboarding stays with the CLI.
+	ws.prepareClaudeConfig(repos)
+	m := read()
+	if m["hasCompletedOnboarding"] != nil {
+		t.Fatalf("onboarding marked complete without credentials: %v", m)
+	}
+	if !trusted(m, root) || !trusted(m, filepath.Join(root, "app")) {
+		t.Fatalf("directories not trusted: %v", m)
+	}
+
+	// An API key from the environment: onboarding done, key pre-approved by its suffix.
+	key := "sk-ant-api03-0123456789abcdefghijklmnopqrstuvwxyz"
+	t.Setenv(runner.EnvAnthropicAPIKey, key)
+	ws.prepareClaudeConfig(repos)
+	m = read()
+	if m["hasCompletedOnboarding"] != true {
+		t.Fatalf("onboarding not marked complete: %v", m)
+	}
+	resp, _ := m["customApiKeyResponses"].(map[string]any)
+	approved, _ := resp["approved"].([]any)
+	if len(approved) != 1 || approved[0] != key[len(key)-claudeAPIKeySuffix:] {
+		t.Fatalf("approved = %v", approved)
+	}
+	// Idempotent: a second boot leaves the file byte for byte as it was.
+	before, _ := os.ReadFile(cfgPath)
+	ws.prepareClaudeConfig(repos)
+	if after, _ := os.ReadFile(cfgPath); !bytes.Equal(before, after) {
+		t.Fatalf("rewritten without changes:\n%s\n---\n%s", before, after)
+	}
+
+	// A seeded .claude.json keeps every value it had; numbers stay exact.
+	seeded := `{"hasCompletedOnboarding":false,"oauthAccount":{"emailAddress":"a@b.c"},"firstStartTime":1759100000123,"projects":{"/elsewhere":{"hasTrustDialogAccepted":false}}}`
+	if err := os.WriteFile(cfgPath, []byte(seeded), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(ws.HomeDir(), ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws.HomeDir(), ".claude", ".credentials.json"), []byte(`{"tok":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(runner.EnvAnthropicAPIKey, "")
+	ws.prepareClaudeConfig(nil)
+	b, _ := os.ReadFile(cfgPath)
+	for _, want := range []string{`"hasCompletedOnboarding": false`, `"emailAddress": "a@b.c"`, `1759100000123`, `"/elsewhere"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf(".claude.json lost %s:\n%s", want, b)
+		}
+	}
+	if m = read(); !trusted(m, root) || trusted(m, "/elsewhere") {
+		t.Fatalf("trust = %v", m["projects"])
+	}
+	if _, ok := m["customApiKeyResponses"]; ok {
+		t.Fatal("API key approval added without a key")
+	}
+
+	// Something that is not a JSON object is left alone.
+	if err := os.WriteFile(cfgPath, []byte("nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws.prepareClaudeConfig(nil)
+	if b, _ := os.ReadFile(cfgPath); string(b) != "nope" {
+		t.Fatalf("invalid file rewritten: %s", b)
+	}
+
+	// Other agents get no Claude config at all.
+	other := &Workspace{Root: t.TempDir(), Agent: runner.AgentCodex, Log: log}
+	if err := os.MkdirAll(other.HomeDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	other.prepareClaudeConfig(repos)
+	if _, err := os.Stat(filepath.Join(other.HomeDir(), ".claude.json")); err == nil {
+		t.Fatal(".claude.json written for a codex session")
 	}
 }

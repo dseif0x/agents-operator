@@ -59,11 +59,12 @@ The PTY defaults to 220×50 and follows the most recent `resize` from any client
   "rows": 50,
   "clients": 1,
   "needs_attention": true,
-  "tail": "Do you want to proceed? (y/n)"
+  "tail": "Do you want to proceed? (y/n)",
+  "login_updated_at": "2026-09-28T10:04:00Z"
 }
 ```
 
-The hub polls it every 10 s. `needs_attention` is true when the agent has been silent for at least 2 s and the last visible line ends in something that looks like a prompt (`?`, `(y/n)`, `>`, `❯`, `$`, `:` …). `tail` is the last visible line with ANSI stripped, at most 200 characters.
+The hub polls it every 10 s. `needs_attention` is true when the agent has been silent for at least 2 s and the last visible line ends in something that looks like a prompt (`?`, `(y/n)`, `>`, `❯`, `$`, `:` …). `tail` is the last visible line with ANSI stripped, at most 200 characters. `login_updated_at` is present only when the agent CLI rewrote its credential file after boot (a login or a token refresh; files seeded by the runner do not count); if the owner has that login saved and the account copy is older, the hub sends `export_login` and replaces it.
 
 ## Runner environment
 
@@ -76,8 +77,11 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | `REPOS` | pod spec | JSON list of `{url, branch, path}`; each is cloned into `/workspace/<path>` on first boot; the agent starts in `/workspace` |
 | `AGENTS_OPERATOR_SESSION` | pod spec | session name |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL` | per-session Secret (from the user Secret) | model credentials |
+| `CLAUDE_CODE_OAUTH_TOKEN` | per-session Secret | long-lived Claude subscription token from `claude setup-token`; read by Claude Code itself |
 | `GIT_USER_NAME`, `GIT_USER_EMAIL` | per-session Secret | seeded into `~/.gitconfig` |
 | `GIT_SSH_KEY` | per-session Secret | written to `~/.ssh/id_ed25519` (0600); removed from the agent's env |
 | `GIT_HTTPS_TOKEN` | per-session Secret | served by `agent-runner git-credential` for every host, never written to disk |
 | `GH_TOKEN` | per-session Secret | GitHub token for `gh` (also exported as `GITHUB_TOKEN`); the credential helper uses it for `https://github.com` when no `GIT_HTTPS_TOKEN` is set, and without an SSH key `git@github.com:` remotes are rewritten to HTTPS |
 | `AGENTS_OPERATOR_LOGIN_<KIND>` | per-session Secret | base64 login bundle seeded into HOME on first boot; only the files known for that kind are written, and never over an existing file |
+
+For `AGENT=claude` the runner also prepares `~/.claude.json` before the CLI starts: with any credential present (seeded login, `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`) onboarding is marked complete, an API key from the environment is pre-approved, and `/workspace` plus every repository directory are marked trusted. Keys that already exist are left as they are.

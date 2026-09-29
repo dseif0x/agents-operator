@@ -121,6 +121,7 @@ func BuildPVC(s *store.Session, cfg Config) *corev1.PersistentVolumeClaim {
 var credentialEnv = map[string]string{
 	store.CredAnthropicAPIKey:  "ANTHROPIC_API_KEY",
 	store.CredAnthropicBaseURL: "ANTHROPIC_BASE_URL",
+	store.CredClaudeOAuthToken: runner.EnvClaudeOAuthToken,
 	store.CredOpenAIAPIKey:     "OPENAI_API_KEY",
 	store.CredGitSSHKey:        runner.EnvGitSSHKey,
 	store.CredGitHTTPSToken:    runner.EnvGitHTTPSToken,

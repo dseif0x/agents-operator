@@ -2,19 +2,27 @@ package session
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/dseif0x/agents-operator/internal/github"
+	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/store"
+	"github.com/dseif0x/agents-operator/internal/term"
 )
 
 type fakeOrch struct{ notified []string }
@@ -284,5 +292,137 @@ func TestViewAndBroker(t *testing.T) {
 		}
 	default:
 		t.Fatal("event not delivered")
+	}
+}
+
+type staticResolver struct{ ep term.Endpoint }
+
+func (r staticResolver) Endpoint(context.Context, string) (term.Endpoint, error) { return r.ep, nil }
+
+// fakeRunner is enough of a runner for the poller: /status reports the
+// credential file's change time, /ws answers export_login with a bundle
+// whose content counts the exports.
+type fakeRunner struct {
+	mu      sync.Mutex
+	loginAt *time.Time
+	exports int
+}
+
+func (f *fakeRunner) setLoginAt(t time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.loginAt = &t
+}
+
+func (f *fakeRunner) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.exports
+}
+
+func (f *fakeRunner) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(runner.Status{Agent: "claude", Running: true, LoginUpdatedAt: f.loginAt})
+	})
+	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		_, data, err := c.Read(r.Context())
+		if err != nil {
+			return
+		}
+		var msg runner.Control
+		_ = json.Unmarshal(data, &msg)
+		if msg.T != runner.MsgExportLogin {
+			return
+		}
+		f.mu.Lock()
+		f.exports++
+		n := f.exports
+		f.mu.Unlock()
+		bundle, _ := runner.EncodeLoginBundle(runner.LoginBundle{Files: map[string][]byte{".claude/.credentials.json": []byte(fmt.Sprintf(`{"v":%d}`, n))}})
+		reply, _ := json.Marshal(runner.Control{T: runner.MsgLogin, Kind: msg.Kind, Data: base64.StdEncoding.EncodeToString(bundle)})
+		_ = c.Write(r.Context(), websocket.MessageText, reply)
+		_, _, _ = c.Read(r.Context()) // until the hub closes
+	})
+	return mux
+}
+
+func TestSyncLogin(t *testing.T) {
+	svc, _, u := newService(t)
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	srv := httptest.NewServer(fr.handler())
+	t.Cleanup(srv.Close)
+	host, portStr, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	port, _ := strconv.Atoi(portStr)
+	svc.Term = &term.Proxy{Resolver: staticResolver{term.Endpoint{IP: host, Port: port, Token: "t"}}, Log: svc.Log}
+	saved := func() string {
+		v, err := svc.Creds.Get(ctx, u.ID, store.CredClaudeLogin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v == nil {
+			return ""
+		}
+		return string(runner.DecodeLoginBundle(runner.LoginClaude, v).Files[".claude/.credentials.json"])
+	}
+
+	sess, err := svc.Create(ctx, u, CreateRequest{Name: "c", Agent: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// The CLI logged in, but the user never saved: nothing is stored.
+	fr.setLoginAt(time.Now())
+	svc.PollOnce(ctx)
+	if fr.count() != 0 || saved() != "" {
+		t.Fatalf("exported %d, saved %q for a user without a saved login", fr.count(), saved())
+	}
+
+	// The user saves. The account copy is newer than the file, so polling
+	// does not export again.
+	if err := svc.SaveLogin(ctx, u, sess.ID, store.CredClaudeLogin); err != nil {
+		t.Fatal(err)
+	}
+	svc.PollOnce(ctx)
+	if fr.count() != 1 || saved() != `{"v":1}` {
+		t.Fatalf("after save: exports=%d saved=%q", fr.count(), saved())
+	}
+
+	// The CLI refreshes its tokens: the next poll re-exports, exactly once.
+	fr.setLoginAt(time.Now().Add(time.Minute))
+	svc.PollOnce(ctx)
+	svc.PollOnce(ctx)
+	if fr.count() != 2 || saved() != `{"v":2}` {
+		t.Fatalf("after refresh: exports=%d saved=%q", fr.count(), saved())
+	}
+	events, _ := svc.Events(ctx, u.ID, sess.ID)
+	found := false
+	for _, e := range events {
+		if e.Kind == "login" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no login event recorded: %+v", events)
+	}
+
+	// A shell session's runner is never asked for a login.
+	sh, _ := svc.Create(ctx, u, CreateRequest{Name: "s", Agent: "shell"})
+	_, _ = svc.Store.Sessions().SetState(ctx, sh.ID, store.StateRunning, "")
+	fr.setLoginAt(time.Now().Add(2 * time.Minute))
+	svc.PollOnce(ctx)
+	if fr.count() != 3 { // the claude session exported the newer file once more; the shell one did not
+		t.Fatalf("exports = %d", fr.count())
 	}
 }

@@ -6,6 +6,12 @@ import { timeAgo } from "../util";
 const FIELDS: { kind: string; label: string; help: string; multiline?: boolean; secret: boolean }[] = [
   { kind: "anthropic_api_key", label: "Anthropic API key", help: "ANTHROPIC_API_KEY for Claude Code (API key mode).", secret: true },
   { kind: "anthropic_base_url", label: "Anthropic base URL", help: "Optional ANTHROPIC_BASE_URL, e.g. an in-cluster proxy.", secret: false },
+  {
+    kind: "claude_oauth_token",
+    label: "Claude Code OAuth token",
+    help: "Long-lived token for a Claude subscription, exposed as CLAUDE_CODE_OAUTH_TOKEN. Run `claude setup-token` in any session, log in through the printed link and paste the token here. It does not rotate, so every session starts signed in, however many run at once.",
+    secret: true,
+  },
   { kind: "openai_api_key", label: "OpenAI API key", help: "OPENAI_API_KEY for Codex.", secret: true },
   { kind: "git_user_name", label: "Git user.name", help: "Seeded into ~/.gitconfig on first boot.", secret: false },
   { kind: "git_user_email", label: "Git user.email", help: "Seeded into ~/.gitconfig on first boot.", secret: false },
@@ -112,7 +118,10 @@ export function Account(props: { user: User; onLogout: () => void }) {
         })}
         <h4 style="margin:22px 0 4px">Saved logins</h4>
         <p class="muted" style="margin:0 0 6px;font-size:13px">
-          Run the CLI's own login inside a session, then use “Save login to account” on the session page. Later sessions start logged in.
+          Run the CLI's own login inside a session, then use “Save login” on the session page. Later sessions start logged in. Claude Code
+          refreshes its OAuth tokens every few hours and the previous pair stops working; the hub copies the fresh tokens from whichever
+          session refreshed last, so a new session always starts from the newest login. Sessions running at the same time still share one
+          pair and one of them can be signed out by a refresh; the OAuth token above avoids that.
         </p>
         <table class="creds">
           {Object.entries(LOGIN_KINDS).map(([kind, label]) => (

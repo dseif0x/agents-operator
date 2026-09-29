@@ -78,6 +78,11 @@ type Status struct {
 	NeedsAttention bool `json:"needs_attention"`
 	// Tail is the last visible line of output, ANSI stripped, for list pages.
 	Tail string `json:"tail,omitempty"`
+	// LoginUpdatedAt is set when the agent CLI itself rewrote its credential
+	// file after boot (a login, or an OAuth token refresh). The hub uses it
+	// to keep the account's saved login current, because refreshed OAuth
+	// tokens invalidate the pair that was saved before.
+	LoginUpdatedAt *time.Time `json:"login_updated_at,omitempty"`
 }
 
 // Agent identifiers understood by the runner image.
@@ -121,6 +126,18 @@ var LoginFiles = map[string][]string{
 	LoginCodex:  {".codex/auth.json"},
 }
 
+// LoginKindForAgent is the login kind an agent's CLI produces, or "" when
+// the agent has no exportable login.
+func LoginKindForAgent(agent string) string {
+	switch agent {
+	case AgentClaude:
+		return LoginClaude
+	case AgentCodex:
+		return LoginCodex
+	}
+	return ""
+}
+
 // LoginFile is the credential file of a login kind (the first of LoginFiles).
 var LoginFile = func() map[string]string {
 	m := map[string]string{}
@@ -161,10 +178,15 @@ const (
 	EnvGitHubToken   = "GH_TOKEN" // GitHub token for gh and https clones of github.com
 	EnvGitUserName   = "GIT_USER_NAME"
 	EnvGitUserEmail  = "GIT_USER_EMAIL"
-	EnvGitSSHKey     = "GIT_SSH_KEY"             // private key contents
-	EnvGitHTTPSToken = "GIT_HTTPS_TOKEN"         // token for https clones
-	EnvSeedPrefix    = "AGENTS_OPERATOR_LOGIN_"  // + upper(kind): base64 credential file to seed
-	EnvWorkspace     = "WORKSPACE"               // defaults to /workspace
-	EnvListen        = "RUNNER_LISTEN"           // defaults to :7681
-	EnvSessionName   = "AGENTS_OPERATOR_SESSION" // human name, used for the prompt/hostname
+	EnvGitSSHKey     = "GIT_SSH_KEY"            // private key contents
+	EnvGitHTTPSToken = "GIT_HTTPS_TOKEN"        // token for https clones
+	EnvSeedPrefix    = "AGENTS_OPERATOR_LOGIN_" // + upper(kind): base64 credential file to seed
+	// EnvClaudeOAuthToken is Claude Code's own long-lived token variable (the
+	// output of `claude setup-token`); EnvAnthropicAPIKey its API key. The
+	// runner only looks at them to skip the CLI's onboarding prompts.
+	EnvClaudeOAuthToken = "CLAUDE_CODE_OAUTH_TOKEN"
+	EnvAnthropicAPIKey  = "ANTHROPIC_API_KEY"
+	EnvWorkspace        = "WORKSPACE"               // defaults to /workspace
+	EnvListen           = "RUNNER_LISTEN"           // defaults to :7681
+	EnvSessionName      = "AGENTS_OPERATOR_SESSION" // human name, used for the prompt/hostname
 )
