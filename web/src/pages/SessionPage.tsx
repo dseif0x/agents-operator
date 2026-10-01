@@ -27,15 +27,19 @@ export function SessionPage({ id }: { id: string }) {
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
+    // Relative to the scale the page loaded at: Safari's per-site page zoom
+    // is reported in `scale` as well and is not a pinch.
+    const baseScale = vv.scale;
+    const zoomed = () => vv.scale > baseScale * 1.1;
     const apply = () => {
       const el = page.current;
-      if (!el || vv.scale > 1.01) return;
+      if (!el || zoomed()) return;
       el.style.height = `${Math.round(vv.height)}px`;
     };
     // If Safari still pans the visual viewport (a drag that started on the
     // top bar, say), snap it back instead of following it.
     const snap = () => {
-      if (vv.scale > 1.01) return;
+      if (zoomed()) return;
       if (vv.offsetTop > 0 || window.scrollY > 0) window.scrollTo(0, 0);
     };
     window.scrollTo(0, 0);

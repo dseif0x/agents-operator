@@ -172,11 +172,13 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
         term.scrollLines(lines);
       }
     };
+    // Pinch-zoomed in, relative to how the page loaded (Safari's per-site
+    // page zoom shows up in `scale` too and must not count): a drag then
+    // pans the zoomed page and is left to the browser. Taps still focus.
+    const baseScale = visualViewport?.scale ?? 1;
+    const zoomed = () => (visualViewport?.scale ?? 1) > baseScale * 1.1;
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
-      // Pinch-zoomed in: the user is panning the zoomed page to read, so
-      // leave every touch to the browser.
-      if ((visualViewport?.scale ?? 1) > 1.01) return;
       cancelAnimationFrame(inertia);
       const p = e.touches[0];
       touch = { x: p.clientX, y: p.clientY, lastY: p.clientY, lastT: e.timeStamp, t0: e.timeStamp, moved: false, acc: 0, v: 0 };
@@ -186,6 +188,10 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       const p = e.touches[0];
       if (!touch.moved && Math.hypot(p.clientX - touch.x, p.clientY - touch.y) > 8) touch.moved = true;
       if (!touch.moved) return;
+      if (zoomed()) {
+        touch = null; // a pan, not a scroll and not a tap
+        return;
+      }
       e.preventDefault(); // keep the browser from panning the viewport
       const dy = touch.lastY - p.clientY;
       const dt = Math.max(1, e.timeStamp - touch.lastT);
