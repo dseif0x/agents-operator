@@ -100,7 +100,13 @@ tests:
       runner.runtimeClassName: gvisor
       runner.tmpInit: false
       runner.maxResources.limits.cpu: "8"
+      runner.serviceAccount.enabled: true
     asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_RUNNER_SERVICE_ACCOUNT
+            value: RELEASE-NAME-agents-operator-runner
       - contains:
           path: spec.template.spec.containers[0].env
           content:

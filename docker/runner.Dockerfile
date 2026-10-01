@@ -51,6 +51,14 @@ RUN case "${TARGETARCH}" in amd64) NODE_ARCH=x64 ;; arm64) NODE_ARCH=arm64 ;; *)
  && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz \
  && mkdir -p /opt/node && tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1 && rm /tmp/node.tar.xz
 
+# kubectl, for sessions that opt into the read-only runner ServiceAccount.
+ARG KUBECTL_VERSION=1.37.1
+RUN curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" -o /usr/local/bin/kubectl \
+ && curl -fsSL "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl.sha256" -o /tmp/kubectl.sha256 \
+ && echo "$(cat /tmp/kubectl.sha256)  /usr/local/bin/kubectl" | sha256sum -c - \
+ && chmod 0755 /usr/local/bin/kubectl && rm /tmp/kubectl.sha256 \
+ && kubectl version --client
+
 # Non-root user; HOME lives on the PVC.
 RUN groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 -s /bin/bash -d /workspace/home agent \
  && mkdir -p /workspace /opt/agents && chown -R 1000:1000 /workspace /opt/agents

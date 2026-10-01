@@ -45,6 +45,9 @@ type Defaults struct {
 	Resources    config.Resources `json:"resources"`
 	MaxResources config.Resources `json:"max_resources"`
 	RuntimeClass string           `json:"runtime_class"`
+	// ServiceAccount is the name of the read-only runner ServiceAccount a
+	// session may opt into; empty when the chart does not create one.
+	ServiceAccount string `json:"service_account"`
 }
 
 // Service is the session business logic.
@@ -91,6 +94,9 @@ type CreateRequest struct {
 	Tolerations  []config.Toleration `json:"tolerations"`
 	Env          map[string]string   `json:"env"`
 	Autonomous   *bool               `json:"autonomous"`
+	// ServiceAccount mounts the chart's read-only runner ServiceAccount so
+	// kubectl works inside the pod. Refused when the chart offers none.
+	ServiceAccount bool `json:"service_account"`
 }
 
 // Kubernetes name and label syntax, checked here so a bad value is a 400
@@ -231,8 +237,9 @@ func (s *Service) clock() time.Time {
 	return time.Now()
 }
 
-// Create validates the request, inserts the row and asks for convergence.
-func (s *Service) Create(ctx context.Context, owner *store.User, req CreateRequest) (*store.Session, error) {
+// validate checks and normalises a request in place and returns the
+// normalised repositories. It covers everything Create and Update share.
+func (s *Service) validate(req *CreateRequest) ([]store.Repo, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if !nameRE.MatchString(req.Name) {
 		return nil, &ValidationError{"name must be 1-63 characters: letters, digits, space, dot, underscore or dash"}
@@ -240,18 +247,9 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 	if !runner.ValidAgent(req.Agent) {
 		return nil, &ValidationError{"agent must be one of " + strings.Join(runner.Agents, ", ")}
 	}
-	repos, err := normaliseRepos(req)
+	repos, err := normaliseRepos(*req)
 	if err != nil {
 		return nil, err
-	}
-	if req.PVCSize == "" {
-		req.PVCSize = s.Defaults.PVCSize
-	}
-	if q, err := resource.ParseQuantity(req.PVCSize); err != nil || q.Sign() <= 0 {
-		return nil, &ValidationError{"pvc_size must be a positive Kubernetes quantity such as 20Gi"}
-	}
-	if req.StorageClass == "" {
-		req.StorageClass = s.Defaults.StorageClass
 	}
 	for _, q := range []string{req.Resources.Requests.CPU, req.Resources.Requests.Memory, req.Resources.Limits.CPU, req.Resources.Limits.Memory} {
 		if q != "" {
@@ -283,7 +281,28 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 	if strings.ContainsAny(req.ImageTag, "/: \t") {
 		return nil, &ValidationError{"invalid image tag"}
 	}
-	if err := validateScheduling(req); err != nil {
+	if err := validateScheduling(*req); err != nil {
+		return nil, err
+	}
+	if req.ServiceAccount && s.Defaults.ServiceAccount == "" {
+		return nil, &ValidationError{"no runner service account is configured (chart value runner.serviceAccount.enabled)"}
+	}
+	return repos, nil
+}
+
+// Create validates the request, inserts the row and asks for convergence.
+func (s *Service) Create(ctx context.Context, owner *store.User, req CreateRequest) (*store.Session, error) {
+	if req.PVCSize == "" {
+		req.PVCSize = s.Defaults.PVCSize
+	}
+	if q, err := resource.ParseQuantity(req.PVCSize); err != nil || q.Sign() <= 0 {
+		return nil, &ValidationError{"pvc_size must be a positive Kubernetes quantity such as 20Gi"}
+	}
+	if req.StorageClass == "" {
+		req.StorageClass = s.Defaults.StorageClass
+	}
+	repos, err := s.validate(&req)
+	if err != nil {
 		return nil, err
 	}
 	autonomous := s.Defaults.Autonomous
@@ -293,21 +312,68 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 	sess := &store.Session{
 		OwnerID: owner.ID, Name: req.Name, Agent: req.Agent, Repos: repos,
 		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, RuntimeClass: req.RuntimeClass, Resources: req.Resources,
-		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
+		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous, ServiceAccount: req.ServiceAccount,
 		State: store.StateCreating,
 	}
 	if err := s.Store.Sessions().Create(ctx, sess); err != nil {
 		return nil, err
 	}
 	s.event(ctx, sess.ID, "user", "created by "+owner.Username)
-	for _, r := range repos {
-		if err := s.Store.RepoUsage().Increment(ctx, owner.ID, store.RepoKey(r.URL)); err != nil {
-			s.Log.Debug("record repo usage failed", "err", err)
-		}
-	}
+	s.recordRepoUsage(ctx, owner.ID, nil, repos)
 	s.Orch.Notify(sess.ID)
 	s.SessionChanged(ctx, sess)
 	return sess, nil
+}
+
+// Update replaces a stopped or failed session's editable settings. The
+// agent, PVC size and storage class stay: they shape the volume and the
+// CLI state on it. Everything else only matters when the next pod is
+// built, which is exactly what a stopped session is waiting for; repos
+// added here are cloned on that start (existing directories are left
+// alone), and the AGENTS.md is regenerated.
+func (s *Service) Update(ctx context.Context, owner *store.User, id string, req CreateRequest) (*store.Session, error) {
+	sess, err := s.Get(ctx, owner.ID, id)
+	if err != nil {
+		return nil, err
+	}
+	if sess.State != store.StateStopped && sess.State != store.StateFailed {
+		return nil, ErrInvalidTransition
+	}
+	req.Agent, req.PVCSize, req.StorageClass = sess.Agent, sess.PVCSize, sess.StorageClass
+	repos, err := s.validate(&req)
+	if err != nil {
+		return nil, err
+	}
+	next := *sess
+	next.Name, next.Repos, next.ImageTag, next.RuntimeClass, next.ServiceAccount = req.Name, repos, req.ImageTag, req.RuntimeClass, req.ServiceAccount
+	next.Resources, next.NodeSelector, next.Tolerations, next.Env = req.Resources, req.NodeSelector, req.Tolerations, req.Env
+	if req.Autonomous != nil {
+		next.Autonomous = *req.Autonomous
+	}
+	updated, err := s.Store.Sessions().Update(ctx, &next)
+	if err != nil {
+		return nil, err
+	}
+	s.event(ctx, id, "user", "settings changed by "+owner.Username)
+	s.recordRepoUsage(ctx, owner.ID, sess.Repos, repos)
+	s.SessionChanged(ctx, updated)
+	return updated, nil
+}
+
+// recordRepoUsage counts repositories that are new to the session.
+func (s *Service) recordRepoUsage(ctx context.Context, ownerID string, before, after []store.Repo) {
+	had := map[string]bool{}
+	for _, r := range before {
+		had[store.RepoKey(r.URL)] = true
+	}
+	for _, r := range after {
+		if had[store.RepoKey(r.URL)] {
+			continue
+		}
+		if err := s.Store.RepoUsage().Increment(ctx, ownerID, store.RepoKey(r.URL)); err != nil {
+			s.Log.Debug("record repo usage failed", "err", err)
+		}
+	}
 }
 
 func validRepoURL(raw string) bool {
@@ -678,6 +744,7 @@ type View struct {
 	Tolerations    []config.Toleration `json:"tolerations"`
 	Env            map[string]string   `json:"env"`
 	Autonomous     bool                `json:"autonomous"`
+	ServiceAccount bool                `json:"service_account"`
 	State          string              `json:"state"`
 	StateReason    string              `json:"state_reason"`
 	CreatedAt      time.Time           `json:"created_at"`
@@ -699,7 +766,7 @@ func (s *Service) View(sess *store.Session) View {
 	v := View{
 		ID: sess.ID, Name: sess.Name, Agent: sess.Agent, Repos: sess.Repos,
 		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, RuntimeClass: sess.RuntimeClass, Resources: sess.Resources,
-		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
+		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous, ServiceAccount: sess.ServiceAccount,
 		State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
 	}

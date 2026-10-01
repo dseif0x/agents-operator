@@ -53,6 +53,8 @@ export function App() {
       return <SessionPage id={route.params.id} />;
     case "/new":
       return <NewSession user={user} onLogout={logout} />;
+    case "/sessions/:id/edit":
+      return <NewSession user={user} onLogout={logout} edit={route.params.id} />;
     case "/account":
       return <Account user={user} onLogout={logout} />;
     default:

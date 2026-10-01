@@ -66,6 +66,36 @@ tests:
       - notExists:
           path: spec.egress[2].ports
 
+  - it: opens the API server for the runner ServiceAccount from the listed CIDRs
+    set:
+      runner.serviceAccount.enabled: true
+      runner.networkPolicy.apiServerCIDRs:
+        - 192.168.1.10/32
+        - 192.168.1.11/32
+      runner.networkPolicy.apiServerPort: 6443
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 4
+      - equal:
+          path: spec.egress[2].to[0].ipBlock.cidr
+          value: 192.168.1.10/32
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 6443
+      - equal:
+          path: spec.egress[3].to[0].ipBlock.cidr
+          value: 192.168.1.11/32
+
+  - it: adds no API server rule while the runner ServiceAccount is off
+    set:
+      runner.networkPolicy.apiServerCIDRs:
+        - 192.168.1.10/32
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 2
+
   - it: can be disabled
     set:
       runner.networkPolicy.enabled: false

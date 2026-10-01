@@ -71,7 +71,7 @@ func exercise(t *testing.T, st Store) {
 	// sessions
 	s := &Session{
 		OwnerID: u.ID, Name: "one", Agent: "claude", Repos: []Repo{{URL: "https://example.com/r.git", Branch: "main", Path: "r"}},
-		PVCSize: "20Gi", StorageClass: "nfs-fast", RuntimeClass: "gvisor", State: StateCreating, Autonomous: true,
+		PVCSize: "20Gi", StorageClass: "nfs-fast", RuntimeClass: "gvisor", ServiceAccount: true, State: StateCreating, Autonomous: true,
 		Resources:    config.Resources{Requests: config.ResourceList{CPU: "250m"}, Limits: config.ResourceList{Memory: "1Gi"}},
 		NodeSelector: map[string]string{"kubernetes.io/arch": "amd64"},
 		Tolerations:  []config.Toleration{{Key: "gpu", Operator: "Exists"}},
@@ -85,7 +85,7 @@ func exercise(t *testing.T, st Store) {
 		t.Fatal(err)
 	}
 	if g.Name != "one" || g.Generation != 1 || len(g.Repos) != 1 || g.Repos[0].Path != "r" || g.Repos[0].Branch != "main" || g.Resources.Limits.Memory != "1Gi" || g.NodeSelector["kubernetes.io/arch"] != "amd64" ||
-		len(g.Tolerations) != 1 || g.Env["FOO"] != "bar" || !g.Autonomous || g.LastOutputAt != nil || g.RuntimeClass != "gvisor" {
+		len(g.Tolerations) != 1 || g.Env["FOO"] != "bar" || !g.Autonomous || g.LastOutputAt != nil || g.RuntimeClass != "gvisor" || !g.ServiceAccount {
 		t.Fatalf("round trip lost data: %+v", g)
 	}
 	if err := st.Sessions().Create(ctx, &Session{OwnerID: adm.ID, Name: "two", Agent: "codex", PVCSize: "1Gi", State: StateStopped}); err != nil {
@@ -98,6 +98,19 @@ func exercise(t *testing.T, st Store) {
 	all, err := st.Sessions().ListAll(ctx)
 	if err != nil || len(all) != 2 {
 		t.Fatalf("ListAll = %d, %v", len(all), err)
+	}
+	// Update replaces the editable settings and nothing else.
+	edited := *g
+	edited.Name, edited.ImageTag, edited.ServiceAccount, edited.Autonomous = "renamed", "1.2.3", false, false
+	edited.Repos = append(edited.Repos, Repo{URL: "https://example.com/two.git", Path: "two"})
+	edited.Env = map[string]string{"A": "b"}
+	edited.State = StateRunning // ignored
+	ed, err := st.Sessions().Update(ctx, &edited)
+	if err != nil || ed.Name != "renamed" || ed.ImageTag != "1.2.3" || ed.ServiceAccount || ed.Autonomous || len(ed.Repos) != 2 || ed.Env["A"] != "b" || ed.State != StateCreating || ed.Generation != 1 {
+		t.Fatalf("Update = %+v, %v", ed, err)
+	}
+	if _, err := st.Sessions().Update(ctx, &Session{ID: NewID()}); err != ErrNotFound {
+		t.Fatalf("Update missing = %v", err)
 	}
 	if _, err := st.Sessions().SetState(ctx, s.ID, StateRunning, "pod ready"); err != nil {
 		t.Fatal(err)

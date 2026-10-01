@@ -311,3 +311,26 @@ func TestClampMaxResources(t *testing.T) {
 		t.Fatalf("partial max: %+v", rr)
 	}
 }
+
+func TestBuildPodServiceAccount(t *testing.T) {
+	s := testSession()
+	cfg := testCfg()
+	cfg.ServiceAccount = "runner-view"
+	// Not asked: no identity, as before.
+	pod := BuildPod(s, cfg)
+	if pod.Spec.ServiceAccountName != "" || *pod.Spec.AutomountServiceAccountToken {
+		t.Fatalf("identity without asking: %s %v", pod.Spec.ServiceAccountName, *pod.Spec.AutomountServiceAccountToken)
+	}
+	// Asked and configured: the read-only account with its token mounted.
+	s.ServiceAccount = true
+	pod = BuildPod(s, cfg)
+	if pod.Spec.ServiceAccountName != "runner-view" || !*pod.Spec.AutomountServiceAccountToken {
+		t.Fatalf("service account not applied: %+v", pod.Spec)
+	}
+	// Asked but the chart offers none: nothing.
+	cfg.ServiceAccount = ""
+	pod = BuildPod(s, cfg)
+	if pod.Spec.ServiceAccountName != "" || *pod.Spec.AutomountServiceAccountToken {
+		t.Fatalf("identity without a configured account: %+v", pod.Spec)
+	}
+}

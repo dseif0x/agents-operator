@@ -41,6 +41,7 @@ export interface Session {
   tolerations: Toleration[];
   env: Record<string, string>;
   autonomous: boolean;
+  service_account: boolean;
   state: SessionState;
   state_reason: string;
   created_at: string;
@@ -74,6 +75,8 @@ export interface SessionDefaults {
   resources: Resources;
   max_resources: Resources;
   runtime_class: string;
+  /** Name of the read-only runner ServiceAccount sessions may opt into; empty when the chart has none. */
+  service_account: string;
 }
 
 export interface Credential {
@@ -108,6 +111,7 @@ export interface CreateSessionRequest {
   tolerations?: Toleration[];
   env?: Record<string, string>;
   autonomous?: boolean;
+  service_account?: boolean;
 }
 
 export class ApiError extends Error {
@@ -155,6 +159,8 @@ export const api = {
   sessions: () => request<{ sessions: Session[]; agents: string[]; defaults?: SessionDefaults }>("GET", "/sessions"),
   session: (id: string) => request<Session>("GET", `/sessions/${id}`),
   createSession: (req: CreateSessionRequest) => request<Session>("POST", "/sessions", req),
+  /** Replace a stopped session's settings; same body as create. */
+  updateSession: (id: string, req: CreateSessionRequest) => request<Session>("PATCH", `/sessions/${id}`, req),
   deleteSession: (id: string) => request<Session>("DELETE", `/sessions/${id}`),
   startSession: (id: string) => request<Session>("POST", `/sessions/${id}/start`),
   stopSession: (id: string) => request<Session>("POST", `/sessions/${id}/stop`),

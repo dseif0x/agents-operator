@@ -13,10 +13,6 @@ export interface TerminalHandle {
   /** Send clipboard-style text as if typed (bracketed paste when the app asked for it). */
   paste: (text: string) => void;
   focus: () => void;
-  /** Raise the on-screen keyboard (phones). Must run inside a touch or click handler. */
-  showKeyboard: () => void;
-  /** Dismiss the on-screen keyboard. */
-  hideKeyboard: () => void;
   /** The text of the screen plus scrollback, for the selectable overlay. */
   screenText: () => string;
   /** URLs currently visible in the buffer, newest last, de-duplicated. */
@@ -57,11 +53,12 @@ interface Props {
 const touchDevice = () => matchMedia("(hover: none) and (pointer: coarse)").matches;
 
 /**
- * Raise the on-screen keyboard. A plain focus() does nothing when the
- * textarea is already focused (xterm focuses it on its own, and a focus
- * made outside a user gesture leaves the element focused with the keyboard
- * closed), so drop focus first; the focus that follows is inside the
- * gesture and brings the keyboard up.
+ * Raise the on-screen keyboard: every tap on the terminal does this, and
+ * the phone's own gesture (swipe down, Done) closes it. A plain focus()
+ * does nothing when the textarea is already focused (xterm focuses it on
+ * its own, and a focus made outside a user gesture leaves the element
+ * focused with the keyboard closed), so drop focus first; the focus that
+ * follows is inside the gesture and brings the keyboard up.
  */
 function raiseKeyboard(term: XTerm) {
   term.textarea?.blur();
@@ -107,8 +104,6 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     },
     paste: (text: string) => xterm.current?.paste(text),
     focus: () => xterm.current?.focus(),
-    showKeyboard: () => xterm.current && raiseKeyboard(xterm.current),
-    hideKeyboard: () => xterm.current?.textarea?.blur(),
     screenText: () => (xterm.current ? bufferText(xterm.current) : ""),
     links: () => {
       const text = xterm.current ? bufferText(xterm.current) : "";

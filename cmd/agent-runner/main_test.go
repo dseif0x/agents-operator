@@ -139,6 +139,22 @@ func TestAgentsFile(t *testing.T) {
 			t.Errorf("%s not generated: %v", p, err)
 		}
 	}
+	if !strings.Contains(s, "no Kubernetes credentials") || strings.Contains(s, "read-only Kubernetes ServiceAccount") {
+		t.Fatal("AGENTS.md claims cluster access without a token")
+	}
+	// With a ServiceAccount token mounted, the agent is told what it may do.
+	token := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(token, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	saTokenPath = token
+	t.Cleanup(func() { saTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token" })
+	if err := ws.writeAgentsFile(repos); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(ws.AgentsFile()); !strings.Contains(string(b), "read-only Kubernetes ServiceAccount") {
+		t.Fatal("AGENTS.md does not mention the mounted ServiceAccount")
+	}
 	// A second boot regenerates the generated files.
 	if err := ws.writeAgentsFile(nil); err != nil {
 		t.Fatal(err)

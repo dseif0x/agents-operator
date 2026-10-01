@@ -48,6 +48,44 @@ app.kubernetes.io/component: hub
 {{- end }}
 {{- end }}
 
+{{/* The read-only ServiceAccount session pods may opt into. */}}
+{{- define "agents-operator.runnerServiceAccountName" -}}
+{{- default (printf "%s-runner" (include "agents-operator.fullname" .)) .Values.runner.serviceAccount.name }}
+{{- end }}
+
+{{/*
+CIDRs (with ports) session pods need for the Kubernetes API: the values
+override, else the cluster's own `kubernetes` Endpoints and Service, which
+`lookup` can read at install or upgrade time but not under `helm template`.
+Renders YAML list items of {cidr, port}.
+*/}}
+{{- define "agents-operator.apiServerTargets" -}}
+{{- $port := .Values.runner.networkPolicy.apiServerPort -}}
+{{- if .Values.runner.networkPolicy.apiServerCIDRs }}
+{{- range .Values.runner.networkPolicy.apiServerCIDRs }}
+- cidr: {{ . }}
+  port: {{ $port }}
+{{- end }}
+{{- else }}
+{{- $ep := lookup "v1" "Endpoints" "default" "kubernetes" }}
+{{- range $ep.subsets }}
+{{- $subset := . }}
+{{- range .addresses }}
+{{- $ip := .ip }}
+{{- range $subset.ports }}
+- cidr: {{ $ip }}/32
+  port: {{ .port }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $svc := lookup "v1" "Service" "default" "kubernetes" }}
+{{- if $svc.spec }}
+- cidr: {{ $svc.spec.clusterIP }}/32
+  port: 443
+{{- end }}
+{{- end }}
+{{- end }}
+
 {{/* Name of the Secret holding cookieSecret and the admin password. */}}
 {{- define "agents-operator.authSecretName" -}}
 {{- if .Values.auth.existingSecret }}

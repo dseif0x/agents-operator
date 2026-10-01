@@ -197,13 +197,13 @@ func (r pgUsers) UpsertPassword(ctx context.Context, username, hash string) (*Us
 
 type pgSessions struct{ pool *pgxpool.Pool }
 
-const sessionCols = `id, owner_id, name, agent, repos, image_tag, pvc_size, storage_class, runtime_class,
+const sessionCols = `id, owner_id, name, agent, repos, image_tag, pvc_size, storage_class, runtime_class, service_account,
 	resources, node_selector, tolerations, env, autonomous, state, state_reason, generation,
 	created_at, updated_at, last_attached_at, last_output_at, deleted_at`
 
 func scanSession(row pgx.Row) (*Session, error) {
 	var s Session
-	err := row.Scan(&s.ID, &s.OwnerID, &s.Name, &s.Agent, &s.Repos, &s.ImageTag, &s.PVCSize, &s.StorageClass, &s.RuntimeClass,
+	err := row.Scan(&s.ID, &s.OwnerID, &s.Name, &s.Agent, &s.Repos, &s.ImageTag, &s.PVCSize, &s.StorageClass, &s.RuntimeClass, &s.ServiceAccount,
 		&s.Resources, &s.NodeSelector, &s.Tolerations, &s.Env, &s.Autonomous, &s.State, &s.StateReason, &s.Generation,
 		&s.CreatedAt, &s.UpdatedAt, &s.LastAttachedAt, &s.LastOutputAt, &s.DeletedAt)
 	if err != nil {
@@ -247,8 +247,8 @@ func (r pgSessions) Create(ctx context.Context, s *Session) error {
 		s.Env = map[string]string{}
 	}
 	_, err := r.pool.Exec(ctx, `INSERT INTO sessions (`+sessionCols+`) VALUES
-		($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
-		s.ID, s.OwnerID, s.Name, s.Agent, s.Repos, s.ImageTag, s.PVCSize, s.StorageClass, s.RuntimeClass,
+		($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+		s.ID, s.OwnerID, s.Name, s.Agent, s.Repos, s.ImageTag, s.PVCSize, s.StorageClass, s.RuntimeClass, s.ServiceAccount,
 		s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous, s.State, s.StateReason, s.Generation,
 		s.CreatedAt, s.UpdatedAt, s.LastAttachedAt, s.LastOutputAt, s.DeletedAt)
 	return mapErr(err)
@@ -272,6 +272,25 @@ func (r pgSessions) ListAll(ctx context.Context) ([]*Session, error) {
 		return nil, mapErr(err)
 	}
 	return scanSessions(rows)
+}
+
+func (r pgSessions) Update(ctx context.Context, s *Session) (*Session, error) {
+	if s.Repos == nil {
+		s.Repos = []Repo{}
+	}
+	if s.NodeSelector == nil {
+		s.NodeSelector = map[string]string{}
+	}
+	if s.Tolerations == nil {
+		s.Tolerations = []config.Toleration{}
+	}
+	if s.Env == nil {
+		s.Env = map[string]string{}
+	}
+	return scanSession(r.pool.QueryRow(ctx, `UPDATE sessions SET name=$2, repos=$3, image_tag=$4, runtime_class=$5, service_account=$6,
+		resources=$7, node_selector=$8, tolerations=$9, env=$10, autonomous=$11, updated_at=now()
+		WHERE id=$1 RETURNING `+sessionCols,
+		s.ID, s.Name, s.Repos, s.ImageTag, s.RuntimeClass, s.ServiceAccount, s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous))
 }
 
 func (r pgSessions) SetState(ctx context.Context, id, state, reason string) (*Session, error) {

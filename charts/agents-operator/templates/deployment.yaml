@@ -77,6 +77,8 @@ spec:
               value: {{ .Values.runner.tolerations | toJson | quote }}
             - name: AGENTS_OPERATOR_RUNNER_RUNTIME_CLASS
               value: {{ .Values.runner.runtimeClassName | quote }}
+            - name: AGENTS_OPERATOR_RUNNER_SERVICE_ACCOUNT
+              value: {{ if .Values.runner.serviceAccount.enabled }}{{ include "agents-operator.runnerServiceAccountName" . | quote }}{{ else }}""{{ end }}
             - name: AGENTS_OPERATOR_RUNNER_TMP_INIT
               value: {{ .Values.runner.tmpInit | quote }}
             - name: AGENTS_OPERATOR_RUNNER_EXTRA_ENV

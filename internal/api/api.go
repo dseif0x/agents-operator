@@ -73,6 +73,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("POST /api/v1/sessions", s.createSession)
 	authed.HandleFunc("GET /api/v1/sessions/events", s.sessionEvents)
 	authed.HandleFunc("GET /api/v1/sessions/{id}", s.getSession)
+	authed.HandleFunc("PATCH /api/v1/sessions/{id}", s.updateSession)
 	authed.HandleFunc("DELETE /api/v1/sessions/{id}", s.deleteSession)
 	authed.HandleFunc("POST /api/v1/sessions/{id}/start", s.startSession)
 	authed.HandleFunc("POST /api/v1/sessions/{id}/stop", s.stopSession)
@@ -356,6 +357,22 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, s.Sessions.View(sess))
+}
+
+// updateSession replaces a stopped session's settings; same body as create.
+func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	var req session.CreateRequest
+	if err := decode(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	sess, err := s.Sessions.Update(r.Context(), p.User, r.PathValue("id"), req)
+	if err != nil {
+		s.mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Sessions.View(sess))
 }
 
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
