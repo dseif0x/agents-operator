@@ -123,14 +123,17 @@ func run() error {
 	// Wiring.
 	rcfg := reconcile.Config{
 		Namespace: cfg.Namespace, RunnerImage: cfg.RunnerImage, RunnerImageTag: cfg.RunnerImageTag, ImagePullPolicy: cfg.RunnerImagePullPolicy,
-		DefaultStorageClass: cfg.DefaultStorageClass, DefaultPVCSize: cfg.DefaultPVCSize, DefaultResources: cfg.DefaultResources,
+		DefaultStorageClass: cfg.DefaultStorageClass, DefaultPVCSize: cfg.DefaultPVCSize, DefaultResources: cfg.DefaultResources, MaxResources: cfg.MaxResources,
 		NodeSelector: cfg.RunnerNodeSelector, Tolerations: cfg.RunnerTolerations, RuntimeClass: cfg.RunnerRuntimeClass, ExtraEnv: cfg.RunnerExtraEnv, TmpInit: cfg.RunnerTmpInit,
 	}
 	proxy := &term.Proxy{Resolver: &reconcile.Resolver{Informers: inf, Namespace: cfg.Namespace}, OriginPatterns: cfg.AllowedHosts, Log: log}
 	creds := &session.Credentials{Store: st, CS: cs, Namespace: cfg.Namespace}
 	svc := &session.Service{
 		Store: st, Term: proxy, Broker: session.NewBroker(), Creds: creds, GitHub: &github.Client{}, IdleStopAfter: cfg.IdleStopAfter, Log: log,
-		Defaults: session.Defaults{PVCSize: cfg.DefaultPVCSize, StorageClass: cfg.DefaultStorageClass, Autonomous: true},
+		Defaults: session.Defaults{
+			PVCSize: cfg.DefaultPVCSize, StorageClass: cfg.DefaultStorageClass, Autonomous: true,
+			Resources: cfg.DefaultResources, MaxResources: cfg.MaxResources, RuntimeClass: cfg.RunnerRuntimeClass,
+		},
 	}
 	rec := reconcile.New(rcfg, st, cs, inf, svc, cfg.ReconcileInterval, log)
 	svc.Orch = rec

@@ -320,7 +320,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	for _, sess := range list {
 		views = append(views, s.Sessions.View(sess))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": views, "agents": runner.Agents})
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": views, "agents": runner.Agents, "defaults": s.Sessions.Defaults})
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {

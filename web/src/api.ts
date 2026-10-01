@@ -65,6 +65,17 @@ export interface SessionEvent {
   message: string;
 }
 
+/** Chart-wide defaults and ceilings a new session starts from. */
+export interface SessionDefaults {
+  pvc_size: string;
+  storage_class: string;
+  image_tag: string;
+  autonomous: boolean;
+  resources: Resources;
+  max_resources: Resources;
+  runtime_class: string;
+}
+
 export interface Credential {
   kind: string;
   secret: boolean;
@@ -141,7 +152,7 @@ export const api = {
   logout: () => request<{ ok: boolean }>("POST", "/auth/logout"),
   me: () => request<{ user: User; csrf: string }>("GET", "/auth/me"),
 
-  sessions: () => request<{ sessions: Session[]; agents: string[] }>("GET", "/sessions"),
+  sessions: () => request<{ sessions: Session[]; agents: string[]; defaults?: SessionDefaults }>("GET", "/sessions"),
   session: (id: string) => request<Session>("GET", `/sessions/${id}`),
   createSession: (req: CreateSessionRequest) => request<Session>("POST", "/sessions", req),
   deleteSession: (id: string) => request<Session>("DELETE", `/sessions/${id}`),

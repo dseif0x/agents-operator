@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { api, type CreateSessionRequest, type GitHubRepo, type Repo, type Toleration, type User } from "../api";
+import { api, type CreateSessionRequest, type GitHubRepo, type Repo, type SessionDefaults, type Toleration, type User } from "../api";
 import { Nav } from "../components/Nav";
 import { navigate } from "../router";
 
@@ -80,6 +80,7 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
   const [autonomous, setAutonomous] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [defaults, setDefaults] = useState<SessionDefaults | null>(null);
   const [gh, setGh] = useState<{ configured: boolean; repos: GitHubRepo[]; error?: string } | null>(null);
   const [ghLoading, setGhLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -94,7 +95,13 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
   };
 
   useEffect(() => {
-    api.sessions().then((r) => r.agents?.length && setAgents(r.agents)).catch(() => undefined);
+    api
+      .sessions()
+      .then((r) => {
+        if (r.agents?.length) setAgents(r.agents);
+        if (r.defaults) setDefaults(r.defaults);
+      })
+      .catch(() => undefined);
     loadGitHub();
   }, []);
 
@@ -113,6 +120,18 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
     setRepos((cur) => (cur.trim() ? cur.replace(/\s*$/, "") + "\n" + line + "\n" : line + "\n"));
     if (!name) setName(r.full_name.split("/")[1] ?? "");
   };
+
+  // "default 2 · up to 8": what a session gets without asking, and the most it may ask for.
+  const range = (name: "cpu" | "memory") => {
+    const d = defaults?.resources?.limits?.[name];
+    const m = defaults?.max_resources?.limits?.[name] || d;
+    if (!d) return "";
+    return m && m !== d ? `default ${d} · up to ${m}` : `default ${d}, the maximum`;
+  };
+  const extendedCaps = Object.entries(defaults?.max_resources?.limits || {})
+    .filter(([k, v]) => k !== "cpu" && k !== "memory" && v)
+    .map(([k, v]) => `${k} up to ${v}`)
+    .join(", ");
 
   const submit = async (e: Event) => {
     e.preventDefault();
@@ -245,24 +264,28 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
           <summary>Advanced: storage, resources, image, environment</summary>
           <div class="form-grid">
             <div>
-              <label>PVC size (default from chart)</label>
-              <input value={pvcSize} onInput={(e) => setPvcSize((e.target as HTMLInputElement).value)} placeholder="20Gi" />
+              <label>PVC size</label>
+              <input value={pvcSize} onInput={(e) => setPvcSize((e.target as HTMLInputElement).value)} placeholder={defaults?.pvc_size || "20Gi"} />
             </div>
             <div>
               <label>Storage class</label>
-              <input value={storageClass} onInput={(e) => setStorageClass((e.target as HTMLInputElement).value)} placeholder="nfs-fast" />
+              <input
+                value={storageClass}
+                onInput={(e) => setStorageClass((e.target as HTMLInputElement).value)}
+                placeholder={defaults?.storage_class || "cluster default"}
+              />
             </div>
             <div>
-              <label>CPU limit (can only be lowered)</label>
-              <input value={cpu} onInput={(e) => setCpu((e.target as HTMLInputElement).value)} placeholder="2" />
+              <label>CPU limit {range("cpu") && <span class="muted">({range("cpu")})</span>}</label>
+              <input value={cpu} onInput={(e) => setCpu((e.target as HTMLInputElement).value)} placeholder={defaults?.resources?.limits?.cpu || "2"} />
             </div>
             <div>
-              <label>Memory limit (can only be lowered)</label>
-              <input value={memory} onInput={(e) => setMemory((e.target as HTMLInputElement).value)} placeholder="4Gi" />
+              <label>Memory limit {range("memory") && <span class="muted">({range("memory")})</span>}</label>
+              <input value={memory} onInput={(e) => setMemory((e.target as HTMLInputElement).value)} placeholder={defaults?.resources?.limits?.memory || "4Gi"} />
             </div>
             <div>
               <label>Runner image tag</label>
-              <input value={imageTag} onInput={(e) => setImageTag((e.target as HTMLInputElement).value)} placeholder="latest" />
+              <input value={imageTag} onInput={(e) => setImageTag((e.target as HTMLInputElement).value)} placeholder={defaults?.image_tag || "chart appVersion"} />
             </div>
           </div>
           <label>Extra environment (KEY=value per line, not secret)</label>
@@ -272,8 +295,12 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
           <summary>Advanced: scheduling (runtime class, node selector, tolerations)</summary>
           <div class="form-grid">
             <div>
-              <label>Runtime class (default from chart)</label>
-              <input value={runtimeClass} onInput={(e) => setRuntimeClass((e.target as HTMLInputElement).value)} placeholder="gvisor" />
+              <label>Runtime class</label>
+              <input
+                value={runtimeClass}
+                onInput={(e) => setRuntimeClass((e.target as HTMLInputElement).value)}
+                placeholder={defaults?.runtime_class || "node default"}
+              />
             </div>
           </div>
           <label>Extended resources (name=amount per line; whole numbers, request equals limit)</label>
@@ -284,8 +311,7 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
             spellcheck={false}
           />
           <div class="muted" style="font-size:12px;margin-top:3px">
-            Only set when asked for; an entry in the chart's <code>runner.resources.limits</code> caps the amount. A GPU usually needs the matching
-            toleration below.
+            {extendedCaps ? `Limits: ${extendedCaps}. ` : ""}A GPU usually needs the matching toleration below.
           </div>
           <label>Node selector (key=value per line; added to the chart's)</label>
           <textarea

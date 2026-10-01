@@ -86,22 +86,22 @@ func TestBuildSecret(t *testing.T) {
 func TestClampResources(t *testing.T) {
 	def := testCfg().DefaultResources
 	// No overrides: defaults.
-	rr := ClampResources(config.Resources{}, def)
+	rr := ClampResources(config.Resources{}, def, config.Resources{})
 	if rr.Limits.Cpu().String() != "2" || rr.Limits.Memory().String() != "4Gi" || rr.Requests.Cpu().String() != "250m" {
 		t.Fatalf("defaults: %+v", rr)
 	}
 	// Lowering is allowed.
-	rr = ClampResources(config.Resources{Limits: config.ResourceList{CPU: "500m", Memory: "1Gi"}}, def)
+	rr = ClampResources(config.Resources{Limits: config.ResourceList{CPU: "500m", Memory: "1Gi"}}, def, config.Resources{})
 	if rr.Limits.Cpu().String() != "500m" || rr.Limits.Memory().String() != "1Gi" {
 		t.Fatalf("lower: %+v", rr)
 	}
 	// Raising is clamped to the default, and requests never exceed limits.
-	rr = ClampResources(config.Resources{Limits: config.ResourceList{CPU: "8", Memory: "64Gi"}, Requests: config.ResourceList{CPU: "4"}}, def)
+	rr = ClampResources(config.Resources{Limits: config.ResourceList{CPU: "8", Memory: "64Gi"}, Requests: config.ResourceList{CPU: "4"}}, def, config.Resources{})
 	if rr.Limits.Cpu().String() != "2" || rr.Limits.Memory().String() != "4Gi" || rr.Requests.Cpu().String() != "2" {
 		t.Fatalf("raise: %+v", rr)
 	}
 	// Request above a lowered limit is pulled down.
-	rr = ClampResources(config.Resources{Limits: config.ResourceList{Memory: "256Mi"}}, def)
+	rr = ClampResources(config.Resources{Limits: config.ResourceList{Memory: "256Mi"}}, def, config.Resources{})
 	if rr.Requests.Memory().String() != "256Mi" {
 		t.Fatalf("request > limit: %+v", rr)
 	}
@@ -250,28 +250,64 @@ func TestBuildPodRuntimeClass(t *testing.T) {
 
 func TestClampExtendedResources(t *testing.T) {
 	def := testCfg().DefaultResources
-	// Nothing asked: nothing set, even when the chart lists a ceiling.
-	def.Limits.Extended = map[string]string{"nvidia.com/gpu": "2"}
-	rr := ClampResources(config.Resources{}, def)
-	if _, ok := rr.Limits["nvidia.com/gpu"]; ok {
-		t.Fatalf("gpu handed out by default: %+v", rr)
-	}
+	ceiling := config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "2"}}}
 	qty := func(l corev1.ResourceList, name string) string {
 		q := l[corev1.ResourceName(name)]
 		return q.String()
 	}
-	// Asked within the ceiling: limit and request both set, equal.
-	rr = ClampResources(config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "1"}}}, def)
+	// Nothing asked and no default: nothing set, even with a maximum.
+	rr := ClampResources(config.Resources{}, def, ceiling)
+	if _, ok := rr.Limits["nvidia.com/gpu"]; ok {
+		t.Fatalf("gpu handed out without a default: %+v", rr)
+	}
+	// Asked within the maximum: limit and request both set, equal.
+	rr = ClampResources(config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "1"}}}, def, ceiling)
 	if qty(rr.Limits, "nvidia.com/gpu") != "1" || qty(rr.Requests, "nvidia.com/gpu") != "1" {
 		t.Fatalf("gpu: %+v", rr)
 	}
-	// Above the ceiling: clamped. Unknown to the chart: passed through.
-	rr = ClampResources(config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "8", "hugepages-2Mi": "64Mi"}}}, def)
+	// Above the maximum: clamped. Unknown to the chart: passed through.
+	rr = ClampResources(config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "8", "hugepages-2Mi": "64Mi"}}}, def, ceiling)
 	if qty(rr.Limits, "nvidia.com/gpu") != "2" || qty(rr.Limits, "hugepages-2Mi") != "64Mi" {
 		t.Fatalf("clamp: %+v", rr)
+	}
+	// A default extended resource goes to every session and, without a
+	// maximum of its own, is also the cap.
+	def.Limits.Extended = map[string]string{"nvidia.com/gpu": "1"}
+	rr = ClampResources(config.Resources{}, def, config.Resources{})
+	if qty(rr.Limits, "nvidia.com/gpu") != "1" {
+		t.Fatalf("default gpu: %+v", rr)
+	}
+	rr = ClampResources(config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "4"}}}, def, config.Resources{})
+	if qty(rr.Limits, "nvidia.com/gpu") != "1" {
+		t.Fatalf("default as cap: %+v", rr)
 	}
 	// CPU and memory are untouched by all this.
 	if rr.Limits.Cpu().String() != "2" || rr.Limits.Memory().String() != "4Gi" {
 		t.Fatalf("cpu/mem: %+v", rr)
+	}
+}
+
+func TestClampMaxResources(t *testing.T) {
+	def := testCfg().DefaultResources
+	ceiling := config.Resources{Limits: config.ResourceList{CPU: "8", Memory: "32Gi"}}
+	// Raising above the default is fine up to the maximum.
+	rr := ClampResources(config.Resources{Limits: config.ResourceList{CPU: "6", Memory: "16Gi"}}, def, ceiling)
+	if rr.Limits.Cpu().String() != "6" || rr.Limits.Memory().String() != "16Gi" {
+		t.Fatalf("raise: %+v", rr)
+	}
+	// Beyond it: clamped; requests follow the clamped limit.
+	rr = ClampResources(config.Resources{Limits: config.ResourceList{CPU: "64", Memory: "1Ti"}, Requests: config.ResourceList{CPU: "32"}}, def, ceiling)
+	if rr.Limits.Cpu().String() != "8" || rr.Limits.Memory().String() != "32Gi" || rr.Requests.Cpu().String() != "8" {
+		t.Fatalf("clamp: %+v", rr)
+	}
+	// Nothing asked: still the defaults, not the maximum.
+	rr = ClampResources(config.Resources{}, def, ceiling)
+	if rr.Limits.Cpu().String() != "2" || rr.Limits.Memory().String() != "4Gi" {
+		t.Fatalf("defaults: %+v", rr)
+	}
+	// A maximum that only names cpu leaves memory capped at its default.
+	rr = ClampResources(config.Resources{Limits: config.ResourceList{CPU: "6", Memory: "16Gi"}}, def, config.Resources{Limits: config.ResourceList{CPU: "8"}})
+	if rr.Limits.Cpu().String() != "6" || rr.Limits.Memory().String() != "4Gi" {
+		t.Fatalf("partial max: %+v", rr)
 	}
 }

@@ -99,7 +99,13 @@ tests:
       runner.idleStopAfter: 4h
       runner.runtimeClassName: gvisor
       runner.tmpInit: false
+      runner.maxResources.limits.cpu: "8"
     asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_MAX_RESOURCES
+            value: '{"limits":{"cpu":"8"}}'
       - contains:
           path: spec.template.spec.containers[0].env
           content:
