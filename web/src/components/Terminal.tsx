@@ -154,87 +154,12 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     term.unicode.activeVersion = "11";
     term.open(el.current);
 
-    // Touch handling. xterm leaves touch to the browser, and on iOS a drag
-    // with the keyboard open pans the visual viewport instead of scrolling
-    // the buffer, while any touch used to focus the terminal and pop the
-    // keyboard. So: consume drags here and scroll the buffer ourselves
-    // (with a little inertia), and treat only a short tap as "focus".
+    // Touch. xterm's viewport is an ordinary overflow-scrolling element, so
+    // a drag scrolls the buffer natively and a tap focuses the textarea
+    // through xterm's own mousedown handling, the same way stock xterm.js
+    // behaves in browser terminals that work well on phones. Nothing is
+    // intercepted here; the host allows vertical panning only (no zoom).
     const host = el.current;
-    let touch: { x: number; y: number; lastY: number; lastT: number; t0: number; moved: boolean; acc: number; v: number } | null = null;
-    let inertia = 0;
-    const rowHeight = () => Math.max(8, host.clientHeight / Math.max(1, term.rows));
-    const scrollBy = (px: number) => {
-      if (!touch) return;
-      touch.acc += px / rowHeight();
-      const lines = Math.trunc(touch.acc);
-      if (lines !== 0) {
-        touch.acc -= lines;
-        term.scrollLines(lines);
-      }
-    };
-    // Pinch-zoomed in, relative to how the page loaded (Safari's per-site
-    // page zoom shows up in `scale` too and must not count): a drag then
-    // pans the zoomed page and is left to the browser. Taps still focus.
-    const baseScale = visualViewport?.scale ?? 1;
-    const zoomed = () => (visualViewport?.scale ?? 1) > baseScale * 1.1;
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      cancelAnimationFrame(inertia);
-      const p = e.touches[0];
-      touch = { x: p.clientX, y: p.clientY, lastY: p.clientY, lastT: e.timeStamp, t0: e.timeStamp, moved: false, acc: 0, v: 0 };
-    };
-    const onTouchMove = (e: TouchEvent) => {
-      if (!touch || e.touches.length !== 1) return;
-      const p = e.touches[0];
-      if (!touch.moved && Math.hypot(p.clientX - touch.x, p.clientY - touch.y) > 8) touch.moved = true;
-      if (!touch.moved) return;
-      if (zoomed()) {
-        touch = null; // a pan, not a scroll and not a tap
-        return;
-      }
-      e.preventDefault(); // keep the browser from panning the viewport
-      const dy = touch.lastY - p.clientY;
-      const dt = Math.max(1, e.timeStamp - touch.lastT);
-      touch.v = dy / dt;
-      touch.lastY = p.clientY;
-      touch.lastT = e.timeStamp;
-      scrollBy(dy);
-    };
-    const onTouchEnd = (e: TouchEvent) => {
-      if (!touch) return;
-      const t = touch;
-      if (!t.moved) {
-        // A tap: let it become a click, and raise the keyboard from the
-        // click handler below. A click is the one activation iOS honours
-        // for focus() in every state this page has been found in; focus()
-        // from a cancelled touchend was not. touch-action:none on the host
-        // means the click comes at once, before the keyboard moves the
-        // layout, so it cannot land on the key bar.
-        touch = null;
-        return;
-      }
-      // A drag: swallow the synthetic mouse/click events that would follow.
-      e.preventDefault();
-      // Inertia: keep scrolling with the last velocity, decaying.
-      let v = t.v;
-      let last = performance.now();
-      const step = (now: number) => {
-        const dt = now - last;
-        last = now;
-        v *= Math.pow(0.94, dt / 16);
-        if (Math.abs(v) < 0.02) {
-          touch = null;
-          return;
-        }
-        scrollBy(v * dt);
-        inertia = requestAnimationFrame(step);
-      };
-      inertia = requestAnimationFrame(step);
-    };
-    host.addEventListener("touchstart", onTouchStart, { passive: true });
-    host.addEventListener("touchmove", onTouchMove, { passive: false });
-    host.addEventListener("touchend", onTouchEnd, { passive: false });
-    host.addEventListener("touchcancel", () => (touch = null), { passive: true });
     // Tap to raise the keyboard (phones). Skipped when xterm's own mousedown
     // handling focused the textarea a moment ago, so the keyboard is not
     // bounced by the focus hop in raiseKeyboard.
@@ -459,7 +384,6 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       ro.disconnect();
       removeEventListener("agents-operator:theme", onTheme);
       document.removeEventListener("visibilitychange", onVisible);
-      cancelAnimationFrame(inertia);
       if (ta) {
         ta.removeEventListener("input", onInput);
         ta.removeEventListener("focus", prime);
@@ -469,9 +393,6 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       }
       host.removeEventListener("click", onClick);
       term.textarea?.removeEventListener("focus", onTextareaFocus);
-      host.removeEventListener("touchstart", onTouchStart);
-      host.removeEventListener("touchmove", onTouchMove);
-      host.removeEventListener("touchend", onTouchEnd);
       onData.dispose();
       onBinary.dispose();
       onResize.dispose();
