@@ -256,6 +256,53 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
         .catch(() => undefined);
     };
 
+    // Hold-to-repeat for the native keyboard's Backspace. Phone keyboards
+    // repeat a held Backspace only while the field they edit has something
+    // left to delete, and xterm keeps its hidden textarea empty, so a held
+    // key sent one DEL and stopped. Keep a run of spaces in the textarea as
+    // something to delete, and turn each deletion the keyboard attempts
+    // into a DEL for the session without letting the field shrink (so the
+    // repeat never runs dry). xterm's own diffing of the textarea sees no
+    // change and stays quiet. A word or line deletion maps to the readline
+    // keys. The sentinel is restored after xterm clears the field (blur,
+    // Enter, Ctrl+C, paste); nothing is touched during IME composition.
+    const sentinel = " ".repeat(64);
+    const ta = term.textarea;
+    let composing = false;
+    const prime = () => {
+      if (!ta || composing || ta.value.startsWith(sentinel)) return;
+      ta.value = sentinel + ta.value.replace(/^ +/, "");
+      try {
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      } catch {
+        /* not focused */
+      }
+    };
+    const primeLater = () => setTimeout(prime, 0);
+    const onBeforeInput = (e: InputEvent) => {
+      if (composing || socket?.readyState !== WebSocket.OPEN) return;
+      const seq = { deleteContentBackward: "\x7f", deleteWordBackward: "\x17", deleteSoftLineBackward: "\x15", deleteHardLineBackward: "\x15" }[
+        e.inputType
+      ];
+      if (!seq) return;
+      e.preventDefault();
+      socket.send(encoder.encode(seq));
+    };
+    const onCompositionStart = () => (composing = true);
+    const onCompositionEnd = () => {
+      composing = false;
+      primeLater();
+    };
+    if (ta && touchDevice()) {
+      ta.addEventListener("beforeinput", onBeforeInput);
+      ta.addEventListener("focus", prime);
+      ta.addEventListener("keyup", primeLater);
+      ta.addEventListener("input", primeLater);
+      ta.addEventListener("compositionstart", onCompositionStart);
+      ta.addEventListener("compositionend", onCompositionEnd);
+      prime();
+    }
+
     const connect = () => {
       if (closed) return;
       setStatus("connecting");
@@ -361,6 +408,14 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       removeEventListener("agents-operator:theme", onTheme);
       document.removeEventListener("visibilitychange", onVisible);
       cancelAnimationFrame(inertia);
+      if (ta) {
+        ta.removeEventListener("beforeinput", onBeforeInput);
+        ta.removeEventListener("focus", prime);
+        ta.removeEventListener("keyup", primeLater);
+        ta.removeEventListener("input", primeLater);
+        ta.removeEventListener("compositionstart", onCompositionStart);
+        ta.removeEventListener("compositionend", onCompositionEnd);
+      }
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
