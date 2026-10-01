@@ -52,9 +52,22 @@ runner:
   extraEnv: {}
   # -- Stop running sessions after this long without PTY output (0 = never)
   idleStopAfter: 0h
+  serviceAccount:
+    # -- Create a read-only ServiceAccount that sessions can opt into, so kubectl works inside the pod (the hub's own identity is the top-level `serviceAccount`)
+    enabled: false
+    # -- Name of that ServiceAccount; defaults to `<fullname>-runner`
+    name: ""
+    # -- ClusterRole it is bound to; the built-in `view` reads most things and never Secrets
+    clusterRole: view
+    # -- Bind it across the cluster (ClusterRoleBinding) rather than only in the release namespace (RoleBinding)
+    clusterWide: false
   networkPolicy:
     # -- Create a default-deny NetworkPolicy for session pods
     enabled: true
+    # -- Where session pods may reach the Kubernetes API once the runner ServiceAccount is on: CIDRs of the API server endpoints (control-plane node IPs) plus the `kubernetes` service IP. Empty = read from the cluster's `kubernetes` Endpoints and Service at install time (`helm template` cannot, and renders no rule)
+    apiServerCIDRs: []
+    # -- Port of the API server on those endpoints (the service IP is always allowed on 443)
+    apiServerPort: 6443
     # -- Extra allowed egress CIDRs (all ports), e.g. an in-cluster LLM proxy
     egressCIDRs: []
     # -- CIDRs excluded from the "443/22 anywhere" rules: cluster pod and service ranges (k3s defaults)

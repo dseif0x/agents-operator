@@ -39,7 +39,10 @@ type Config struct {
 	NodeSelector map[string]string
 	Tolerations  []config.Toleration
 	RuntimeClass string
-	ExtraEnv     map[string]string
+	// ServiceAccount is the read-only ServiceAccount a session may opt
+	// into (its token is then mounted); empty means never.
+	ServiceAccount string
+	ExtraEnv       map[string]string
 	// TmpInit adds an init container, running as root, that gives the /tmp
 	// emptyDir the sticky bit (chmod 1777). Kubernetes creates emptyDirs
 	// world-writable without it, and Claude Code refuses such a directory
@@ -356,6 +359,10 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 	// A session may pick its own runtime class; the chart's is the default.
 	if rc := cmp.Or(s.RuntimeClass, cfg.RuntimeClass); rc != "" {
 		pod.Spec.RuntimeClassName = ptr.To(rc)
+	}
+	if cfg.ServiceAccount != "" && s.ServiceAccount {
+		pod.Spec.ServiceAccountName = cfg.ServiceAccount
+		pod.Spec.AutomountServiceAccountToken = ptr.To(true)
 	}
 	if cfg.TmpInit {
 		pod.Spec.InitContainers = []corev1.Container{{

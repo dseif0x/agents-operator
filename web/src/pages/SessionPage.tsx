@@ -13,15 +13,18 @@ export function SessionPage({ id }: { id: string }) {
   const [drawer, setDrawer] = useState<null | "events" | "logs" | "info">(null);
   const [sheet, setSheet] = useState<null | "select" | "links">(null);
   const [notice, setNotice] = useState("");
-  const [kbd, setKbd] = useState(false);
   const term = useRef<TerminalHandle>(null);
   const page = useRef<HTMLDivElement>(null);
 
-  // iOS Safari does not shrink position:fixed layouts when the on-screen
-  // keyboard opens; it only shrinks the visual viewport. Track that and size
-  // the page from it so the terminal and key bar stay above the keyboard.
-  // The same signal says whether the keyboard is up: focus is no guide,
-  // because xterm focuses its textarea on its own without a keyboard.
+  // Phones. The on-screen keyboard only shrinks the visual viewport, and
+  // the obvious response, shrinking the terminal to fit, resizes the PTY
+  // every time the keyboard comes and goes. TUIs like Claude Code redraw
+  // their live frame on each resize but cannot clean up what the old
+  // frame left above it, so every keyboard open/close shredded the lines
+  // above the prompt. Instead the page keeps its full height and slides up
+  // by the keyboard's height: the terminal keeps its rows, the key bar sits
+  // on the keyboard, the top rows go off-screen until it closes. The buffer
+  // still scrolls by touch. A pinch-zoomed viewport is left alone.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
@@ -29,19 +32,21 @@ export function SessionPage({ id }: { id: string }) {
     let width = vv.width;
     const apply = () => {
       const el = page.current;
-      if (!el) return;
-      el.style.height = `${Math.round(vv.height)}px`;
+      if (!el || vv.scale > 1.01) return;
       if (Math.abs(vv.width - width) > 50) {
-        // Rotated: the full height is a different number now.
+        // Rotated: a different full height from now on.
         width = vv.width;
         tallest = 0;
       }
       tallest = Math.max(tallest, vv.height);
-      setKbd(vv.height < tallest - 120);
+      const keyboard = Math.max(0, Math.round(tallest - vv.height));
+      el.style.height = `${Math.round(tallest)}px`;
+      el.style.transform = keyboard > 0 ? `translateY(-${keyboard}px)` : "";
     };
     // If Safari still pans the visual viewport (a drag that started on the
     // top bar, say), snap it back instead of following it.
     const snap = () => {
+      if (vv.scale > 1.01) return;
       if (vv.offsetTop > 0 || window.scrollY > 0) window.scrollTo(0, 0);
     };
     apply();
@@ -144,9 +149,14 @@ export function SessionPage({ id }: { id: string }) {
         )}
         <span class="grow" />
         {s && (s.state === "stopped" || s.state === "failed") && (
-          <button class="btn small primary" disabled={!!busy} onClick={() => act("start", () => api.startSession(id))}>
-            Start
-          </button>
+          <>
+            <button class="btn small primary" disabled={!!busy} onClick={() => act("start", () => api.startSession(id))}>
+              Start
+            </button>
+            <Link href={`/sessions/${id}/edit`} class="btn small" title="Change the settings the next start uses">
+              Edit
+            </Link>
+          </>
         )}
         {s && (s.state === "running" || s.state === "creating") && (
           <button class="btn small" disabled={!!busy} onClick={() => act("stop", () => api.stopSession(id))}>
@@ -220,8 +230,8 @@ export function SessionPage({ id }: { id: string }) {
       {canAttach && (
         <KeyBar
           onKey={(seq) => term.current?.send(seq)}
-          onKeyboard={() => (kbd ? term.current?.hideKeyboard() : term.current?.showKeyboard())}
-          keyboardOpen={kbd}
+          terminalFocused={() => term.current?.hasFocus() ?? false}
+          refocus={() => term.current?.focus()}
           onPaste={pasteFromClipboard}
           onSelect={() => setSheet(sheet === "select" ? null : "select")}
           onLinks={() => setSheet(sheet === "links" ? null : "links")}
@@ -342,6 +352,7 @@ function Drawer(props: { session: Session; tab: "events" | "logs" | "info"; setT
                 .map(([k, v]) => `, ${k} ${v}`)
                 .join("")}`,
               `runtime class: ${s.runtime_class || "(chart default)"}`,
+              `k8s access:    ${s.service_account ? "read-only ServiceAccount mounted" : "none"}`,
               Object.keys(s.node_selector || {}).length
                 ? `node selector: ${Object.entries(s.node_selector)
                     .map(([k, v]) => `${k}=${v}`)

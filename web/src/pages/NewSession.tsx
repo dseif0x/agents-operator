@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { api, type CreateSessionRequest, type GitHubRepo, type Repo, type SessionDefaults, type Toleration, type User } from "../api";
+import { api, type CreateSessionRequest, type GitHubRepo, type Repo, type Session, type SessionDefaults, type Toleration, type User } from "../api";
 import { Nav } from "../components/Nav";
 import { navigate } from "../router";
 
@@ -62,7 +62,24 @@ export function parseTolerations(text: string): { tolerations: Toleration[]; err
   return { tolerations };
 }
 
-export function NewSession(props: { user: User; onLogout: () => void }) {
+/** The line form of a toleration, inverse of parseTolerations. */
+export function formatToleration(t: Toleration): string {
+  return `${t.key || "*"}${t.operator === "Equal" ? "=" + (t.value ?? "") : ""}${t.effect ? ":" + t.effect : ""}${
+    t.tolerationSeconds !== undefined ? "/" + t.tolerationSeconds : ""
+  }`;
+}
+
+const keyValueLines = (m: Record<string, string | undefined> | undefined, skip: string[] = []) =>
+  Object.entries(m || {})
+    .filter(([k, v]) => !skip.includes(k) && v !== undefined)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+
+// NewSession creates a session, or with `edit` set (a session id) replaces
+// the settings of a stopped one: same form, the fields that shape the
+// volume (agent, PVC size, storage class) locked.
+export function NewSession(props: { user: User; onLogout: () => void; edit?: string }) {
+  const editing = !!props.edit;
   const [agents, setAgents] = useState<string[]>(["claude", "opencode", "codex", "shell"]);
   const [name, setName] = useState("");
   const [agent, setAgent] = useState("claude");
@@ -77,7 +94,9 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
   const [nodeSelector, setNodeSelector] = useState("");
   const [tolerations, setTolerations] = useState("");
   const [extended, setExtended] = useState("");
+  const [serviceAccount, setServiceAccount] = useState(false);
   const [autonomous, setAutonomous] = useState(true);
+  const [editable, setEditable] = useState<boolean | null>(editing ? null : true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [defaults, setDefaults] = useState<SessionDefaults | null>(null);
@@ -104,6 +123,31 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
       .catch(() => undefined);
     loadGitHub();
   }, []);
+
+  useEffect(() => {
+    if (!props.edit) return;
+    api
+      .session(props.edit)
+      .then((s: Session) => {
+        setName(s.name);
+        setAgent(s.agent);
+        setRepos(s.repos.map((r) => [r.url, r.branch, r.path].filter(Boolean).join(" ")).join("\n"));
+        setImageTag(s.image_tag);
+        setPvcSize(s.pvc_size);
+        setStorageClass(s.storage_class);
+        setCpu(s.resources?.limits?.cpu || "");
+        setMemory(s.resources?.limits?.memory || "");
+        setExtended(keyValueLines(s.resources?.limits, ["cpu", "memory"]));
+        setEnv(keyValueLines(s.env));
+        setRuntimeClass(s.runtime_class || "");
+        setNodeSelector(keyValueLines(s.node_selector));
+        setTolerations((s.tolerations || []).map(formatToleration).join("\n"));
+        setServiceAccount(s.service_account);
+        setAutonomous(s.autonomous);
+        setEditable(s.state === "stopped" || s.state === "failed");
+      })
+      .catch((e) => setError((e as Error).message));
+  }, [props.edit]);
 
   // Search across name and description; the server already sorted by usage, then name.
   const filtered = useMemo(() => {
@@ -142,7 +186,7 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
       return;
     }
     setBusy(true);
-    const req: CreateSessionRequest = { name, agent, repos: parsed.repos, autonomous };
+    const req: CreateSessionRequest = { name, agent, repos: parsed.repos, autonomous, service_account: serviceAccount };
     if (imageTag) req.image_tag = imageTag;
     if (pvcSize) req.pvc_size = pvcSize;
     if (storageClass) req.storage_class = storageClass;
@@ -179,7 +223,7 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
     if (Object.keys(sel.values).length) req.node_selector = sel.values;
     if (tol.tolerations.length) req.tolerations = tol.tolerations;
     try {
-      const s = await api.createSession(req);
+      const s = props.edit ? await api.updateSession(props.edit, req) : await api.createSession(req);
       navigate(`/sessions/${s.id}`);
     } catch (err) {
       setError((err as Error).message);
@@ -191,7 +235,14 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
     <div class="page">
       <Nav user={props.user} onLogout={props.onLogout} />
       <form class="card" onSubmit={submit} style="max-width:720px">
-        <h3 style="margin:0">New session</h3>
+        <h3 style="margin:0">{editing ? "Edit session" : "New session"}</h3>
+        {editing && editable === false && <div class="banner error" style="position:static;margin-top:8px">Stop the session to change its settings; they apply to the next start.</div>}
+        {editing && editable && (
+          <p class="muted" style="margin:6px 0 0;font-size:13px">
+            Changes apply when the session starts again. The agent, PVC size and storage class are fixed: they shape the volume and the CLI state on it. Repositories
+            added here are cloned on the next start; removed ones stay on disk.
+          </p>
+        )}
         <div class="form-grid">
           <div>
             <label>Name</label>
@@ -199,7 +250,7 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
           </div>
           <div>
             <label>Agent</label>
-            <select value={agent} onChange={(e) => setAgent((e.target as HTMLSelectElement).value)}>
+            <select value={agent} onChange={(e) => setAgent((e.target as HTMLSelectElement).value)} disabled={editing}>
               {agents.map((a) => (
                 <option value={a}>{a}</option>
               ))}
@@ -260,12 +311,20 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
             Autonomous (skip permission prompts; Claude gets <code>--dangerously-skip-permissions</code>)
           </label>
         </div>
+        {defaults?.service_account && (
+          <div class="checkbox">
+            <input id="sa" type="checkbox" checked={serviceAccount} onChange={(e) => setServiceAccount((e.target as HTMLInputElement).checked)} />
+            <label for="sa" style="margin:0;color:inherit">
+              Kubernetes access: mount the read-only ServiceAccount <code>{defaults.service_account}</code> so <code>kubectl</code> can read the cluster
+            </label>
+          </div>
+        )}
         <details>
           <summary>Advanced: storage, resources, image, environment</summary>
           <div class="form-grid">
             <div>
               <label>PVC size</label>
-              <input value={pvcSize} onInput={(e) => setPvcSize((e.target as HTMLInputElement).value)} placeholder={defaults?.pvc_size || "20Gi"} />
+              <input value={pvcSize} onInput={(e) => setPvcSize((e.target as HTMLInputElement).value)} placeholder={defaults?.pvc_size || "20Gi"} disabled={editing} />
             </div>
             <div>
               <label>Storage class</label>
@@ -273,6 +332,7 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
                 value={storageClass}
                 onInput={(e) => setStorageClass((e.target as HTMLInputElement).value)}
                 placeholder={defaults?.storage_class || "cluster default"}
+                disabled={editing}
               />
             </div>
             <div>
@@ -335,10 +395,10 @@ export function NewSession(props: { user: User; onLogout: () => void }) {
         </details>
         {error && <div class="error">{error}</div>}
         <div class="row" style="margin-top:16px">
-          <button class="btn primary" disabled={busy}>
-            {busy ? "Creating…" : "Create session"}
+          <button class="btn primary" disabled={busy || editable === false || editable === null}>
+            {busy ? (editing ? "Saving…" : "Creating…") : editing ? "Save settings" : "Create session"}
           </button>
-          <button type="button" class="btn" onClick={() => navigate("/")}>
+          <button type="button" class="btn" onClick={() => navigate(props.edit ? `/sessions/${props.edit}` : "/")}>
             Cancel
           </button>
         </div>

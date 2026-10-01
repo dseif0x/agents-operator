@@ -112,7 +112,9 @@ type Session struct {
 	PVCSize      string
 	StorageClass string
 	// RuntimeClass overrides the chart-wide runtimeClassName; empty = default.
-	RuntimeClass   string
+	RuntimeClass string
+	// ServiceAccount mounts the chart's read-only runner ServiceAccount.
+	ServiceAccount bool
 	Resources      config.Resources
 	NodeSelector   map[string]string
 	Tolerations    []config.Toleration
@@ -152,6 +154,10 @@ type Sessions interface {
 	Get(ctx context.Context, id string) (*Session, error)
 	List(ctx context.Context, ownerID string) ([]*Session, error)
 	ListAll(ctx context.Context) ([]*Session, error)
+	// Update replaces the editable settings (name, repos, image tag,
+	// runtime class, service account, resources, node selector,
+	// tolerations, env, autonomous) and returns the updated row.
+	Update(ctx context.Context, s *Session) (*Session, error)
 	// SetState updates state and reason. It returns the updated row.
 	SetState(ctx context.Context, id, state, reason string) (*Session, error)
 	// Bump increments generation and sets the state, in one statement.

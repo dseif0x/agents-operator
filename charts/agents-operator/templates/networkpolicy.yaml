@@ -49,6 +49,18 @@ spec:
         - ipBlock:
             cidr: {{ . }}
     {{- end }}
+    {{- if .Values.runner.serviceAccount.enabled }}
+    {{- $targets := include "agents-operator.apiServerTargets" . | fromYamlArray }}
+    {{- range $targets }}
+    # Kubernetes API, for sessions using the runner ServiceAccount.
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr }}
+      ports:
+        - protocol: TCP
+          port: {{ .port }}
+    {{- end }}
+    {{- end }}
     {{- with .Values.runner.networkPolicy.extraEgress }}
     - to:
         {{- toYaml . | nindent 8 }}

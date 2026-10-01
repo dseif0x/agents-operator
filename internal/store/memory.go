@@ -175,6 +175,19 @@ func (r memSessions) ListAll(context.Context) ([]*Session, error) {
 	return r.list(func(*Session) bool { return true }), nil
 }
 
+func (r memSessions) Update(_ context.Context, s *Session) (*Session, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	cur, ok := r.m.sessions[s.ID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	cur.Name, cur.Repos, cur.ImageTag, cur.RuntimeClass, cur.ServiceAccount = s.Name, s.Repos, s.ImageTag, s.RuntimeClass, s.ServiceAccount
+	cur.Resources, cur.NodeSelector, cur.Tolerations, cur.Env, cur.Autonomous = s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous
+	cur.UpdatedAt = time.Now()
+	return copySession(cur), nil
+}
+
 func (r memSessions) SetState(_ context.Context, id, state, reason string) (*Session, error) {
 	r.m.mu.Lock()
 	defer r.m.mu.Unlock()

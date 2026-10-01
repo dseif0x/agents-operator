@@ -86,6 +86,15 @@ func (w *Workspace) Bootstrap(ctx context.Context) error {
 
 var safePathRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
+// saTokenPath is where the kubelet mounts a pod's ServiceAccount token.
+var saTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+// hasServiceAccount reports whether this pod carries Kubernetes credentials.
+func hasServiceAccount() bool {
+	_, err := os.Stat(saTokenPath)
+	return err == nil
+}
+
 // Repos parses the REPOS env var (JSON list of {url, branch, path}). Paths
 // are single directory names under the workspace; anything else is refused
 // here too, so a compromised hub cannot escape /workspace.
@@ -201,8 +210,13 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 	}
 	b.WriteString("\n## Environment\n\n")
 	b.WriteString("- Everything under `" + w.Root + "` (including `HOME=" + w.HomeDir() + "`) survives stops, restarts and reconnects. `/tmp` is scratch. The rest of the filesystem is read-only.\n")
-	b.WriteString("- You run as an unprivileged user (UID 1000) with no Kubernetes credentials. Network access is limited to DNS, HTTPS (443) and SSH (22) outside the cluster.\n")
-	b.WriteString("- Available tools: git, ripgrep, jq, curl, tmux, Node.js, Python 3, build-essential.\n")
+	b.WriteString("- You run as an unprivileged user (UID 1000). Network access is limited to DNS, HTTPS (443) and SSH (22) outside the cluster.\n")
+	b.WriteString("- Available tools: git, ripgrep, jq, curl, tmux, kubectl, Node.js, Python 3, build-essential.\n")
+	if hasServiceAccount() {
+		b.WriteString("- This pod carries a read-only Kubernetes ServiceAccount, so `kubectl` works in-cluster for reading: `kubectl get`, `describe`, `logs`, `top`, `-A` for all namespaces. It cannot create, change or delete anything, read Secrets, or exec into pods; say so rather than retrying when such a command is denied.\n")
+	} else {
+		b.WriteString("- This pod has no Kubernetes credentials; `kubectl` is installed but cannot reach a cluster. The session's owner can turn on the read-only ServiceAccount in the session settings.\n")
+	}
 	if os.Getenv(runner.EnvGitHubToken) != "" {
 		b.WriteString("- The GitHub CLI `gh` is installed and authenticated (`GH_TOKEN`). Use it for pull requests, reviews, issues, checks and Actions runs, e.g. `gh pr view`, `gh pr create`, `gh run list`, `gh run view <id> --log-failed`. HTTPS pushes to github.com use the same token.\n")
 	} else {

@@ -467,3 +467,54 @@ func TestSyncLogin(t *testing.T) {
 		t.Fatalf("exports = %d", fr.count())
 	}
 }
+
+func TestUpdate(t *testing.T) {
+	svc, orch, u := newService(t)
+	ctx := context.Background()
+	sess, err := svc.Create(ctx, u, CreateRequest{Name: "orig", Agent: "claude", RepoURL: "https://x/app.git", PVCSize: "5Gi", Resources: config.Resources{Limits: config.ResourceList{CPU: "1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edit := CreateRequest{Name: "edited", Agent: "codex", PVCSize: "99Gi", StorageClass: "other", ImageTag: "1.2.3", RuntimeClass: "gvisor",
+		Repos: []store.Repo{{URL: "https://x/app.git"}, {URL: "https://x/lib.git"}}, Env: map[string]string{"A": "b"}, Autonomous: ptr.To(false),
+		Resources: config.Resources{Limits: config.ResourceList{CPU: "2", Memory: "1Gi"}}}
+	// Only stopped or failed sessions can be edited.
+	if _, err := svc.Update(ctx, u, sess.ID, edit); err != ErrInvalidTransition {
+		t.Fatalf("update while creating = %v", err)
+	}
+	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateStopped, ""); err != nil {
+		t.Fatal(err)
+	}
+	notified := len(orch.notified)
+	up, err := svc.Update(ctx, u, sess.ID, edit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Agent, PVC size and storage class are kept; the rest is replaced.
+	if up.Agent != "claude" || up.PVCSize != "5Gi" || up.StorageClass != "nfs-fast" {
+		t.Fatalf("immutable fields changed: %+v", up)
+	}
+	if up.Name != "edited" || up.ImageTag != "1.2.3" || up.RuntimeClass != "gvisor" || len(up.Repos) != 2 || up.Repos[1].Path != "lib" || up.Env["A"] != "b" || up.Autonomous || up.Resources.Limits.Memory != "1Gi" {
+		t.Fatalf("update = %+v", up)
+	}
+	if up.State != store.StateStopped || len(orch.notified) != notified {
+		t.Fatalf("update changed state or notified the reconciler: %+v", up)
+	}
+	// Validation applies as on create; the service account needs the chart to offer one.
+	if _, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "", Agent: "claude"}); err == nil {
+		t.Fatal("empty name accepted")
+	}
+	if _, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "sa", ServiceAccount: true}); err == nil {
+		t.Fatal("service account accepted without one configured")
+	}
+	svc.Defaults.ServiceAccount = "runner-view"
+	if up, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "sa", ServiceAccount: true}); err != nil || !up.ServiceAccount {
+		t.Fatalf("service account = %+v, %v", up, err)
+	}
+	// Another user cannot edit it.
+	other := &store.User{Username: "bob", PasswordHash: "x"}
+	_ = svc.Store.Users().Create(ctx, other)
+	if _, err := svc.Update(ctx, other, sess.ID, edit); err == nil {
+		t.Fatal("other user's edit accepted")
+	}
+}

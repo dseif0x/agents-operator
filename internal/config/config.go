@@ -116,6 +116,9 @@ type Config struct {
 	RunnerNodeSelector map[string]string
 	RunnerTolerations  []Toleration
 	RunnerRuntimeClass string
+	// RunnerServiceAccount is the read-only ServiceAccount sessions may opt
+	// into; empty means the option is off.
+	RunnerServiceAccount string
 	// RunnerExtraEnv is injected into every session pod (non-secret).
 	RunnerExtraEnv map[string]string
 	// RunnerTmpInit adds the root init container that gives /tmp the sticky
@@ -213,6 +216,7 @@ func load(get lookup) (*Config, error) {
 		DefaultStorageClass:   str("DEFAULT_STORAGE_CLASS", ""),
 		DefaultPVCSize:        str("DEFAULT_PVC_SIZE", "20Gi"),
 		RunnerRuntimeClass:    str("RUNNER_RUNTIME_CLASS", ""),
+		RunnerServiceAccount:  str("RUNNER_SERVICE_ACCOUNT", ""),
 		RunnerTmpInit:         boolean("RUNNER_TMP_INIT", true),
 		AdminUsername:         str("ADMIN_USERNAME", "admin"),
 		AdminPasswordHash:     str("ADMIN_PASSWORD_HASH", ""),

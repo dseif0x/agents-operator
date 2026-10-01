@@ -1,0 +1,72 @@
+suite: runner rbac
+templates:
+  - runner-rbac.yaml
+tests:
+  - it: renders nothing by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: creates a non-automounting ServiceAccount bound to view in the namespace
+    set:
+      runner.serviceAccount.enabled: true
+    release:
+      name: hub
+      namespace: agents
+    asserts:
+      - hasDocuments:
+          count: 2
+      - documentIndex: 0
+        isKind:
+          of: ServiceAccount
+      - documentIndex: 0
+        equal:
+          path: metadata.name
+          value: hub-agents-operator-runner
+      - documentIndex: 0
+        equal:
+          path: automountServiceAccountToken
+          value: false
+      - documentIndex: 1
+        isKind:
+          of: RoleBinding
+      - documentIndex: 1
+        equal:
+          path: roleRef
+          value:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: view
+      - documentIndex: 1
+        equal:
+          path: subjects[0]
+          value:
+            kind: ServiceAccount
+            name: hub-agents-operator-runner
+            namespace: agents
+
+  - it: binds cluster-wide on request, with a custom role and name
+    set:
+      runner.serviceAccount.enabled: true
+      runner.serviceAccount.clusterWide: true
+      runner.serviceAccount.clusterRole: my-reader
+      runner.serviceAccount.name: readers
+    release:
+      name: hub
+      namespace: agents
+    asserts:
+      - documentIndex: 1
+        isKind:
+          of: ClusterRoleBinding
+      - documentIndex: 1
+        equal:
+          path: metadata.name
+          value: hub-agents-operator-runner-agents
+      - documentIndex: 1
+        equal:
+          path: roleRef.name
+          value: my-reader
+      - documentIndex: 1
+        equal:
+          path: subjects[0].name
+          value: readers

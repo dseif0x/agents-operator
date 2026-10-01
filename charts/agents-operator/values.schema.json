@@ -50,10 +50,21 @@
         "tmpInit": { "type": "boolean" },
         "extraEnv": { "type": "object", "additionalProperties": { "type": "string" } },
         "idleStopAfter": { "type": "string", "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$|^0$" },
+        "serviceAccount": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "name": { "type": "string" },
+            "clusterRole": { "type": "string", "minLength": 1 },
+            "clusterWide": { "type": "boolean" }
+          }
+        },
         "networkPolicy": {
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
+            "apiServerCIDRs": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-fA-F.:]+/[0-9]+$" } },
+            "apiServerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "egressCIDRs": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-fA-F.:]+/[0-9]+$" } },
             "blockedCIDRs": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-fA-F.:]+/[0-9]+$" } },
             "extraEgress": { "type": "array" }

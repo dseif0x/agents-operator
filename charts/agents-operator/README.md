@@ -77,6 +77,8 @@ Kubernetes: `>=1.27.0-0`
 | runner.image.repository | string | `"ghcr.io/dseif0x/agents-operator-runner"` | Runner image repository (session pods) |
 | runner.image.tag | string | `""` | Runner image tag; defaults to .Chart.AppVersion |
 | runner.maxResources | object | `{}` | The most a session may ask for, per limit (e.g. `limits: {cpu: "8", memory: 32Gi, nvidia.com/gpu: 2}`); a limit left out here is capped at its default |
+| runner.networkPolicy.apiServerCIDRs | list | `[]` | Where session pods may reach the Kubernetes API once the runner ServiceAccount is on: CIDRs of the API server endpoints (control-plane node IPs) plus the `kubernetes` service IP. Empty = read from the cluster's `kubernetes` Endpoints and Service at install time (`helm template` cannot, and renders no rule) |
+| runner.networkPolicy.apiServerPort | int | `6443` | Port of the API server on those endpoints (the service IP is always allowed on 443) |
 | runner.networkPolicy.blockedCIDRs | list | `["10.42.0.0/16","10.43.0.0/16"]` | CIDRs excluded from the "443/22 anywhere" rules: cluster pod and service ranges (k3s defaults) |
 | runner.networkPolicy.egressCIDRs | list | `[]` | Extra allowed egress CIDRs (all ports), e.g. an in-cluster LLM proxy |
 | runner.networkPolicy.enabled | bool | `true` | Create a default-deny NetworkPolicy for session pods |
@@ -84,6 +86,10 @@ Kubernetes: `>=1.27.0-0`
 | runner.nodeSelector | object | `{}` | Node selector applied to every session pod |
 | runner.resources | object | `{"limits":{"cpu":"2","memory":"4Gi"},"requests":{"cpu":"250m","memory":"512Mi"}}` | Resources a session gets when it asks for nothing (requests and limits); an extended resource here (e.g. `nvidia.com/gpu: 1`) goes to every session |
 | runner.runtimeClassName | string | `""` | runtimeClassName for session pods (gVisor, Kata); empty = default runtime |
+| runner.serviceAccount.clusterRole | string | `"view"` | ClusterRole it is bound to; the built-in `view` reads most things and never Secrets |
+| runner.serviceAccount.clusterWide | bool | `false` | Bind it across the cluster (ClusterRoleBinding) rather than only in the release namespace (RoleBinding) |
+| runner.serviceAccount.enabled | bool | `false` | Create a read-only ServiceAccount that sessions can opt into, so kubectl works inside the pod (the hub's own identity is the top-level `serviceAccount`) |
+| runner.serviceAccount.name | string | `""` | Name of that ServiceAccount; defaults to `<fullname>-runner` |
 | runner.storageClass | string | `"nfs-fast"` | StorageClass for session PVCs (empty = cluster default) |
 | runner.tmpInit | bool | `true` | Run a root init container (`chmod 1777 /tmp`) so the /tmp emptyDir gets the sticky bit Claude Code demands for its sockets; disable under the "restricted" Pod Security Standard (the CLI then only warns) |
 | runner.tolerations | list | `[]` | Tolerations applied to every session pod |

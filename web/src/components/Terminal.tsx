@@ -13,10 +13,8 @@ export interface TerminalHandle {
   /** Send clipboard-style text as if typed (bracketed paste when the app asked for it). */
   paste: (text: string) => void;
   focus: () => void;
-  /** Raise the on-screen keyboard (phones). Must run inside a touch or click handler. */
-  showKeyboard: () => void;
-  /** Dismiss the on-screen keyboard. */
-  hideKeyboard: () => void;
+  /** Whether xterm's textarea is the active element (the keyboard is up, on phones). */
+  hasFocus: () => boolean;
   /** The text of the screen plus scrollback, for the selectable overlay. */
   screenText: () => string;
   /** URLs currently visible in the buffer, newest last, de-duplicated. */
@@ -57,11 +55,12 @@ interface Props {
 const touchDevice = () => matchMedia("(hover: none) and (pointer: coarse)").matches;
 
 /**
- * Raise the on-screen keyboard. A plain focus() does nothing when the
- * textarea is already focused (xterm focuses it on its own, and a focus
- * made outside a user gesture leaves the element focused with the keyboard
- * closed), so drop focus first; the focus that follows is inside the
- * gesture and brings the keyboard up.
+ * Raise the on-screen keyboard: every tap on the terminal does this, and
+ * the phone's own gesture (swipe down, Done) closes it. A plain focus()
+ * does nothing when the textarea is already focused (xterm focuses it on
+ * its own, and a focus made outside a user gesture leaves the element
+ * focused with the keyboard closed), so drop focus first; the focus that
+ * follows is inside the gesture and brings the keyboard up.
  */
 function raiseKeyboard(term: XTerm) {
   term.textarea?.blur();
@@ -107,8 +106,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     },
     paste: (text: string) => xterm.current?.paste(text),
     focus: () => xterm.current?.focus(),
-    showKeyboard: () => xterm.current && raiseKeyboard(xterm.current),
-    hideKeyboard: () => xterm.current?.textarea?.blur(),
+    hasFocus: () => !!xterm.current?.textarea && document.activeElement === xterm.current.textarea,
     screenText: () => (xterm.current ? bufferText(xterm.current) : ""),
     links: () => {
       const text = xterm.current ? bufferText(xterm.current) : "";
@@ -162,6 +160,9 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     };
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
+      // Pinch-zoomed in: the user is panning the zoomed page to read, so
+      // leave every touch to the browser.
+      if ((visualViewport?.scale ?? 1) > 1.01) return;
       cancelAnimationFrame(inertia);
       const p = e.touches[0];
       touch = { x: p.clientX, y: p.clientY, lastY: p.clientY, lastT: e.timeStamp, t0: e.timeStamp, moved: false, acc: 0, v: 0 };
@@ -255,6 +256,53 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
         .catch(() => undefined);
     };
 
+    // Hold-to-repeat for the native keyboard's Backspace. Phone keyboards
+    // repeat a held Backspace only while the field they edit has something
+    // left to delete, and xterm keeps its hidden textarea empty, so a held
+    // key sent one DEL and stopped. Keep a run of spaces in the textarea as
+    // something to delete, and turn each deletion the keyboard attempts
+    // into a DEL for the session without letting the field shrink (so the
+    // repeat never runs dry). xterm's own diffing of the textarea sees no
+    // change and stays quiet. A word or line deletion maps to the readline
+    // keys. The sentinel is restored after xterm clears the field (blur,
+    // Enter, Ctrl+C, paste); nothing is touched during IME composition.
+    const sentinel = " ".repeat(64);
+    const ta = term.textarea;
+    let composing = false;
+    const prime = () => {
+      if (!ta || composing || ta.value.startsWith(sentinel)) return;
+      ta.value = sentinel + ta.value.replace(/^ +/, "");
+      try {
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      } catch {
+        /* not focused */
+      }
+    };
+    const primeLater = () => setTimeout(prime, 0);
+    const onBeforeInput = (e: InputEvent) => {
+      if (composing || socket?.readyState !== WebSocket.OPEN) return;
+      const seq = { deleteContentBackward: "\x7f", deleteWordBackward: "\x17", deleteSoftLineBackward: "\x15", deleteHardLineBackward: "\x15" }[
+        e.inputType
+      ];
+      if (!seq) return;
+      e.preventDefault();
+      socket.send(encoder.encode(seq));
+    };
+    const onCompositionStart = () => (composing = true);
+    const onCompositionEnd = () => {
+      composing = false;
+      primeLater();
+    };
+    if (ta && touchDevice()) {
+      ta.addEventListener("beforeinput", onBeforeInput);
+      ta.addEventListener("focus", prime);
+      ta.addEventListener("keyup", primeLater);
+      ta.addEventListener("input", primeLater);
+      ta.addEventListener("compositionstart", onCompositionStart);
+      ta.addEventListener("compositionend", onCompositionEnd);
+      prime();
+    }
+
     const connect = () => {
       if (closed) return;
       setStatus("connecting");
@@ -336,8 +384,6 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     const refit = () => fitAddon.fit();
     const ro = new ResizeObserver(refit);
     ro.observe(el.current);
-    // Mobile keyboards change the visual viewport rather than the layout.
-    visualViewport?.addEventListener("resize", refit);
     const onTheme = (e: Event) => {
       term.options.theme = terminalTheme((e as CustomEvent<Theme>).detail);
     };
@@ -359,10 +405,17 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       clearTimeout(retryTimer);
       clearInterval(countdown);
       ro.disconnect();
-      visualViewport?.removeEventListener("resize", refit);
       removeEventListener("agents-operator:theme", onTheme);
       document.removeEventListener("visibilitychange", onVisible);
       cancelAnimationFrame(inertia);
+      if (ta) {
+        ta.removeEventListener("beforeinput", onBeforeInput);
+        ta.removeEventListener("focus", prime);
+        ta.removeEventListener("keyup", primeLater);
+        ta.removeEventListener("input", primeLater);
+        ta.removeEventListener("compositionstart", onCompositionStart);
+        ta.removeEventListener("compositionend", onCompositionEnd);
+      }
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
