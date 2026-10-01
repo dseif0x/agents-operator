@@ -69,7 +69,7 @@ Starting a stopped or failed session bumps `generation`. The Secret's and Pod's 
 
 The runner owns the PTY and the scrollback. The hub is a dumb authenticated pipe. The browser is xterm.js. See [PROTOCOL.md](PROTOCOL.md) for the frames.
 
-Closing the tab changes nothing in the pod. Reopening replays the last 2 MiB of raw output from the runner, so the TUI redraws exactly. The hub never buffers or parses terminal bytes; if the runner connection drops, it closes the browser socket with a reason and the browser reconnects with backoff.
+Closing the tab changes nothing in the pod. Reopening replays the last 2 MiB of raw output from the runner, so the TUI redraws exactly. That only holds at the size the output was drawn for; when a client of a different size attaches (a phone after a desktop, or anyone after the 220×50 default nobody had resized), the browser runs the replay through a headless xterm of the original size and writes what ended up on its screen and scrollback as styled text instead, which wraps cleanly, then sends its own size so the TUI redraws its live frame. The hub never buffers or parses terminal bytes; if the runner connection drops, it closes the browser socket with a reason and the browser reconnects with backoff.
 
 ## Credentials
 

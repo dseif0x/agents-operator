@@ -20,13 +20,24 @@ export function SessionPage({ id }: { id: string }) {
   // iOS Safari does not shrink position:fixed layouts when the on-screen
   // keyboard opens; it only shrinks the visual viewport. Track that and size
   // the page from it so the terminal and key bar stay above the keyboard.
+  // The same signal says whether the keyboard is up: focus is no guide,
+  // because xterm focuses its textarea on its own without a keyboard.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
+    let tallest = 0;
+    let width = vv.width;
     const apply = () => {
       const el = page.current;
       if (!el) return;
       el.style.height = `${Math.round(vv.height)}px`;
+      if (Math.abs(vv.width - width) > 50) {
+        // Rotated: the full height is a different number now.
+        width = vv.width;
+        tallest = 0;
+      }
+      tallest = Math.max(tallest, vv.height);
+      setKbd(vv.height < tallest - 120);
     };
     // If Safari still pans the visual viewport (a drag that started on the
     // top bar, say), snap it back instead of following it.
@@ -166,7 +177,7 @@ export function SessionPage({ id }: { id: string }) {
       <div class="term-wrap">
         {error && <div class="banner error">{error}</div>}
         {canAttach ? (
-          <Terminal ref={term} sessionId={id} onFocusChange={setKbd} />
+          <Terminal ref={term} sessionId={id} />
         ) : (
           <div class="overlay">
             {s ? (
@@ -209,7 +220,7 @@ export function SessionPage({ id }: { id: string }) {
       {canAttach && (
         <KeyBar
           onKey={(seq) => term.current?.send(seq)}
-          onKeyboard={() => term.current?.toggleKeyboard()}
+          onKeyboard={() => (kbd ? term.current?.hideKeyboard() : term.current?.showKeyboard())}
           keyboardOpen={kbd}
           onPaste={pasteFromClipboard}
           onSelect={() => setSheet(sheet === "select" ? null : "select")}
