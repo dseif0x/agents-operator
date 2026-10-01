@@ -432,9 +432,11 @@ details summary {
 }
 
 /* Touch scrolling is handled in JS; stop the browser from panning. */
+/* Vertical panning scrolls xterm's viewport natively; no pinch or
+   double-tap zoom, and no scroll chaining into the page. */
 .term-host {
-  touch-action: none;
-  overscroll-behavior: none;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
 }
 
 .term-wrap .xterm-viewport {
