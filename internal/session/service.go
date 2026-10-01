@@ -36,10 +36,15 @@ func (e *ValidationError) Error() string { return e.Msg }
 
 // Defaults are applied to create requests that leave fields empty.
 type Defaults struct {
-	PVCSize      string
-	StorageClass string
-	ImageTag     string
-	Autonomous   bool
+	PVCSize      string `json:"pvc_size"`
+	StorageClass string `json:"storage_class"`
+	ImageTag     string `json:"image_tag"`
+	Autonomous   bool   `json:"autonomous"`
+	// Resources is what a session gets when it asks for nothing;
+	// MaxResources the most it may ask for. Both are shown on the form.
+	Resources    config.Resources `json:"resources"`
+	MaxResources config.Resources `json:"max_resources"`
+	RuntimeClass string           `json:"runtime_class"`
 }
 
 // Service is the session business logic.

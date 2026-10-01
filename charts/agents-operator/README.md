@@ -76,12 +76,13 @@ Kubernetes: `>=1.27.0-0`
 | runner.image.pullPolicy | string | `"IfNotPresent"` | Runner image pull policy |
 | runner.image.repository | string | `"ghcr.io/dseif0x/agents-operator-runner"` | Runner image repository (session pods) |
 | runner.image.tag | string | `""` | Runner image tag; defaults to .Chart.AppVersion |
+| runner.maxResources | object | `{}` | The most a session may ask for, per limit (e.g. `limits: {cpu: "8", memory: 32Gi, nvidia.com/gpu: 2}`); a limit left out here is capped at its default |
 | runner.networkPolicy.blockedCIDRs | list | `["10.42.0.0/16","10.43.0.0/16"]` | CIDRs excluded from the "443/22 anywhere" rules: cluster pod and service ranges (k3s defaults) |
 | runner.networkPolicy.egressCIDRs | list | `[]` | Extra allowed egress CIDRs (all ports), e.g. an in-cluster LLM proxy |
 | runner.networkPolicy.enabled | bool | `true` | Create a default-deny NetworkPolicy for session pods |
 | runner.networkPolicy.extraEgress | list | `[]` | Extra peers allowed to egress to on any port (raw NetworkPolicy "to" entries) |
 | runner.nodeSelector | object | `{}` | Node selector applied to every session pod |
-| runner.resources | object | `{"limits":{"cpu":"2","memory":"4Gi"},"requests":{"cpu":"250m","memory":"512Mi"}}` | Default (and maximum) cpu/memory for session pods; a session can only lower them. Extended resources listed under limits (e.g. `nvidia.com/gpu: 2`) are ceilings only: a session gets one when it asks, never by default |
+| runner.resources | object | `{"limits":{"cpu":"2","memory":"4Gi"},"requests":{"cpu":"250m","memory":"512Mi"}}` | Resources a session gets when it asks for nothing (requests and limits); an extended resource here (e.g. `nvidia.com/gpu: 1`) goes to every session |
 | runner.runtimeClassName | string | `""` | runtimeClassName for session pods (gVisor, Kata); empty = default runtime |
 | runner.storageClass | string | `"nfs-fast"` | StorageClass for session PVCs (empty = cluster default) |
 | runner.tmpInit | bool | `true` | Run a root init container (`chmod 1777 /tmp`) so the /tmp emptyDir gets the sticky bit Claude Code demands for its sockets; disable under the "restricted" Pod Security Standard (the CLI then only warns) |

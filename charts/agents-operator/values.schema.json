@@ -37,6 +37,13 @@
           },
           "required": ["limits"]
         },
+        "maxResources": {
+          "type": "object",
+          "properties": {
+            "requests": { "$ref": "#/definitions/resourceList" },
+            "limits": { "$ref": "#/definitions/resourceList" }
+          }
+        },
         "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
         "tolerations": { "type": "array" },
         "runtimeClassName": { "type": "string" },

@@ -33,10 +33,13 @@ type Config struct {
 	DefaultStorageClass string
 	DefaultPVCSize      string
 	DefaultResources    config.Resources
-	NodeSelector        map[string]string
-	Tolerations         []config.Toleration
-	RuntimeClass        string
-	ExtraEnv            map[string]string
+	// MaxResources caps what a session may ask for; a side left empty
+	// falls back to the default, which then acts as the cap.
+	MaxResources config.Resources
+	NodeSelector map[string]string
+	Tolerations  []config.Toleration
+	RuntimeClass string
+	ExtraEnv     map[string]string
 	// TmpInit adds an init container, running as root, that gives the /tmp
 	// emptyDir the sticky bit (chmod 1777). Kubernetes creates emptyDirs
 	// world-writable without it, and Claude Code refuses such a directory
@@ -167,12 +170,13 @@ func BuildSecret(s *store.Session, cfg Config, token string, userSecret map[stri
 	}
 }
 
-// ClampResources applies the session's overrides on top of the defaults.
-// The chart default is the ceiling: a session can only lower limits, and
-// requests can never exceed limits.
-func ClampResources(want, def config.Resources) corev1.ResourceRequirements {
-	limitCPU := minQty(want.Limits.CPU, def.Limits.CPU)
-	limitMem := minQty(want.Limits.Memory, def.Limits.Memory)
+// ClampResources turns a session's wishes into pod resources: every limit
+// is the session's value if given, else the default, and never more than
+// the maximum (a maximum left empty falls back to the default, which then
+// doubles as the cap). Requests never exceed limits.
+func ClampResources(want, def, ceiling config.Resources) corev1.ResourceRequirements {
+	limitCPU := minQty(firstNonEmpty(want.Limits.CPU, def.Limits.CPU), firstNonEmpty(ceiling.Limits.CPU, def.Limits.CPU))
+	limitMem := minQty(firstNonEmpty(want.Limits.Memory, def.Limits.Memory), firstNonEmpty(ceiling.Limits.Memory, def.Limits.Memory))
 	reqCPU := minQty(firstNonEmpty(want.Requests.CPU, def.Requests.CPU), limitCPU)
 	reqMem := minQty(firstNonEmpty(want.Requests.Memory, def.Requests.Memory), limitMem)
 	out := corev1.ResourceRequirements{Requests: corev1.ResourceList{}, Limits: corev1.ResourceList{}}
@@ -188,19 +192,22 @@ func ClampResources(want, def config.Resources) corev1.ResourceRequirements {
 	set(out.Requests, corev1.ResourceMemory, reqMem)
 	set(out.Limits, corev1.ResourceCPU, limitCPU)
 	set(out.Limits, corev1.ResourceMemory, limitMem)
-	// Extended resources (nvidia.com/gpu …) are only ever added when a
-	// session asks: an entry in the chart's limits is a ceiling, not a
-	// default, so sessions do not all get a GPU. Kubernetes requires
-	// requests to equal limits for them.
-	for name, v := range want.Limits.Extended {
+	// Extended resources (nvidia.com/gpu …): the session's amount, else the
+	// chart default, capped by the maximum. Kubernetes requires requests to
+	// equal limits for them.
+	names := map[string]bool{}
+	for name := range want.Limits.Extended {
+		names[name] = true
+	}
+	for name := range def.Limits.Extended {
+		names[name] = true
+	}
+	for name := range names {
+		v := minQty(firstNonEmpty(want.Limits.Extended[name], def.Limits.Extended[name]),
+			firstNonEmpty(ceiling.Limits.Extended[name], def.Limits.Extended[name]))
 		q, err := resource.ParseQuantity(v)
 		if err != nil || q.Sign() <= 0 {
 			continue
-		}
-		if capV, ok := def.Limits.Extended[name]; ok {
-			if capQ, err := resource.ParseQuantity(capV); err == nil && q.Cmp(capQ) > 0 {
-				q = capQ
-			}
 		}
 		out.Limits[corev1.ResourceName(name)] = q
 		out.Requests[corev1.ResourceName(name)] = q
@@ -320,7 +327,7 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 				Ports:           []corev1.ContainerPort{{Name: "ws", ContainerPort: runner.Port, Protocol: corev1.ProtocolTCP}},
 				Env:             env,
 				EnvFrom:         []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: ObjectName(s.ID)}}}},
-				Resources:       ClampResources(s.Resources, cfg.DefaultResources),
+				Resources:       ClampResources(s.Resources, cfg.DefaultResources, cfg.MaxResources),
 				VolumeMounts: []corev1.VolumeMount{
 					{Name: "workspace", MountPath: WorkspacePath},
 					{Name: "tmp", MountPath: "/tmp"},

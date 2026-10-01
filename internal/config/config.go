@@ -110,9 +110,12 @@ type Config struct {
 	DefaultStorageClass   string
 	DefaultPVCSize        string
 	DefaultResources      Resources
-	RunnerNodeSelector    map[string]string
-	RunnerTolerations     []Toleration
-	RunnerRuntimeClass    string
+	// MaxResources caps per-session resources; empty sides fall back to
+	// the defaults (which then double as the cap).
+	MaxResources       Resources
+	RunnerNodeSelector map[string]string
+	RunnerTolerations  []Toleration
+	RunnerRuntimeClass string
 	// RunnerExtraEnv is injected into every session pod (non-secret).
 	RunnerExtraEnv map[string]string
 	// RunnerTmpInit adds the root init container that gives /tmp the sticky
@@ -224,6 +227,7 @@ func load(get lookup) (*Config, error) {
 		},
 	}
 	jsonInto("DEFAULT_RESOURCES", &c.DefaultResources)
+	jsonInto("MAX_RESOURCES", &c.MaxResources)
 	jsonInto("RUNNER_NODE_SELECTOR", &c.RunnerNodeSelector)
 	jsonInto("RUNNER_TOLERATIONS", &c.RunnerTolerations)
 	jsonInto("RUNNER_EXTRA_ENV", &c.RunnerExtraEnv)

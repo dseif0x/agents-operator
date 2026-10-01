@@ -69,6 +69,8 @@ spec:
               value: {{ .Values.runner.defaultSize | quote }}
             - name: AGENTS_OPERATOR_DEFAULT_RESOURCES
               value: {{ .Values.runner.resources | toJson | quote }}
+            - name: AGENTS_OPERATOR_MAX_RESOURCES
+              value: {{ .Values.runner.maxResources | toJson | quote }}
             - name: AGENTS_OPERATOR_RUNNER_NODE_SELECTOR
               value: {{ .Values.runner.nodeSelector | toJson | quote }}
             - name: AGENTS_OPERATOR_RUNNER_TOLERATIONS
