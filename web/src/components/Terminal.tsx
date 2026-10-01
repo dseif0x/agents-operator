@@ -71,7 +71,7 @@ function raiseKeyboard(term: XTerm) {
     // the keyboard follows the last one.
     const decoy = document.createElement("input");
     decoy.setAttribute("aria-hidden", "true");
-    decoy.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0";
+    decoy.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0;font-size:16px";
     document.body.appendChild(decoy);
     decoy.focus();
     ta.focus();
@@ -172,11 +172,13 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
         term.scrollLines(lines);
       }
     };
+    // Pinch-zoomed in, relative to how the page loaded (Safari's per-site
+    // page zoom shows up in `scale` too and must not count): a drag then
+    // pans the zoomed page and is left to the browser. Taps still focus.
+    const baseScale = visualViewport?.scale ?? 1;
+    const zoomed = () => (visualViewport?.scale ?? 1) > baseScale * 1.1;
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
-      // Pinch-zoomed in: the user is panning the zoomed page to read, so
-      // leave every touch to the browser.
-      if ((visualViewport?.scale ?? 1) > 1.01) return;
       cancelAnimationFrame(inertia);
       const p = e.touches[0];
       touch = { x: p.clientX, y: p.clientY, lastY: p.clientY, lastT: e.timeStamp, t0: e.timeStamp, moved: false, acc: 0, v: 0 };
@@ -186,6 +188,10 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       const p = e.touches[0];
       if (!touch.moved && Math.hypot(p.clientX - touch.x, p.clientY - touch.y) > 8) touch.moved = true;
       if (!touch.moved) return;
+      if (zoomed()) {
+        touch = null; // a pan, not a scroll and not a tap
+        return;
+      }
       e.preventDefault(); // keep the browser from panning the viewport
       const dy = touch.lastY - p.clientY;
       const dt = Math.max(1, e.timeStamp - touch.lastT);
@@ -197,17 +203,18 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     const onTouchEnd = (e: TouchEvent) => {
       if (!touch) return;
       const t = touch;
-      // Always swallow the synthetic mouse/click events iOS would send after
-      // a touch. When a tap opens the keyboard the layout shrinks and the key
-      // bar slides up under the finger, so the late click would land on a key
-      // bar button and close the keyboard again (or send a stray key).
-      // Links on phones go through the Links sheet instead.
-      e.preventDefault();
       if (!t.moved) {
-        if (e.timeStamp - t.t0 < 500) raiseKeyboard(term);
+        // A tap: let it become a click, and raise the keyboard from the
+        // click handler below. A click is the one activation iOS honours
+        // for focus() in every state this page has been found in; focus()
+        // from a cancelled touchend was not. touch-action:none on the host
+        // means the click comes at once, before the keyboard moves the
+        // layout, so it cannot land on the key bar.
         touch = null;
         return;
       }
+      // A drag: swallow the synthetic mouse/click events that would follow.
+      e.preventDefault();
       // Inertia: keep scrolling with the last velocity, decaying.
       let v = t.v;
       let last = performance.now();
@@ -228,6 +235,18 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     host.addEventListener("touchmove", onTouchMove, { passive: false });
     host.addEventListener("touchend", onTouchEnd, { passive: false });
     host.addEventListener("touchcancel", () => (touch = null), { passive: true });
+    // Tap to raise the keyboard (phones). Skipped when xterm's own mousedown
+    // handling focused the textarea a moment ago, so the keyboard is not
+    // bounced by the focus hop in raiseKeyboard.
+    let focusedAt = 0;
+    const onTextareaFocus = () => (focusedAt = Date.now());
+    term.textarea?.addEventListener("focus", onTextareaFocus);
+    const onClick = () => {
+      if (!touchDevice()) return;
+      if (document.activeElement === term.textarea && Date.now() - focusedAt < 700) return;
+      raiseKeyboard(term);
+    };
+    host.addEventListener("click", onClick);
 
     // WebGL renderer with a canvas/DOM fallback when the context is lost or unavailable.
     import("@xterm/addon-webgl")
@@ -448,6 +467,8 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
         ta.removeEventListener("compositionstart", onCompositionStart);
         ta.removeEventListener("compositionend", onCompositionEnd);
       }
+      host.removeEventListener("click", onClick);
+      term.textarea?.removeEventListener("focus", onTextareaFocus);
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
