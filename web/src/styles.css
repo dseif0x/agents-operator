@@ -475,6 +475,12 @@ details summary {
   background: color-mix(in srgb, var(--bg) 80%, transparent);
 }
 
+/* iOS zooms the page in when an input under 16px gains focus and does not
+   zoom back out; xterm's hidden textarea is the input here. */
+.xterm .xterm-helper-textarea {
+  font-size: 16px;
+}
+
 /* Two rows of keys, filled column by column, scrolling sideways if the
    screen is too narrow for all of them. */
 .keybar {
