@@ -7,8 +7,10 @@ import { useRef, useState } from "preact/hooks";
 // comes with the synthetic click after touchend. So a tap is handled at
 // touchend with its default prevented (no click, no blur, no focus change),
 // a touch that moved is the bar scrolling and is ignored, and clicks still
-// work for mice. With `repeat`, holding the button fires it again and again
-// (arrows, backspace), like a real key.
+// work for mice. The buttons carry no tabindex: Safari focuses anything
+// with one on tap, and that blur is the one preventDefault cannot stop.
+// With `repeat`, holding the button fires it again and again (arrows,
+// backspace), like a real key.
 function TapButton(props: { onTap: () => void; repeat?: boolean; class?: string; title?: string; pressed?: boolean; children: ComponentChildren }) {
   const start = useRef<{ x: number; y: number } | null>(null);
   const timer = useRef<number | undefined>(undefined);
@@ -24,7 +26,6 @@ function TapButton(props: { onTap: () => void; repeat?: boolean; class?: string;
       class={props.class}
       title={props.title}
       aria-pressed={props.pressed}
-      tabIndex={-1}
       onTouchStart={(e) => {
         const t = e.touches[0];
         start.current = t ? { x: t.clientX, y: t.clientY } : null;
@@ -71,8 +72,21 @@ function TapButton(props: { onTap: () => void; repeat?: boolean; class?: string;
 // deep. A Ctrl toggle applies to the next key sent (from the bar or typed).
 // Keys go straight to the session and never touch focus; tapping the
 // terminal is what opens the keyboard.
-export function KeyBar(props: { onKey: (seq: string) => void; onPaste: () => void; onSelect: () => void; onLinks: () => void }) {
+export function KeyBar(props: {
+  onKey: (seq: string) => void;
+  /** Whether the terminal had the keyboard up; read before the tap lands. */
+  terminalFocused: () => boolean;
+  /** Give focus back to the terminal, inside the tap, when a key took it. */
+  refocus: () => void;
+  onPaste: () => void;
+  onSelect: () => void;
+  onLinks: () => void;
+}) {
   const [ctrl, setCtrl] = useState(false);
+  // Whether the keyboard was up when the finger came down. Should a tap
+  // still steal focus, giving it straight back inside the same gesture
+  // keeps the keyboard where it was.
+  const hadFocus = useRef(false);
 
   const send = (seq: string) => {
     if (ctrl && seq.length === 1) {
@@ -81,6 +95,7 @@ export function KeyBar(props: { onKey: (seq: string) => void; onPaste: () => voi
       setCtrl(false);
     }
     props.onKey(seq);
+    if (hadFocus.current && !props.terminalFocused()) props.refocus();
   };
 
   // [label, sequence, repeats while held]
@@ -105,7 +120,13 @@ export function KeyBar(props: { onKey: (seq: string) => void; onPaste: () => voi
   ];
 
   return (
-    <div class="keybar" onTouchStart={(e) => e.stopPropagation()}>
+    <div
+      class="keybar"
+      onTouchStart={(e) => {
+        e.stopPropagation();
+        hadFocus.current = props.terminalFocused();
+      }}
+    >
       <TapButton class="action" onTap={props.onPaste} title="Paste from the clipboard">
         Paste
       </TapButton>

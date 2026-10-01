@@ -13,6 +13,8 @@ export interface TerminalHandle {
   /** Send clipboard-style text as if typed (bracketed paste when the app asked for it). */
   paste: (text: string) => void;
   focus: () => void;
+  /** Whether xterm's textarea is the active element (the keyboard is up, on phones). */
+  hasFocus: () => boolean;
   /** The text of the screen plus scrollback, for the selectable overlay. */
   screenText: () => string;
   /** URLs currently visible in the buffer, newest last, de-duplicated. */
@@ -104,6 +106,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     },
     paste: (text: string) => xterm.current?.paste(text),
     focus: () => xterm.current?.focus(),
+    hasFocus: () => !!xterm.current?.textarea && document.activeElement === xterm.current.textarea,
     screenText: () => (xterm.current ? bufferText(xterm.current) : ""),
     links: () => {
       const text = xterm.current ? bufferText(xterm.current) : "";
@@ -157,6 +160,9 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     };
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
+      // Pinch-zoomed in: the user is panning the zoomed page to read, so
+      // leave every touch to the browser.
+      if ((visualViewport?.scale ?? 1) > 1.01) return;
       cancelAnimationFrame(inertia);
       const p = e.touches[0];
       touch = { x: p.clientX, y: p.clientY, lastY: p.clientY, lastT: e.timeStamp, t0: e.timeStamp, moved: false, acc: 0, v: 0 };
@@ -331,8 +337,6 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     const refit = () => fitAddon.fit();
     const ro = new ResizeObserver(refit);
     ro.observe(el.current);
-    // Mobile keyboards change the visual viewport rather than the layout.
-    visualViewport?.addEventListener("resize", refit);
     const onTheme = (e: Event) => {
       term.options.theme = terminalTheme((e as CustomEvent<Theme>).detail);
     };
@@ -354,7 +358,6 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       clearTimeout(retryTimer);
       clearInterval(countdown);
       ro.disconnect();
-      visualViewport?.removeEventListener("resize", refit);
       removeEventListener("agents-operator:theme", onTheme);
       document.removeEventListener("visibilitychange", onVisible);
       cancelAnimationFrame(inertia);

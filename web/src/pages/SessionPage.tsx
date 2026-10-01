@@ -16,20 +16,37 @@ export function SessionPage({ id }: { id: string }) {
   const term = useRef<TerminalHandle>(null);
   const page = useRef<HTMLDivElement>(null);
 
-  // iOS Safari does not shrink position:fixed layouts when the on-screen
-  // keyboard opens; it only shrinks the visual viewport. Track that and size
-  // the page from it so the terminal and key bar stay above the keyboard.
+  // Phones. The on-screen keyboard only shrinks the visual viewport, and
+  // the obvious response, shrinking the terminal to fit, resizes the PTY
+  // every time the keyboard comes and goes. TUIs like Claude Code redraw
+  // their live frame on each resize but cannot clean up what the old
+  // frame left above it, so every keyboard open/close shredded the lines
+  // above the prompt. Instead the page keeps its full height and slides up
+  // by the keyboard's height: the terminal keeps its rows, the key bar sits
+  // on the keyboard, the top rows go off-screen until it closes. The buffer
+  // still scrolls by touch. A pinch-zoomed viewport is left alone.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
+    let tallest = 0;
+    let width = vv.width;
     const apply = () => {
       const el = page.current;
-      if (!el) return;
-      el.style.height = `${Math.round(vv.height)}px`;
+      if (!el || vv.scale > 1.01) return;
+      if (Math.abs(vv.width - width) > 50) {
+        // Rotated: a different full height from now on.
+        width = vv.width;
+        tallest = 0;
+      }
+      tallest = Math.max(tallest, vv.height);
+      const keyboard = Math.max(0, Math.round(tallest - vv.height));
+      el.style.height = `${Math.round(tallest)}px`;
+      el.style.transform = keyboard > 0 ? `translateY(-${keyboard}px)` : "";
     };
     // If Safari still pans the visual viewport (a drag that started on the
     // top bar, say), snap it back instead of following it.
     const snap = () => {
+      if (vv.scale > 1.01) return;
       if (vv.offsetTop > 0 || window.scrollY > 0) window.scrollTo(0, 0);
     };
     apply();
@@ -213,6 +230,8 @@ export function SessionPage({ id }: { id: string }) {
       {canAttach && (
         <KeyBar
           onKey={(seq) => term.current?.send(seq)}
+          terminalFocused={() => term.current?.hasFocus() ?? false}
+          refocus={() => term.current?.focus()}
           onPaste={pasteFromClipboard}
           onSelect={() => setSheet(sheet === "select" ? null : "select")}
           onLinks={() => setSheet(sheet === "links" ? null : "links")}
