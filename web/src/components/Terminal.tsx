@@ -154,12 +154,74 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     term.unicode.activeVersion = "11";
     term.open(el.current);
 
-    // Touch. xterm's viewport is an ordinary overflow-scrolling element, so
-    // a drag scrolls the buffer natively and a tap focuses the textarea
-    // through xterm's own mousedown handling, the same way stock xterm.js
-    // behaves in browser terminals that work well on phones. Nothing is
-    // intercepted here; the host allows vertical panning only (no zoom).
+    // Touch scrolling. xterm 6 draws its own scrollbar over a viewport that
+    // does not scroll natively and registers no touch handling of its own
+    // (xterm 5, which browser terminals like Cloudflare's still use, had a
+    // real overflow-scrolling viewport), so on a phone a drag over the
+    // terminal falls through to the page: Safari's pull-to-refresh. Scroll
+    // the buffer here, with a little inertia, and swallow the drag and the
+    // synthetic mouse events that would follow it. Taps are left alone:
+    // xterm focuses its textarea through the mousedown that follows one.
     const host = el.current;
+    let touch: { y: number; x: number; lastY: number; lastT: number; moved: boolean; acc: number; v: number } | null = null;
+    let inertia = 0;
+    const rowHeight = () => Math.max(8, host.clientHeight / Math.max(1, term.rows));
+    const scrollBy = (px: number) => {
+      if (!touch) return;
+      touch.acc += px / rowHeight();
+      const lines = Math.trunc(touch.acc);
+      if (lines !== 0) {
+        touch.acc -= lines;
+        term.scrollLines(lines);
+      }
+    };
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      cancelAnimationFrame(inertia);
+      const p = e.touches[0];
+      touch = { x: p.clientX, y: p.clientY, lastY: p.clientY, lastT: e.timeStamp, moved: false, acc: 0, v: 0 };
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!touch || e.touches.length !== 1) return;
+      const p = e.touches[0];
+      if (!touch.moved && Math.hypot(p.clientX - touch.x, p.clientY - touch.y) > 8) touch.moved = true;
+      if (!touch.moved) return;
+      e.preventDefault(); // no page pan, no pull-to-refresh
+      const dy = touch.lastY - p.clientY;
+      const dt = Math.max(1, e.timeStamp - touch.lastT);
+      touch.v = dy / dt;
+      touch.lastY = p.clientY;
+      touch.lastT = e.timeStamp;
+      scrollBy(dy);
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!touch) return;
+      const t = touch;
+      if (!t.moved) {
+        touch = null; // a tap: let xterm's mousedown focus the textarea
+        return;
+      }
+      e.preventDefault(); // a drag is not a click
+      let v = t.v;
+      let last = performance.now();
+      const step = (now: number) => {
+        const dt = now - last;
+        last = now;
+        v *= Math.pow(0.94, dt / 16);
+        if (Math.abs(v) < 0.02) {
+          touch = null;
+          return;
+        }
+        scrollBy(v * dt);
+        inertia = requestAnimationFrame(step);
+      };
+      inertia = requestAnimationFrame(step);
+    };
+    const onTouchCancel = () => (touch = null);
+    host.addEventListener("touchstart", onTouchStart, { passive: true });
+    host.addEventListener("touchmove", onTouchMove, { passive: false });
+    host.addEventListener("touchend", onTouchEnd, { passive: false });
+    host.addEventListener("touchcancel", onTouchCancel, { passive: true });
     // Tap to raise the keyboard (phones). Skipped when xterm's own mousedown
     // handling focused the textarea a moment ago, so the keyboard is not
     // bounced by the focus hop in raiseKeyboard.
@@ -391,6 +453,11 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
         ta.removeEventListener("compositionstart", onCompositionStart);
         ta.removeEventListener("compositionend", onCompositionEnd);
       }
+      cancelAnimationFrame(inertia);
+      host.removeEventListener("touchstart", onTouchStart);
+      host.removeEventListener("touchmove", onTouchMove);
+      host.removeEventListener("touchend", onTouchEnd);
+      host.removeEventListener("touchcancel", onTouchCancel);
       host.removeEventListener("click", onClick);
       term.textarea?.removeEventListener("focus", onTextareaFocus);
       onData.dispose();
