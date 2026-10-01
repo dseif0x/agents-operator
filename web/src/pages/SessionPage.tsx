@@ -16,32 +16,21 @@ export function SessionPage({ id }: { id: string }) {
   const term = useRef<TerminalHandle>(null);
   const page = useRef<HTMLDivElement>(null);
 
-  // Phones. The on-screen keyboard only shrinks the visual viewport, and
-  // the obvious response, shrinking the terminal to fit, resizes the PTY
-  // every time the keyboard comes and goes. TUIs like Claude Code redraw
-  // their live frame on each resize but cannot clean up what the old
-  // frame left above it, so every keyboard open/close shredded the lines
-  // above the prompt. Instead the page keeps its full height and slides up
-  // by the keyboard's height: the terminal keeps its rows, the key bar sits
-  // on the keyboard, the top rows go off-screen until it closes. The buffer
-  // still scrolls by touch. A pinch-zoomed viewport is left alone.
+  // Phones. The on-screen keyboard only shrinks the visual viewport, not a
+  // position:fixed layout, so the page takes its height from the visual
+  // viewport: the terminal shrinks to what is visible, the PTY is resized
+  // and the TUI lays itself out for the smaller screen. A pinch-zoomed
+  // viewport is left alone, and the document itself is never allowed to
+  // stay scrolled: a page that Safari left panned after a keyboard went
+  // away (and restored that way on reload) is one where a tap on the
+  // terminal no longer brings the keyboard back.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
-    let tallest = 0;
-    let width = vv.width;
     const apply = () => {
       const el = page.current;
       if (!el || vv.scale > 1.01) return;
-      if (Math.abs(vv.width - width) > 50) {
-        // Rotated: a different full height from now on.
-        width = vv.width;
-        tallest = 0;
-      }
-      tallest = Math.max(tallest, vv.height);
-      const keyboard = Math.max(0, Math.round(tallest - vv.height));
-      el.style.height = `${Math.round(tallest)}px`;
-      el.style.transform = keyboard > 0 ? `translateY(-${keyboard}px)` : "";
+      el.style.height = `${Math.round(vv.height)}px`;
     };
     // If Safari still pans the visual viewport (a drag that started on the
     // top bar, say), snap it back instead of following it.
@@ -49,6 +38,7 @@ export function SessionPage({ id }: { id: string }) {
       if (vv.scale > 1.01) return;
       if (vv.offsetTop > 0 || window.scrollY > 0) window.scrollTo(0, 0);
     };
+    window.scrollTo(0, 0);
     apply();
     vv.addEventListener("resize", apply);
     vv.addEventListener("scroll", snap);

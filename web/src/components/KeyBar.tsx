@@ -87,6 +87,13 @@ export function KeyBar(props: {
   // still steal focus, giving it straight back inside the same gesture
   // keeps the keyboard where it was.
   const hadFocus = useRef(false);
+  // The bar scrolls sideways by hand: preventing the default on touchstart
+  // is what stops a tap from moving focus off the terminal on iOS (the
+  // spec says no mouse events, hence no focus change, follow a cancelled
+  // touchstart; a cancelled touchend only drops the click), and that also
+  // switches off native scrolling.
+  const bar = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; left: number } | null>(null);
 
   const send = (seq: string) => {
     if (ctrl && seq.length === 1) {
@@ -95,7 +102,7 @@ export function KeyBar(props: {
       setCtrl(false);
     }
     props.onKey(seq);
-    if (hadFocus.current && !props.terminalFocused()) props.refocus();
+    if (hadFocus.current) props.refocus();
   };
 
   // [label, sequence, repeats while held]
@@ -122,10 +129,21 @@ export function KeyBar(props: {
   return (
     <div
       class="keybar"
+      ref={bar}
       onTouchStart={(e) => {
         e.stopPropagation();
+        e.preventDefault();
         hadFocus.current = props.terminalFocused();
+        const t = e.touches[0];
+        drag.current = t && bar.current ? { x: t.clientX, left: bar.current.scrollLeft } : null;
       }}
+      onTouchMove={(e) => {
+        const d = drag.current;
+        const t = e.touches[0];
+        if (d && t && bar.current) bar.current.scrollLeft = d.left - (t.clientX - d.x);
+      }}
+      onTouchEnd={() => (drag.current = null)}
+      onTouchCancel={() => (drag.current = null)}
     >
       <TapButton class="action" onTap={props.onPaste} title="Paste from the clipboard">
         Paste

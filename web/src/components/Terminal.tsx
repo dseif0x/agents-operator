@@ -63,7 +63,21 @@ const touchDevice = () => matchMedia("(hover: none) and (pointer: coarse)").matc
  * follows is inside the gesture and brings the keyboard up.
  */
 function raiseKeyboard(term: XTerm) {
-  term.textarea?.blur();
+  const ta = term.textarea;
+  if (!ta) return;
+  if (document.activeElement === ta) {
+    // blur() then focus() in one task is coalesced into nothing by iOS, so
+    // move focus to a throwaway input first: two real focus changes, and
+    // the keyboard follows the last one.
+    const decoy = document.createElement("input");
+    decoy.setAttribute("aria-hidden", "true");
+    decoy.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0";
+    document.body.appendChild(decoy);
+    decoy.focus();
+    ta.focus();
+    decoy.remove();
+    return;
+  }
   term.focus();
 }
 
@@ -257,15 +271,17 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     };
 
     // Hold-to-repeat for the native keyboard's Backspace. Phone keyboards
-    // repeat a held Backspace only while the field they edit has something
-    // left to delete, and xterm keeps its hidden textarea empty, so a held
-    // key sent one DEL and stopped. Keep a run of spaces in the textarea as
-    // something to delete, and turn each deletion the keyboard attempts
-    // into a DEL for the session without letting the field shrink (so the
-    // repeat never runs dry). xterm's own diffing of the textarea sees no
-    // change and stays quiet. A word or line deletion maps to the readline
-    // keys. The sentinel is restored after xterm clears the field (blur,
-    // Enter, Ctrl+C, paste); nothing is touched during IME composition.
+    // repeat a held Backspace only while each press actually deletes
+    // something from the field they edit, and xterm keeps its hidden
+    // textarea empty (and cancels the key before it reaches the field), so
+    // a held key sent one DEL and stopped. On touch devices the textarea
+    // carries a run of spaces, Backspace is left to the browser (xterm is
+    // told to ignore it), and each real deletion is turned into a DEL for
+    // the session, after which the spaces are put back at once so the
+    // next repeat has something to delete again. xterm's own diffing of
+    // the textarea runs on a timer and sees no change by then. Word and
+    // line deletions map to the readline keys. Nothing is touched during
+    // IME composition.
     const sentinel = " ".repeat(64);
     const ta = term.textarea;
     let composing = false;
@@ -279,14 +295,21 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       }
     };
     const primeLater = () => setTimeout(prime, 0);
-    const onBeforeInput = (e: InputEvent) => {
-      if (composing || socket?.readyState !== WebSocket.OPEN) return;
-      const seq = { deleteContentBackward: "\x7f", deleteWordBackward: "\x17", deleteSoftLineBackward: "\x15", deleteHardLineBackward: "\x15" }[
-        e.inputType
-      ];
-      if (!seq) return;
-      e.preventDefault();
-      socket.send(encoder.encode(seq));
+    const deletions: Record<string, string> = {
+      deleteContentBackward: "\x7f",
+      deleteWordBackward: "\x17",
+      deleteSoftLineBackward: "\x15",
+      deleteHardLineBackward: "\x15",
+    };
+    const onInput = (e: Event) => {
+      if (composing) return;
+      const seq = deletions[(e as InputEvent).inputType];
+      if (seq && socket?.readyState === WebSocket.OPEN) {
+        socket.send(encoder.encode(seq));
+        prime(); // the field shrank: refill it before the next repeat
+      } else {
+        primeLater();
+      }
     };
     const onCompositionStart = () => (composing = true);
     const onCompositionEnd = () => {
@@ -294,10 +317,20 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       primeLater();
     };
     if (ta && touchDevice()) {
-      ta.addEventListener("beforeinput", onBeforeInput);
+      term.attachCustomKeyEventHandler((e) => {
+        // Let Backspace reach the field so the browser deletes, repeats
+        // and reports it through the input event above. With nothing to
+        // delete (the sentinel is only there once focused) send the DEL
+        // here so the key is never lost.
+        if (e.key === "Backspace" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          if (e.type === "keydown" && ta.value.length === 0 && socket?.readyState === WebSocket.OPEN) socket.send(encoder.encode("\x7f"));
+          return false;
+        }
+        return true;
+      });
+      ta.addEventListener("input", onInput);
       ta.addEventListener("focus", prime);
       ta.addEventListener("keyup", primeLater);
-      ta.addEventListener("input", primeLater);
       ta.addEventListener("compositionstart", onCompositionStart);
       ta.addEventListener("compositionend", onCompositionEnd);
       prime();
@@ -409,10 +442,9 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       document.removeEventListener("visibilitychange", onVisible);
       cancelAnimationFrame(inertia);
       if (ta) {
-        ta.removeEventListener("beforeinput", onBeforeInput);
+        ta.removeEventListener("input", onInput);
         ta.removeEventListener("focus", prime);
         ta.removeEventListener("keyup", primeLater);
-        ta.removeEventListener("input", primeLater);
         ta.removeEventListener("compositionstart", onCompositionStart);
         ta.removeEventListener("compositionend", onCompositionEnd);
       }
