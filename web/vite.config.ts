@@ -11,6 +11,9 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id: string) {
+          // The headless terminal only loads to reflow a replay drawn at
+          // another size (phones, mostly); keep it out of the main xterm chunk.
+          if (id.includes("@xterm/headless") || id.includes("@xterm/addon-serialize")) return "xterm-headless";
           if (id.includes("@xterm/")) return "xterm";
           return undefined;
         },

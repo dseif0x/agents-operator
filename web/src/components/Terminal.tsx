@@ -13,8 +13,10 @@ export interface TerminalHandle {
   /** Send clipboard-style text as if typed (bracketed paste when the app asked for it). */
   paste: (text: string) => void;
   focus: () => void;
-  /** Open the on-screen keyboard when closed, close it when open. Returns the new state. */
-  toggleKeyboard: () => boolean;
+  /** Raise the on-screen keyboard (phones). Must run inside a touch or click handler. */
+  showKeyboard: () => void;
+  /** Dismiss the on-screen keyboard. */
+  hideKeyboard: () => void;
   /** The text of the screen plus scrollback, for the selectable overlay. */
   screenText: () => string;
   /** URLs currently visible in the buffer, newest last, de-duplicated. */
@@ -49,15 +51,48 @@ function bufferText(term: XTerm): string {
 
 interface Props {
   sessionId: string;
-  /** Called when xterm gains or loses focus, i.e. the keyboard opens or closes on phones. */
-  onFocusChange?: (focused: boolean) => void;
+}
+
+/** Phones and tablets: no hover, coarse pointer. */
+const touchDevice = () => matchMedia("(hover: none) and (pointer: coarse)").matches;
+
+/**
+ * Raise the on-screen keyboard. A plain focus() does nothing when the
+ * textarea is already focused (xterm focuses it on its own, and a focus
+ * made outside a user gesture leaves the element focused with the keyboard
+ * closed), so drop focus first; the focus that follows is inside the
+ * gesture and brings the keyboard up.
+ */
+function raiseKeyboard(term: XTerm) {
+  term.textarea?.blur();
+  term.focus();
+}
+
+/**
+ * Replay recorded at another size: PTY output is full of cursor moves
+ * and line erases that only make sense at the width it was drawn for, so
+ * writing it into a terminal of a different width (a phone attaching to a
+ * session a desktop was using, or to one nobody had sized yet) shows
+ * shredded text. Run it through a headless terminal of the original size
+ * and hand back what ended up on its screen and scrollback as plain
+ * styled text, which wraps cleanly anywhere.
+ */
+async function reflowReplay(bytes: Uint8Array, cols: number, rows: number): Promise<string> {
+  const [{ Terminal: Headless }, { SerializeAddon }] = await Promise.all([import("@xterm/headless"), import("@xterm/addon-serialize")]);
+  const h = new Headless({ cols, rows, scrollback: 5000, allowProposedApi: true });
+  const ser = new SerializeAddon();
+  h.loadAddon(ser);
+  try {
+    await new Promise<void>((resolve) => h.write(bytes, resolve));
+    return ser.serialize({ scrollback: 5000 });
+  } finally {
+    h.dispose();
+  }
 }
 
 // Terminal wraps xterm.js and a reconnecting WebSocket to the hub. Binary
 // frames are PTY bytes; text frames are JSON control messages.
-export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ sessionId, onFocusChange }, ref) {
-  const focusChange = useRef(onFocusChange);
-  focusChange.current = onFocusChange;
+export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ sessionId }, ref) {
   const el = useRef<HTMLDivElement>(null);
   const ws = useRef<WebSocket | null>(null);
   const xterm = useRef<XTerm | null>(null);
@@ -72,16 +107,8 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     },
     paste: (text: string) => xterm.current?.paste(text),
     focus: () => xterm.current?.focus(),
-    toggleKeyboard: () => {
-      const t = xterm.current;
-      if (!t) return false;
-      if (t.textarea && document.activeElement === t.textarea) {
-        t.textarea.blur();
-        return false;
-      }
-      t.focus();
-      return true;
-    },
+    showKeyboard: () => xterm.current && raiseKeyboard(xterm.current),
+    hideKeyboard: () => xterm.current?.textarea?.blur(),
     screenText: () => (xterm.current ? bufferText(xterm.current) : ""),
     links: () => {
       const text = xterm.current ? bufferText(xterm.current) : "";
@@ -162,7 +189,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       // Links on phones go through the Links sheet instead.
       e.preventDefault();
       if (!t.moved) {
-        if (e.timeStamp - t.t0 < 500 && document.activeElement !== term.textarea) term.focus();
+        if (e.timeStamp - t.t0 < 500) raiseKeyboard(term);
         touch = null;
         return;
       }
@@ -186,10 +213,6 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     host.addEventListener("touchmove", onTouchMove, { passive: false });
     host.addEventListener("touchend", onTouchEnd, { passive: false });
     host.addEventListener("touchcancel", () => (touch = null), { passive: true });
-    const onFocus = () => focusChange.current?.(true);
-    const onBlur = () => focusChange.current?.(false);
-    term.textarea?.addEventListener("focus", onFocus);
-    term.textarea?.addEventListener("blur", onBlur);
 
     // WebGL renderer with a canvas/DOM fallback when the context is lost or unavailable.
     import("@xterm/addon-webgl")
@@ -220,6 +243,18 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       }
     };
 
+    // Writes go through one promise chain so a replay that is being
+    // reflowed (async) still lands before the live output that follows it.
+    let writes: Promise<unknown> = Promise.resolve();
+    const enqueue = (job: () => Promise<string | Uint8Array | null>) => {
+      writes = writes
+        .then(job)
+        .then((data) => {
+          if (data !== null && !closed) term.write(data);
+        })
+        .catch(() => undefined);
+    };
+
     const connect = () => {
       if (closed) return;
       setStatus("connecting");
@@ -228,24 +263,37 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       s.binaryType = "arraybuffer";
       socket = s;
       ws.current = s;
+      // Size the replay was drawn at, when it differs from ours.
+      let replayAt: { cols: number; rows: number } | null = null;
       s.onopen = () => {
         backoff = 1000;
         setStatus("open");
         term.clear();
         fitAddon.fit();
         sendResize();
-        term.focus();
+        // On a phone a focus outside a tap leaves the textarea focused with
+        // the keyboard closed, which then needs two taps to open it.
+        if (!touchDevice()) term.focus();
       };
       s.onmessage = (ev) => {
         if (ev.data instanceof ArrayBuffer) {
-          term.write(new Uint8Array(ev.data));
+          const bytes = new Uint8Array(ev.data);
+          if (replayAt) {
+            const at = replayAt;
+            replayAt = null;
+            enqueue(() => reflowReplay(bytes, at.cols, at.rows).catch(() => bytes));
+          } else {
+            enqueue(async () => bytes);
+          }
           return;
         }
         try {
-          const m = JSON.parse(ev.data as string) as { t: string; code?: number; cols?: number; rows?: number; message?: string };
+          const m = JSON.parse(ev.data as string) as { t: string; code?: number; cols?: number; rows?: number; scrollback?: boolean; message?: string };
           if (m.t === "exit") setExit(m.code ?? 0);
-          else if (m.t === "hello") setExit(null);
-          else if (m.t === "error") term.write(`\r\n\x1b[31m[agents-operator] ${m.message}\x1b[0m\r\n`);
+          else if (m.t === "hello") {
+            setExit(null);
+            replayAt = m.scrollback && m.cols && m.rows && (m.cols !== term.cols || m.rows !== term.rows) ? { cols: m.cols, rows: m.rows } : null;
+          } else if (m.t === "error") enqueue(async () => `\r\n\x1b[31m[agents-operator] ${m.message}\x1b[0m\r\n`);
         } catch {
           /* ignore */
         }
@@ -315,8 +363,6 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       removeEventListener("agents-operator:theme", onTheme);
       document.removeEventListener("visibilitychange", onVisible);
       cancelAnimationFrame(inertia);
-      term.textarea?.removeEventListener("focus", onFocus);
-      term.textarea?.removeEventListener("blur", onBlur);
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
