@@ -432,10 +432,10 @@ details summary {
 }
 
 /* Touch scrolling is handled in JS; stop the browser from panning. */
-/* Vertical panning scrolls xterm's viewport natively; no pinch or
-   double-tap zoom, and no scroll chaining into the page. */
+/* Drags are scrolled by the Terminal component (xterm 6 has no touch
+   scrolling of its own); no browser panning, zooming or pull-to-refresh. */
 .term-host {
-  touch-action: pan-y;
+  touch-action: none;
   overscroll-behavior: contain;
 }
 
