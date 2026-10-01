@@ -492,7 +492,7 @@ details summary {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
+  touch-action: none; /* scrolled by hand, see KeyBar */
 }
 
 .keybar::-webkit-scrollbar {
