@@ -724,7 +724,14 @@ func changed(prev any, cur *Live) bool {
 	}
 	a, b := p.Status, cur.Status
 	return p.Err != cur.Err || a.Running != b.Running || a.NeedsAttention != b.NeedsAttention ||
-		(a.ExitCode == nil) != (b.ExitCode == nil) || a.Tail != b.Tail
+		(a.ExitCode == nil) != (b.ExitCode == nil) || a.Tail != b.Tail || activityChanged(a.Activity, b.Activity)
+}
+
+func activityChanged(a, b *runner.Activity) bool {
+	if (a == nil) != (b == nil) {
+		return true
+	}
+	return a != nil && (a.State != b.State || a.Detail != b.Detail || a.Message != b.Message)
 }
 
 // ---- API view ----
@@ -756,9 +763,12 @@ type View struct {
 	ExitCode       *int   `json:"exit_code,omitempty"`
 	NeedsAttention bool   `json:"needs_attention"`
 	Tail           string `json:"tail,omitempty"`
-	Clients        int    `json:"clients"`
-	RunnerError    string `json:"runner_error,omitempty"`
-	PodName        string `json:"pod_name"`
+	// Activity is the agent's own account of what it is doing (from its
+	// hooks), when the runner has one.
+	Activity    *runner.Activity `json:"activity,omitempty"`
+	Clients     int              `json:"clients"`
+	RunnerError string           `json:"runner_error,omitempty"`
+	PodName     string           `json:"pod_name"`
 }
 
 // View converts a row plus live status into the API shape.
@@ -791,6 +801,7 @@ func (s *Service) View(sess *store.Session) View {
 			v.ExitCode = live.Status.ExitCode
 			v.NeedsAttention = live.Status.NeedsAttention
 			v.Tail = live.Status.Tail
+			v.Activity = live.Status.Activity
 			v.Clients = live.Status.Clients
 			if live.Status.LastOutputAt != nil && (v.LastOutputAt == nil || live.Status.LastOutputAt.After(*v.LastOutputAt)) {
 				v.LastOutputAt = live.Status.LastOutputAt

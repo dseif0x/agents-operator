@@ -30,3 +30,24 @@ export function reposSummary(repos: { url: string; branch?: string }[] | undefin
 export function stateLabel(state: string): string {
   return state.charAt(0).toUpperCase() + state.slice(1);
 }
+
+/** One line for an agent's hook-reported activity. */
+export function activityLabel(a: { state: string; detail?: string } | undefined): string {
+  if (!a) return "";
+  switch (a.state) {
+    case "thinking":
+      return "Thinking…";
+    case "tool":
+      return a.detail ? `Running ${a.detail}` : "Running a tool";
+    case "needs_permission":
+      return a.detail ? `Needs permission: ${a.detail}` : "Needs permission";
+    case "waiting_input":
+      return a.detail === "ready" ? "Ready" : "Waiting for you";
+    case "error":
+      return a.detail ? `Error: ${a.detail}` : "Error";
+    case "exited":
+      return "Agent exited";
+    default:
+      return a.state;
+  }
+}

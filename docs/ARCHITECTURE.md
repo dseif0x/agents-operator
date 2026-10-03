@@ -16,7 +16,7 @@ agents-operator is a self-hosted mission control for AI coding agents. Every ses
 | Piece | Runs as | Owns |
 | --- | --- | --- |
 | **hub** (`cmd/agents-operator`) | Deployment, 1 replica, distroless | REST API, SSE feed, WebSocket terminal proxy, reconciler, embedded SPA |
-| **agent-runner** (`cmd/agent-runner`) | PID 1 in every session pod (under tini) | The PTY, the 2 MiB scrollback ring buffer, the runner WebSocket on `:7681` |
+| **agent-runner** (`cmd/agent-runner`) | PID 1 in every session pod (under tini) | The PTY, the 2 MiB scrollback ring buffer, the runner WebSocket on `:7681`, the loopback hook endpoint on `127.0.0.1:7682` that turns Claude Code's hook events into the session's activity |
 | **Postgres** | Bitnami subchart or external | users, sessions, session_events, user_credentials |
 
 The browser only talks to the hub. The hub reaches runners by pod IP on the cluster network and is the only component that calls the Kubernetes API. Session pods have no Kubernetes identity at all (`automountServiceAccountToken: false`).
@@ -72,6 +72,8 @@ Starting a stopped or failed session bumps `generation`. The Secret's and Pod's 
 ## Terminal streaming
 
 The runner owns the PTY and the scrollback. The hub is a dumb authenticated pipe. The browser is xterm.js. See [PROTOCOL.md](PROTOCOL.md) for the frames.
+
+What the agent is doing ("running Bash: go test ./...", "needs permission for Edit", "waiting for you", a failed turn) comes from the agent's own hooks rather than from reading the terminal: the runner installs Claude Code hooks that forward every lifecycle event to a loopback endpoint, keeps the current activity, and reports it in `/status`, from which the hub derives the "needs you" badge and the list page's one-line summary (the last reply). Agents without hooks fall back to the old heuristic of a prompt-looking last line plus two seconds of silence.
 
 Closing the tab changes nothing in the pod. Reopening replays the last 2 MiB of raw output from the runner, so the TUI redraws exactly. That only holds at the size the output was drawn for; when a client of a different size attaches (a phone after a desktop, or anyone after the 220×50 default nobody had resized), the browser runs the replay through a headless xterm of the original size and writes what ended up on its screen and scrollback as styled text instead, which wraps cleanly, then sends its own size so the TUI redraws its live frame. The hub never buffers or parses terminal bytes; if the runner connection drops, it closes the browser socket with a reason and the browser reconnects with backoff.
 

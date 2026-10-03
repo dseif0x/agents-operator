@@ -83,7 +83,51 @@ type Status struct {
 	// to keep the account's saved login current, because refreshed OAuth
 	// tokens invalidate the pair that was saved before.
 	LoginUpdatedAt *time.Time `json:"login_updated_at,omitempty"`
+	// Activity is what the agent is doing according to its own hooks
+	// (Claude Code today), present once the first hook event arrived. When
+	// set, NeedsAttention is derived from it rather than from the tail.
+	Activity *Activity `json:"activity,omitempty"`
 }
+
+// Activity states, as reported by the agent CLI's hooks.
+const (
+	ActivityThinking        = "thinking"         // a turn is running, no tool at the moment
+	ActivityTool            = "tool"             // a tool call is executing; Detail names it
+	ActivityNeedsPermission = "needs_permission" // blocked on a permission or MCP prompt
+	ActivityWaitingInput    = "waiting_input"    // the turn ended; Message is the reply
+	ActivityError           = "error"            // the turn failed; Detail says why
+	ActivityExited          = "exited"           // the CLI session ended
+)
+
+// Activity is the agent's current state as told by its hooks.
+type Activity struct {
+	State string `json:"state"`
+	// Detail is a short description: the tool and its target, the
+	// permission asked for, or the error.
+	Detail string `json:"detail,omitempty"`
+	// Message is the last assistant message, trimmed, after a turn ends.
+	Message string    `json:"message,omitempty"`
+	Since   time.Time `json:"since"`
+}
+
+// NeedsAttention reports whether the state means a human should look.
+func (a *Activity) NeedsAttention() bool {
+	if a == nil {
+		return false
+	}
+	switch a.State {
+	case ActivityNeedsPermission, ActivityWaitingInput, ActivityError:
+		return true
+	}
+	return false
+}
+
+// HookPort is the loopback port the runner receives agent hook events on;
+// HookURL is where the `agent-runner hook` helper posts them.
+const (
+	HookPort = 7682
+	HookURL  = "http://127.0.0.1:7682/hook"
+)
 
 // Agent identifiers understood by the runner image.
 const (
@@ -188,5 +232,7 @@ const (
 	EnvAnthropicAPIKey  = "ANTHROPIC_API_KEY"
 	EnvWorkspace        = "WORKSPACE"               // defaults to /workspace
 	EnvListen           = "RUNNER_LISTEN"           // defaults to :7681
+	EnvHookListen       = "RUNNER_HOOK_LISTEN"      // defaults to 127.0.0.1:7682
+	EnvHookURL          = "RUNNER_HOOK_URL"         // where `agent-runner hook` posts; defaults to HookURL
 	EnvSessionName      = "AGENTS_OPERATOR_SESSION" // human name, used for the prompt/hostname
 )

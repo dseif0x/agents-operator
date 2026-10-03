@@ -64,7 +64,33 @@ The PTY defaults to 220×50 and follows the most recent `resize` from any client
 }
 ```
 
-The hub polls it every 10 s. `needs_attention` is true when the agent has been silent for at least 2 s and the last visible line ends in something that looks like a prompt (`?`, `(y/n)`, `>`, `❯`, `$`, `:` …). `tail` is the last visible line with ANSI stripped, at most 200 characters. `login_updated_at` is present only when the agent CLI rewrote its credential file after boot (a login or a token refresh; files seeded by the runner do not count); if the owner has that login saved and the account copy is older, the hub sends `export_login` and replaces it.
+The hub polls it every 10 s. `tail` is the last visible line with ANSI stripped, at most 200 characters. Without hook events, `needs_attention` is true when the agent has been silent for at least 2 s and the tail ends in something that looks like a prompt (`?`, `(y/n)`, `>`, `❯`, `$`, `:` …).
+
+With hook events (see below) the document also carries the agent's own account, and `needs_attention` is derived from it instead:
+
+```json
+"activity": {
+  "state": "tool",
+  "detail": "Bash: go test ./...",
+  "message": "I fixed the bug in api.go and added a test.",
+  "since": "2026-10-03T10:05:12Z"
+}
+```
+
+| `state` | Meaning | `needs_attention` |
+| --- | --- | --- |
+| `thinking` | a turn is running, no tool at the moment | no |
+| `tool` | a tool call runs; `detail` is `Tool: target` (Bash description or command, file name, pattern, URL, query) | no |
+| `needs_permission` | blocked on a permission or MCP prompt; `detail` says which | yes |
+| `waiting_input` | the turn ended (`message` is the last reply, trimmed to 300 characters), the CLI just started (`detail: ready`) or has been idle (`detail: idle`) | yes |
+| `error` | the turn failed; `detail` is the error type (`rate_limit`, `authentication_failed` …) | yes |
+| `exited` | the CLI session ended | no |
+
+## Agent hooks
+
+Claude Code fires a hook on every lifecycle event, and the runner installs one for the events it cares about in `~/.claude/settings.json` on boot (`SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `Notification`, `Stop`, `StopFailure`, `Elicitation`). Each is a `command` hook running `agent-runner hook`, marked `async` so the CLI neither waits for it nor can be blocked by it; the helper reads the event JSON from stdin, posts it to the runner at `http://127.0.0.1:7682/hook` and exits 0 whatever happens. Hook groups the user added to the same file are kept; the runner's is recognised by its command and added once per event. Events from subagents (`agent_id` set) are ignored so a Task's inner tool calls do not flip the main agent's state. The listener is loopback only: nothing outside the pod can post to it, and nothing posted to it changes what the CLI does.
+
+Codex and OpenCode have no hooks installed yet and fall back to the tail heuristic. `login_updated_at` is present only when the agent CLI rewrote its credential file after boot (a login or a token refresh; files seeded by the runner do not count); if the owner has that login saved and the account copy is older, the hub sends `export_login` and replaces it.
 
 ## Runner environment
 
