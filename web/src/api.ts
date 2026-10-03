@@ -52,9 +52,18 @@ export interface Session {
   exit_code?: number;
   needs_attention: boolean;
   tail?: string;
+  /** What the agent says it is doing, from its hooks (Claude Code); absent until the first event. */
+  activity?: Activity;
   clients: number;
   runner_error?: string;
   pod_name: string;
+}
+
+export interface Activity {
+  state: "thinking" | "tool" | "needs_permission" | "waiting_input" | "error" | "exited";
+  detail?: string;
+  message?: string;
+  since: string;
 }
 
 export type SessionState = "creating" | "running" | "stopping" | "stopped" | "failed" | "deleting";

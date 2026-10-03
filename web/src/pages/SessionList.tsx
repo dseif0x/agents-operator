@@ -2,7 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { api, subscribeSessions, type Session, type User } from "../api";
 import { Nav } from "../components/Nav";
 import { Link } from "../router";
-import { reposSummary, stateLabel, timeAgo } from "../util";
+import { activityLabel, reposSummary, stateLabel, timeAgo } from "../util";
 
 export function SessionList(props: { user: User; onLogout: () => void }) {
   const [sessions, setSessions] = useState<Session[] | null>(null);
@@ -88,7 +88,14 @@ function SessionCard({ s }: { s: Session }) {
           {reposSummary(s.repos)} · output {timeAgo(s.last_output_at)}
           {s.state_reason ? ` · ${s.state_reason}` : ""}
         </div>
-        {s.tail && <div class="tail">{s.tail}</div>}
+        {s.activity ? (
+          <div class="tail">
+            <span class={`act ${s.activity.state}`}>{activityLabel(s.activity)}</span>
+            {s.activity.message ? ` · ${s.activity.message}` : ""}
+          </div>
+        ) : (
+          s.tail && <div class="tail">{s.tail}</div>
+        )}
       </div>
       <span class="muted" style="font-size:13px">
         {s.clients > 0 ? `${s.clients} attached` : ""}

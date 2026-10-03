@@ -432,30 +432,97 @@ func (w *Workspace) prepareClaudeConfig(repos []store.Repo) {
 	w.Log.Info("prepared Claude Code config", "onboarding_done", haveAuth, "trusted_dirs", len(dirs))
 }
 
-// prepareClaudeSettings answers the consent dialog behind
-// --dangerously-skip-permissions for autonomous sessions. The CLI records
-// that consent in ~/.claude/settings.json (older versions kept it in
-// .claude.json and migrate it there); the user gave it by ticking
-// "autonomous" when creating the session. Other settings are left as they are.
+// claudeHookEvents are the Claude Code lifecycle events the runner listens
+// to; together they say what the agent is doing and when it waits.
+var claudeHookEvents = []string{
+	"SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+	"PermissionRequest", "Notification", "Stop", "StopFailure", "Elicitation",
+}
+
+// claudeHookCommand is what Claude Code runs on each of them: a helper in
+// the runner image that forwards the event to the runner (see hook.go).
+const claudeHookCommand = "agent-runner hook"
+
+// prepareClaudeSettings writes what the session needs into
+// ~/.claude/settings.json, keeping everything else in the file:
+//
+//   - the activity hooks (every session): Claude Code runs `agent-runner
+//     hook` on each lifecycle event, asynchronously so it never waits on or
+//     is blocked by them, and the runner turns the events into the status
+//     the hub shows. Hook groups the user added themselves are kept; ours is
+//     recognised by its command and added once per event.
+//   - the consent behind --dangerously-skip-permissions (autonomous
+//     sessions): the CLI records it as skipDangerousModePermissionPrompt;
+//     the user gave it by ticking "autonomous" when creating the session.
 func (w *Workspace) prepareClaudeSettings() {
-	if w.Agent != runner.AgentClaude || !autonomousEnv() {
+	if w.Agent != runner.AgentClaude {
 		return
 	}
 	path := filepath.Join(w.HomeDir(), ".claude", "settings.json")
-	changed, err := setJSONDefaults(path, map[string]any{"skipDangerousModePermissionPrompt": true})
+	autonomous := autonomousEnv()
+	changed, err := updateJSONFile(path, func(obj map[string]any) bool {
+		changed := mergeClaudeHooks(obj)
+		if autonomous {
+			if _, ok := obj["skipDangerousModePermissionPrompt"]; !ok {
+				obj["skipDangerousModePermissionPrompt"] = true
+				changed = true
+			}
+		}
+		return changed
+	})
 	if err != nil {
 		w.Log.Warn("cannot prepare Claude Code settings", "err", err)
 		return
 	}
 	if changed {
-		w.Log.Info("accepted bypass-permissions consent for the autonomous session")
+		w.Log.Info("prepared Claude Code settings", "hooks", true, "bypass_consent", autonomous)
 	}
 }
 
-// setJSONDefaults adds the given keys to the JSON object in path when they
-// are absent, creating the file if needed. Existing keys are never changed
-// and numbers are kept exactly as written.
-func setJSONDefaults(path string, defaults map[string]any) (bool, error) {
+// mergeClaudeHooks adds the runner's hook to every event in
+// claudeHookEvents that does not carry it yet. Returns whether it changed
+// anything.
+func mergeClaudeHooks(settings map[string]any) bool {
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	changed := false
+	for _, ev := range claudeHookEvents {
+		groups, _ := hooks[ev].([]any)
+		if hasRunnerHook(groups) {
+			continue
+		}
+		groups = append(groups, map[string]any{
+			"hooks": []any{map[string]any{"type": "command", "command": claudeHookCommand, "async": true, "timeout": 5}},
+		})
+		hooks[ev] = groups
+		changed = true
+	}
+	if changed {
+		settings["hooks"] = hooks
+	}
+	return changed
+}
+
+func hasRunnerHook(groups []any) bool {
+	for _, g := range groups {
+		group, _ := g.(map[string]any)
+		list, _ := group["hooks"].([]any)
+		for _, h := range list {
+			hook, _ := h.(map[string]any)
+			if cmd, _ := hook["command"].(string); cmd == claudeHookCommand {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// updateJSONFile reads the JSON object in path (an absent file is an empty
+// object), lets mutate change it, and writes it back when mutate reports a
+// change. Numbers are kept exactly as written.
+func updateJSONFile(path string, mutate func(obj map[string]any) bool) (bool, error) {
 	obj := map[string]any{}
 	raw, err := os.ReadFile(path)
 	switch {
@@ -469,14 +536,7 @@ func setJSONDefaults(path string, defaults map[string]any) (bool, error) {
 	default:
 		return false, err
 	}
-	changed := false
-	for k, v := range defaults {
-		if _, ok := obj[k]; !ok {
-			obj[k] = v
-			changed = true
-		}
-	}
-	if !changed {
+	if !mutate(obj) {
 		return false, nil
 	}
 	out, err := json.MarshalIndent(obj, "", "  ")

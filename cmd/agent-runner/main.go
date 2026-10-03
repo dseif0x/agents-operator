@@ -28,6 +28,10 @@ func main() {
 		gitCredentialHelper(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "hook" {
+		hookForward(hookURL(), os.Stdin)
+		return
+	}
 	os.Exit(run())
 }
 
@@ -35,6 +39,7 @@ func main() {
 func run() int {
 	var (
 		listen    = flag.String("listen", envOr(runner.EnvListen, fmt.Sprintf(":%d", runner.Port)), "address to serve the WebSocket on")
+		hookAddr  = flag.String("hook-listen", envOr(runner.EnvHookListen, fmt.Sprintf("127.0.0.1:%d", runner.HookPort)), "loopback address that receives agent hook events")
 		workspace = flag.String("workspace", envOr(runner.EnvWorkspace, "/workspace"), "workspace directory (the PVC mount)")
 		agent     = flag.String("agent", envOr(runner.EnvAgent, runner.AgentShell), "agent to run: "+strings.Join(runner.Agents, ", "))
 		cmdLine   = flag.String("cmd", "", "override the agent command line (debugging and tests)")
@@ -92,7 +97,8 @@ func run() int {
 	}
 	defer proc.Close()
 
-	srv := &server.Server{Proc: proc, Token: token, Agent: *agent, Home: ws.HomeDir(), LoginBaseline: loginBaseline, Log: log}
+	hooks := &server.Hooks{Log: log}
+	srv := &server.Server{Proc: proc, Token: token, Agent: *agent, Home: ws.HomeDir(), LoginBaseline: loginBaseline, Hooks: hooks, Log: log}
 	httpSrv := &http.Server{
 		Addr:              *listen,
 		Handler:           srv.Handler(),
@@ -108,6 +114,20 @@ func run() int {
 		return 1
 	}
 	log.Info("agent-runner listening", "addr", ln.Addr().String(), "agent", *agent, "autonomous", autonomous)
+
+	// Agent hook events arrive on the loopback interface only; the agent
+	// CLI's hooks post to it through `agent-runner hook`.
+	hookSrv := &http.Server{Addr: *hookAddr, Handler: hooks.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	if hln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", *hookAddr); err != nil {
+		log.Warn("hook listener failed; agent activity will come from the terminal tail", "addr", *hookAddr, "err", err)
+	} else {
+		go func() {
+			if err := hookSrv.Serve(hln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Warn("hook server stopped", "err", err)
+			}
+		}()
+		defer hookSrv.Close()
+	}
 
 	// Forward SIGHUP/SIGUSR1 to the agent's process group, so `kubectl exec
 	// kill -HUP 1` reaches the CLI.

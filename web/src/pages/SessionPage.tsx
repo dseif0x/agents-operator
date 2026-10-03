@@ -3,7 +3,7 @@ import { api, subscribeSessions, type Session, type SessionEvent } from "../api"
 import { Link, navigate } from "../router";
 import { Terminal, type TerminalHandle } from "../components/Terminal";
 import { KeyBar } from "../components/KeyBar";
-import { stateLabel, timeAgo } from "../util";
+import { activityLabel, stateLabel, timeAgo } from "../util";
 import { toggleTheme } from "../theme";
 
 export function SessionPage({ id }: { id: string }) {
@@ -138,6 +138,11 @@ export function SessionPage({ id }: { id: string }) {
         {s && <span class="badge agent">{s.agent}</span>}
         {s && s.state !== "running" && <span class="badge">{stateLabel(s.state)}</span>}
         {s?.needs_attention && <span class="badge attention">needs you</span>}
+        {s?.activity && s.state === "running" && (
+          <span class={`badge act ${s.activity.state}`} title={s.activity.message || ""}>
+            {activityLabel(s.activity)}
+          </span>
+        )}
         {s?.agent_running === false && s.state === "running" && (
           <span class="badge">exited {s.exit_code !== undefined ? s.exit_code : ""}</span>
         )}

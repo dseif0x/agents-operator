@@ -683,3 +683,19 @@ table.creds td {
 .mono {
   font-family: var(--mono);
 }
+
+/* Hook-reported agent activity. */
+.act.needs_permission,
+.act.error {
+  color: var(--warn);
+}
+.act.tool,
+.act.thinking {
+  color: var(--accent);
+}
+.topbar .badge.act {
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

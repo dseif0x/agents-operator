@@ -332,11 +332,42 @@ func TestPrepareClaudeSettings(t *testing.T) {
 		return m
 	}
 
-	// Not autonomous: the consent dialog stays, nothing is written.
+	// Not autonomous: the consent dialog stays, but the activity hooks are
+	// installed for every event, once each.
 	t.Setenv(runner.EnvAutonomous, "false")
 	ws.prepareClaudeSettings()
-	if read() != nil {
-		t.Fatal("settings written for a supervised session")
+	m := read()
+	if m == nil || m["skipDangerousModePermissionPrompt"] != nil {
+		t.Fatalf("supervised session: %v", m)
+	}
+	hooks, _ := m["hooks"].(map[string]any)
+	for _, ev := range claudeHookEvents {
+		groups, _ := hooks[ev].([]any)
+		if !hasRunnerHook(groups) {
+			t.Fatalf("no runner hook for %s: %v", ev, hooks[ev])
+		}
+		group := groups[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+		if group["type"] != "command" || group["async"] != true {
+			t.Fatalf("hook for %s = %v", ev, group)
+		}
+	}
+	before, _ := os.ReadFile(settings)
+	ws.prepareClaudeSettings()
+	if after, _ := os.ReadFile(settings); string(after) != string(before) {
+		t.Fatalf("hooks added twice:\n%s", after)
+	}
+	// A hook the user wrote stays, and ours is added next to it, not over it.
+	if err := os.WriteFile(settings, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"notify-send done"}]}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws.prepareClaudeSettings()
+	m = read()
+	stop, _ := m["hooks"].(map[string]any)["Stop"].([]any)
+	if len(stop) != 2 || stop[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"] != "notify-send done" || !hasRunnerHook(stop) {
+		t.Fatalf("user hook lost: %v", stop)
+	}
+	if err := os.Remove(settings); err != nil {
+		t.Fatal(err)
 	}
 
 	// Autonomous: consent recorded; the user's other settings survive.
@@ -348,7 +379,7 @@ func TestPrepareClaudeSettings(t *testing.T) {
 	}
 	t.Setenv(runner.EnvAutonomous, "true")
 	ws.prepareClaudeSettings()
-	m := read()
+	m = read()
 	if m["skipDangerousModePermissionPrompt"] != true || m["model"] != "opus" {
 		t.Fatalf("settings = %v", m)
 	}
@@ -368,7 +399,13 @@ func TestPrepareClaudeSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws.prepareClaudeSettings()
-	if m := read(); m == nil || m["skipDangerousModePermissionPrompt"] != true {
+	if m := read(); m == nil || m["skipDangerousModePermissionPrompt"] != true || m["hooks"] == nil {
 		t.Fatalf("settings not created: %v", m)
+	}
+	// Other agents get nothing.
+	other := &Workspace{Root: t.TempDir(), Agent: runner.AgentCodex, Log: ws.Log}
+	other.prepareClaudeSettings()
+	if _, err := os.Stat(filepath.Join(other.HomeDir(), ".claude", "settings.json")); err == nil {
+		t.Fatal("settings written for a codex session")
 	}
 }

@@ -31,7 +31,10 @@ type Server struct {
 	// wrote itself: only a credential file modified after this instant is
 	// reported in /status as login_updated_at.
 	LoginBaseline time.Time
-	Log           *slog.Logger
+	// Hooks carries the agent's own account of what it is doing (nil for
+	// agents without hook support); it overrides the tail heuristic.
+	Hooks *Hooks
+	Log   *slog.Logger
 
 	clients atomic.Int64
 }
@@ -66,6 +69,12 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	st := s.Proc.Status(s.Agent, int(s.clients.Load()))
 	if t := s.loginModTime(); t.After(s.LoginBaseline) {
 		st.LoginUpdatedAt = &t
+	}
+	if s.Hooks != nil && st.Running {
+		if a := s.Hooks.Current(); a != nil {
+			st.Activity = a
+			st.NeedsAttention = a.NeedsAttention()
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(st)
@@ -212,6 +221,9 @@ func (s *Server) handleControl(ctx context.Context, c *websocket.Conn, data []by
 		}
 	case runner.MsgRestart:
 		s.Log.Info("restart requested")
+		if s.Hooks != nil {
+			s.Hooks.Reset()
+		}
 		if err := s.Proc.Restart(ctx); err != nil {
 			_ = writeControl(ctx, c, runner.Control{T: runner.MsgError, Message: err.Error()})
 		}
