@@ -166,13 +166,29 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     let touch: { y: number; x: number; lastY: number; lastT: number; moved: boolean; acc: number; v: number } | null = null;
     let inertia = 0;
     const rowHeight = () => Math.max(8, host.clientHeight / Math.max(1, term.rows));
+    // A swipe is turned into mouse-wheel events, one per row, dispatched
+    // where a real wheel would land. That way xterm decides what a scroll
+    // means exactly as it does for a mouse: an app with mouse reporting on
+    // (Claude Code scrolls its own conversation view that way) gets wheel
+    // reports, an app on the alternate screen gets arrow keys, and anything
+    // else scrolls xterm's buffer. Scrolling the buffer directly was wrong
+    // for the first case: it scrolled past the TUI into stale frames above.
+    const wheel = (lines: number, x: number, y: number) => {
+      const target = host.querySelector(".xterm-viewport") ?? host.querySelector(".xterm-screen") ?? host;
+      const step = Math.sign(lines);
+      for (let i = 0; i < Math.min(Math.abs(lines), 30); i++) {
+        target.dispatchEvent(
+          new WheelEvent("wheel", { deltaY: step, deltaMode: WheelEvent.DOM_DELTA_LINE, clientX: x, clientY: y, bubbles: true, cancelable: true }),
+        );
+      }
+    };
     const scrollBy = (px: number) => {
       if (!touch) return;
       touch.acc += px / rowHeight();
       const lines = Math.trunc(touch.acc);
       if (lines !== 0) {
         touch.acc -= lines;
-        term.scrollLines(lines);
+        wheel(lines, touch.x, touch.lastY);
       }
     };
     const onTouchStart = (e: TouchEvent) => {
