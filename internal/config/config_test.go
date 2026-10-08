@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func env(m map[string]string) lookup {
@@ -40,6 +41,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if c.ListenAddr != ":8080" || c.DefaultPVCSize != "20Gi" || c.RunnerImageTag != "latest" {
 		t.Errorf("defaults wrong: %+v", c)
+	}
+	if c.LeaderLease != "" || c.PodName == "" || c.ShutdownDelay != 2*time.Second {
+		t.Errorf("leader defaults wrong: lease=%q pod=%q delay=%s", c.LeaderLease, c.PodName, c.ShutdownDelay)
 	}
 	if !c.Secure() || c.PublicHost() != "agents-operator.example.com" {
 		t.Errorf("public url wrong: %+v", c.PublicURL)

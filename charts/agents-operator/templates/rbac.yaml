@@ -38,6 +38,10 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create"]
+  # Leader election between hub replicas during a rolling update.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
   {{- if $namespaceWrite }}
   # Per-session ServiceAccounts for the "namespace" access mode.
   - apiGroups: [""]

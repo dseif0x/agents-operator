@@ -9,7 +9,13 @@ tests:
           of: Role
       - lengthEqual:
           path: rules
-          count: 5
+          count: 6
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["coordination.k8s.io"]
+            resources: ["leases"]
+            verbs: ["get", "create", "update"]
       - contains:
           path: rules
           content:
@@ -88,7 +94,7 @@ tests:
           of: Role
       - lengthEqual:
           path: rules
-          count: 6
+          count: 7
       - contains:
           path: rules
           content:

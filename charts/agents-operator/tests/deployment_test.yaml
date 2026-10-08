@@ -2,7 +2,9 @@ suite: deployment
 templates:
   - deployment.yaml
 tests:
-  - it: runs a single replica with Recreate and a hardened pod
+  - it: runs a single replica, rolled with surge, and a hardened pod
+    release:
+      name: hub
     asserts:
       - isKind:
           of: Deployment
@@ -10,8 +12,24 @@ tests:
           path: spec.replicas
           value: 1
       - equal:
-          path: spec.strategy.type
-          value: Recreate
+          path: spec.strategy
+          value:
+            type: RollingUpdate
+            rollingUpdate:
+              maxSurge: 1
+              maxUnavailable: 0
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_LEADER_LEASE
+            value: hub-agents-operator
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
       - equal:
           path: spec.template.spec.securityContext.runAsNonRoot
           value: true

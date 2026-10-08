@@ -67,6 +67,11 @@ type Service struct {
 	Defaults      Defaults
 	IdleStopAfter time.Duration
 	Log           *slog.Logger
+	// Leading reports whether this process is the elected leader. Every
+	// replica polls runners so its API answers carry live status, but only
+	// the leader acts on what it sees (login export, idle stop, output
+	// timestamps). nil means always.
+	Leading func() bool
 
 	live sync.Map // session id -> *Live
 	// loginSynced remembers, per running session, the credential-file
@@ -294,6 +299,8 @@ func RepoPathFromURL(u string) string {
 	}
 	return s
 }
+
+func (s *Service) leading() bool { return s.Leading == nil || s.Leading() }
 
 func (s *Service) clock() time.Time {
 	if s.now != nil {
@@ -747,12 +754,15 @@ func (s *Service) PollOnce(ctx context.Context) {
 		live := &Live{Status: st, FetchedAt: now}
 		prev, _ := s.live.Load(sess.ID)
 		s.live.Store(sess.ID, live)
+		if changed(prev, live) {
+			s.SessionChanged(ctx, refresh(sess, st))
+		}
+		if !s.leading() {
+			continue
+		}
 		s.syncLogin(ctx, sess, st)
 		if st.LastOutputAt != nil {
 			_ = s.Store.Sessions().TouchOutput(ctx, sess.ID, *st.LastOutputAt)
-		}
-		if changed(prev, live) {
-			s.SessionChanged(ctx, refresh(sess, st))
 		}
 		if s.IdleStopAfter > 0 {
 			last := sess.UpdatedAt

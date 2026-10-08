@@ -146,6 +146,14 @@ type Config struct {
 
 	ReconcileInterval time.Duration
 	StatusPollEvery   time.Duration
+	// LeaderLease is the coordination.k8s.io Lease hubs elect a leader on;
+	// empty runs without an election (development, exactly one process).
+	// PodName is this process's identity in it.
+	LeaderLease string
+	PodName     string
+	// ShutdownDelay is how long the hub stays up but unready after SIGTERM
+	// before it releases the Lease and drains, so endpoints catch up.
+	ShutdownDelay time.Duration
 	// HubPodLabels lets the reconciler find itself for NetworkPolicy docs;
 	// unused by code today, kept for the chart's sake.
 }
@@ -162,6 +170,14 @@ func (c *Config) PublicHost() string { return c.PublicURL.Host }
 func (c *Config) Secure() bool { return c.PublicURL.Scheme == "https" }
 
 type lookup func(string) (string, bool)
+
+func hostname() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return "agents-operator"
+	}
+	return h
+}
 
 // Load reads the configuration from the environment.
 func Load() (*Config, error) {
@@ -237,6 +253,9 @@ func load(get lookup) (*Config, error) {
 		IdleStopAfter:          dur("IDLE_STOP_AFTER", 0),
 		LogLevel:               str("LOG_LEVEL", "info"),
 		ReconcileInterval:      dur("RECONCILE_INTERVAL", 30*time.Second),
+		LeaderLease:            str("LEADER_LEASE", ""),
+		PodName:                str("POD_NAME", hostname()),
+		ShutdownDelay:          dur("SHUTDOWN_DELAY", 2*time.Second),
 		StatusPollEvery:        dur("STATUS_POLL_INTERVAL", 10*time.Second),
 		DefaultResources: Resources{
 			Requests: ResourceList{CPU: str("DEFAULT_CPU_REQUEST", "250m"), Memory: str("DEFAULT_MEMORY_REQUEST", "512Mi")},

@@ -52,9 +52,16 @@ kubectl create secret generic agents-operator-auth -n agents-operator --dry-run=
 
 Or let the chart generate both (`auth.existingSecret` empty). The generated password is printed in the NOTES and readable from the `<release>-agents-operator-auth` Secret. It carries `helm.sh/resource-policy: keep` so it survives upgrades.
 
-## Single replica
+## Upgrades without downtime
 
-The hub runs one replica with `strategy: Recreate`. The reconciler and the informers are single-instance by design (no leader election), so do not scale the Deployment. Sticky sessions are not needed.
+The hub runs one replica, and upgrades roll with `maxSurge: 1, maxUnavailable: 0`: the new pod starts, runs the migrations, passes readiness and serves alongside the old one; only then does the old one get SIGTERM. What makes the overlap safe is a leader election on a `coordination.k8s.io` Lease named after the release: every hub serves the API, the UI, the SSE feed and terminals, polls runners for status, but only the Lease holder runs the reconciler and the poller's side effects (login export, idle stop, output timestamps). On SIGTERM the hub fails its readiness probe, waits `AGENTS_OPERATOR_SHUTDOWN_DELAY` (2 s) for the endpoints to drop it, releases the Lease so the other pod takes over within about two seconds, and drains HTTP for up to 15 s. A hub that loses the Lease any other way (API server unreachable for 15 s) exits and is restarted.
+
+What users see during a rollout: open terminals reconnect once, with a scrollback replay, because the PTY lives in the session pod, not the hub. Session events raised in those few seconds reach only browsers connected to the hub that raised them; the list refreshes on the next poll.
+
+Two rules follow from running two versions at once:
+
+- Migrations must be additive. The old hub keeps reading and writing while the new schema is live, so add columns with defaults and drop or rename them in a later release, never in the one that stops using them. `make dev` outside the cluster runs without the Lease (`AGENTS_OPERATOR_LEADER_LEASE` empty) and takes leadership unconditionally.
+- Do not scale `replicas` above one yet. The SSE broker and the live runner status are per process, so a second permanent replica would show stale pages to half the browsers. Node loss still means a brief outage until the replacement pod is ready.
 
 ## Postgres
 

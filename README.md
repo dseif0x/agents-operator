@@ -14,7 +14,7 @@ browser ──▶ hub ──▶ session pod (agent-runner + agent CLI, /workspac
              └──▶ Postgres (session registry)
 ```
 
-- The **hub** (`cmd/agents-operator`) is a single-replica Deployment. It creates a PVC, a Secret and a Pod per session, proxies the terminal WebSocket by pod IP, and serves the SPA.
+- The **hub** (`cmd/agents-operator`) is a single-replica Deployment, upgraded with a rolling surge and a leader Lease so the UI and terminals stay up. It creates a PVC, a Secret and a Pod per session, proxies the terminal WebSocket by pod IP, and serves the SPA.
 - **agent-runner** (`cmd/agent-runner`) is the entrypoint of the session pod. It clones the session's repositories on first boot (one or many, side by side under `/workspace`), runs the agent under a PTY, keeps 2 MiB of scrollback and serves it over a WebSocket. Reconnects replay the buffer, so the TUI redraws correctly.
 - Stop deletes the pod and keeps the PVC. Start recreates the pod on the same PVC. Delete removes everything.
 

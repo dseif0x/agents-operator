@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -139,6 +140,8 @@ func run() error {
 	}
 	rec := reconcile.New(rcfg, st, cs, inf, svc, cfg.ReconcileInterval, log)
 	svc.Orch = rec
+	var leading, shuttingDown atomic.Bool
+	svc.Leading = leading.Load
 
 	srv := &api.Server{
 		Cfg: cfg, Store: st, Sessions: svc, Creds: creds,
@@ -147,6 +150,9 @@ func run() error {
 		Limiter: auth.NewRateLimiter(10, 15*time.Minute),
 		Term:    proxy,
 		Ready: func() bool {
+			if shuttingDown.Load() {
+				return false
+			}
 			pctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			return inf.Synced() && st.Ping(pctx) == nil
@@ -156,8 +162,37 @@ func run() error {
 		Log:     log,
 	}
 
-	go rec.Run(ctx)
 	go svc.RunPoller(ctx, cfg.StatusPollEvery)
+
+	// The reconciler runs in the leader only. runCtx ends it (and releases
+	// the Lease) ahead of the HTTP server on shutdown, so the next replica
+	// takes over while this one is still draining connections.
+	errc := make(chan error, 1)
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		if cfg.LeaderLease == "" {
+			leading.Store(true)
+			rec.Run(runCtx)
+			return
+		}
+		leader := &k8s.Leader{Clientset: cs, Namespace: cfg.Namespace, Name: cfg.LeaderLease, Identity: cfg.PodName, Log: log}
+		err := leader.Run(runCtx, func(lctx context.Context) {
+			leading.Store(true)
+			rec.Run(lctx)
+			leading.Store(false)
+		}, func() {
+			// Lost without being asked to stop: something is wrong with
+			// this process's view of the cluster. Exit and let the kubelet
+			// restart it rather than guess.
+			errc <- errors.New("lost the leader lease")
+		})
+		if err != nil {
+			errc <- err
+		}
+	}()
 
 	httpSrv := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -165,7 +200,6 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	errc := make(chan error, 1)
 	go func() {
 		log.Info("listening", "addr", cfg.ListenAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -173,13 +207,27 @@ func run() error {
 		}
 	}()
 
+	var fatal error
 	select {
-	case err := <-errc:
-		return err
+	case fatal = <-errc:
+		log.Error("fatal", "err", fatal)
 	case <-ctx.Done():
 	}
 	log.Info("shutting down")
+	// Fail readiness first and give the endpoint controllers a moment to
+	// stop routing here, then hand over leadership, then drain HTTP.
+	shuttingDown.Store(true)
+	time.Sleep(cfg.ShutdownDelay)
+	cancelRun()
+	select {
+	case <-runDone:
+	case <-time.After(10 * time.Second):
+		log.Warn("reconciler did not stop in time")
+	}
 	sctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	return httpSrv.Shutdown(sctx)
+	if err := httpSrv.Shutdown(sctx); err != nil && fatal == nil {
+		return err
+	}
+	return fatal
 }
