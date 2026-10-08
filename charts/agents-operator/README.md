@@ -90,6 +90,8 @@ Kubernetes: `>=1.27.0-0`
 | runner.serviceAccount.clusterWide | bool | `false` | Bind it across the cluster (ClusterRoleBinding) rather than only in the release namespace (RoleBinding) |
 | runner.serviceAccount.enabled | bool | `false` | Create a read-only ServiceAccount that sessions can opt into, so kubectl works inside the pod (the hub's own identity is the top-level `serviceAccount`) |
 | runner.serviceAccount.name | string | `""` | Name of that ServiceAccount; defaults to `<fullname>-runner` |
+| runner.serviceAccount.namespaceWrite | bool | `false` | Offer the "namespace" access mode: such a session gets a ServiceAccount of its own, bound to `clusterRole` like the shared one plus `writeClusterRole` in the namespaces its owner lists. The hub is then allowed to create ServiceAccounts here and RoleBindings in any namespace (and ClusterRoleBindings with `clusterWide`), and to bind those two roles |
+| runner.serviceAccount.writeClusterRole | string | `"edit"` | ClusterRole granted in a session's listed namespaces; the built-in `edit` changes workloads and reads Secrets there but never touches RBAC |
 | runner.storageClass | string | `"nfs-fast"` | StorageClass for session PVCs (empty = cluster default) |
 | runner.tmpInit | bool | `true` | Run a root init container (`chmod 1777 /tmp`) so the /tmp emptyDir gets the sticky bit Claude Code demands for its sockets; disable under the "restricted" Pod Security Standard (the CLI then only warns) |
 | runner.tolerations | list | `[]` | Tolerations applied to every session pod |

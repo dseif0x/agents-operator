@@ -235,4 +235,6 @@ const (
 	EnvHookListen       = "RUNNER_HOOK_LISTEN"      // defaults to 127.0.0.1:7682
 	EnvHookURL          = "RUNNER_HOOK_URL"         // where `agent-runner hook` posts; defaults to HookURL
 	EnvSessionName      = "AGENTS_OPERATOR_SESSION" // human name, used for the prompt/hostname
+	EnvK8sAccess        = "K8S_ACCESS"              // off, readonly or namespace: what the mounted ServiceAccount may do
+	EnvK8sNamespaces    = "K8S_NAMESPACES"          // comma-separated namespaces with write access (namespace mode)
 )

@@ -95,6 +95,30 @@ func hasServiceAccount() bool {
 	return err == nil
 }
 
+// k8sWriteNamespaces lists the namespaces the hub gave this session write
+// access in (K8S_NAMESPACES, set in namespace mode).
+func k8sWriteNamespaces() []string {
+	if os.Getenv(runner.EnvK8sAccess) != "namespace" {
+		return nil
+	}
+	var out []string
+	for _, ns := range strings.Split(os.Getenv(runner.EnvK8sNamespaces), ",") {
+		if ns = strings.TrimSpace(ns); ns != "" {
+			out = append(out, ns)
+		}
+	}
+	return out
+}
+
+// joinCode renders names as `a`, `b` for Markdown.
+func joinCode(names []string) string {
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = "`" + n + "`"
+	}
+	return strings.Join(quoted, ", ")
+}
+
 // Repos parses the REPOS env var (JSON list of {url, branch, path}). Paths
 // are single directory names under the workspace; anything else is refused
 // here too, so a compromised hub cannot escape /workspace.
@@ -212,10 +236,13 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 	b.WriteString("- Everything under `" + w.Root + "` (including `HOME=" + w.HomeDir() + "`) survives stops, restarts and reconnects. `/tmp` is scratch. The rest of the filesystem is read-only.\n")
 	b.WriteString("- You run as an unprivileged user (UID 1000). Network access is limited to DNS, HTTPS (443) and SSH (22) outside the cluster.\n")
 	b.WriteString("- Available tools: git, ripgrep, jq, curl, tmux, kubectl, Node.js, Python 3, build-essential.\n")
-	if hasServiceAccount() {
+	switch namespaces := k8sWriteNamespaces(); {
+	case !hasServiceAccount():
+		b.WriteString("- This pod has no Kubernetes credentials; `kubectl` is installed but cannot reach a cluster. The session's owner can turn on Kubernetes access in the session settings.\n")
+	case len(namespaces) > 0:
+		b.WriteString("- This pod carries a Kubernetes ServiceAccount with write access (the `edit` role: create, change and delete workloads, read Secrets, exec into pods) in the namespace(s) " + joinCode(namespaces) + ", and read-only access elsewhere (`kubectl get`, `describe`, `logs`, `top`; no Secrets, no changes). Always pass `-n <namespace>` for writes. It cannot change RBAC, namespaces or cluster-scoped objects; say so rather than retrying when a command is denied.\n")
+	default:
 		b.WriteString("- This pod carries a read-only Kubernetes ServiceAccount, so `kubectl` works in-cluster for reading: `kubectl get`, `describe`, `logs`, `top`, `-A` for all namespaces. It cannot create, change or delete anything, read Secrets, or exec into pods; say so rather than retrying when such a command is denied.\n")
-	} else {
-		b.WriteString("- This pod has no Kubernetes credentials; `kubectl` is installed but cannot reach a cluster. The session's owner can turn on the read-only ServiceAccount in the session settings.\n")
 	}
 	if os.Getenv(runner.EnvGitHubToken) != "" {
 		b.WriteString("- The GitHub CLI `gh` is installed and authenticated (`GH_TOKEN`). Use it for pull requests, reviews, issues, checks and Actions runs, e.g. `gh pr view`, `gh pr create`, `gh run list`, `gh run view <id> --log-failed`. HTTPS pushes to github.com use the same token.\n")

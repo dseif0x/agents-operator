@@ -67,3 +67,108 @@ tests:
     asserts:
       - isKind:
           of: ServiceAccount
+
+  - it: grants nothing cluster-wide by default
+    asserts:
+      - hasDocuments:
+          count: 3
+
+  - it: lets the hub manage per-session ServiceAccounts for namespace write access
+    documentIndex: 1
+    set:
+      runner.serviceAccount.enabled: true
+      runner.serviceAccount.namespaceWrite: true
+    release:
+      name: hub
+      namespace: agents
+    asserts:
+      - hasDocuments:
+          count: 5
+      - isKind:
+          of: Role
+      - lengthEqual:
+          path: rules
+          count: 6
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["serviceaccounts"]
+            verbs: ["get", "list", "create", "delete"]
+
+  - it: adds a ClusterRole for RoleBindings anywhere and binding the two roles
+    documentIndex: 2
+    set:
+      runner.serviceAccount.enabled: true
+      runner.serviceAccount.namespaceWrite: true
+      runner.serviceAccount.writeClusterRole: admin
+    release:
+      name: hub
+      namespace: agents
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - equal:
+          path: metadata.name
+          value: hub-agents-operator-agents
+      - lengthEqual:
+          path: rules
+          count: 2
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["rbac.authorization.k8s.io"]
+            resources: ["rolebindings"]
+            verbs: ["get", "list", "create", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["rbac.authorization.k8s.io"]
+            resources: ["clusterroles"]
+            resourceNames: ["view", "admin"]
+            verbs: ["bind"]
+
+  - it: binds that ClusterRole to the hub
+    documentIndex: 3
+    set:
+      runner.serviceAccount.enabled: true
+      runner.serviceAccount.namespaceWrite: true
+    release:
+      name: hub
+      namespace: agents
+    asserts:
+      - isKind:
+          of: ClusterRoleBinding
+      - equal:
+          path: roleRef.name
+          value: hub-agents-operator-agents
+      - equal:
+          path: subjects[0]
+          value:
+            kind: ServiceAccount
+            name: hub-agents-operator
+            namespace: agents
+
+  - it: also manages ClusterRoleBindings when read access is cluster-wide
+    documentIndex: 2
+    set:
+      runner.serviceAccount.enabled: true
+      runner.serviceAccount.namespaceWrite: true
+      runner.serviceAccount.clusterWide: true
+    asserts:
+      - lengthEqual:
+          path: rules
+          count: 3
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["rbac.authorization.k8s.io"]
+            resources: ["clusterrolebindings"]
+            verbs: ["get", "list", "create", "delete"]
+
+  - it: needs the runner ServiceAccount for namespace write access
+    set:
+      runner.serviceAccount.namespaceWrite: true
+    asserts:
+      - hasDocuments:
+          count: 3

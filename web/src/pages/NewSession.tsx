@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { api, type CreateSessionRequest, type GitHubRepo, type Repo, type Session, type SessionDefaults, type Toleration, type User } from "../api";
+import { api, type K8sAccess, type CreateSessionRequest, type GitHubRepo, type Repo, type Session, type SessionDefaults, type Toleration, type User } from "../api";
 import { Nav } from "../components/Nav";
 import { navigate } from "../router";
 
@@ -94,7 +94,8 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
   const [nodeSelector, setNodeSelector] = useState("");
   const [tolerations, setTolerations] = useState("");
   const [extended, setExtended] = useState("");
-  const [serviceAccount, setServiceAccount] = useState(false);
+  const [k8sAccess, setK8sAccess] = useState<K8sAccess>("off");
+  const [k8sNamespaces, setK8sNamespaces] = useState("");
   const [autonomous, setAutonomous] = useState(true);
   const [editable, setEditable] = useState<boolean | null>(editing ? null : true);
   const [error, setError] = useState("");
@@ -142,7 +143,8 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         setRuntimeClass(s.runtime_class || "");
         setNodeSelector(keyValueLines(s.node_selector));
         setTolerations((s.tolerations || []).map(formatToleration).join("\n"));
-        setServiceAccount(s.service_account);
+        setK8sAccess(s.k8s_access || "off");
+        setK8sNamespaces((s.k8s_namespaces || []).join(", "));
         setAutonomous(s.autonomous);
         setEditable(s.state === "stopped" || s.state === "failed");
       })
@@ -186,7 +188,18 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
       return;
     }
     setBusy(true);
-    const req: CreateSessionRequest = { name, agent, repos: parsed.repos, autonomous, service_account: serviceAccount };
+    const req: CreateSessionRequest = { name, agent, repos: parsed.repos, autonomous, k8s_access: k8sAccess };
+    if (k8sAccess === "namespace") {
+      req.k8s_namespaces = k8sNamespaces
+        .split(/[\s,]+/)
+        .map((ns) => ns.trim())
+        .filter(Boolean);
+      if (!req.k8s_namespaces.length) {
+        setError("namespace access needs at least one namespace");
+        setBusy(false);
+        return;
+      }
+    }
     if (imageTag) req.image_tag = imageTag;
     if (pvcSize) req.pvc_size = pvcSize;
     if (storageClass) req.storage_class = storageClass;
@@ -312,11 +325,34 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
           </label>
         </div>
         {defaults?.service_account && (
-          <div class="checkbox">
-            <input id="sa" type="checkbox" checked={serviceAccount} onChange={(e) => setServiceAccount((e.target as HTMLInputElement).checked)} />
-            <label for="sa" style="margin:0;color:inherit">
-              Kubernetes access: mount the read-only ServiceAccount <code>{defaults.service_account}</code> so <code>kubectl</code> can read the cluster
-            </label>
+          <div class="form-grid">
+            <div>
+              <label for="k8s">Kubernetes access</label>
+              <select id="k8s" value={k8sAccess} onChange={(e) => setK8sAccess((e.target as HTMLSelectElement).value as K8sAccess)}>
+                <option value="off">Off</option>
+                <option value="readonly">Read-only</option>
+                {defaults.k8s_namespace_write && <option value="namespace">Read-only + write in namespaces</option>}
+              </select>
+              <div class="muted" style="font-size:12px;margin-top:3px">
+                {k8sAccess === "off" && "No cluster credentials in the pod."}
+                {k8sAccess === "readonly" && (
+                  <>
+                    Mounts the read-only ServiceAccount <code>{defaults.service_account}</code>: <code>kubectl get</code>, <code>describe</code>, <code>logs</code>;
+                    no Secrets, no changes.
+                  </>
+                )}
+                {k8sAccess === "namespace" && "The session gets a ServiceAccount of its own: read-only everywhere the shared one may read, plus the edit role in the namespaces below."}
+              </div>
+            </div>
+            {k8sAccess === "namespace" && (
+              <div>
+                <label for="k8sns">Namespaces with write access</label>
+                <input id="k8sns" value={k8sNamespaces} onInput={(e) => setK8sNamespaces((e.target as HTMLInputElement).value)} placeholder="dev, staging" spellcheck={false} />
+                <div class="muted" style="font-size:12px;margin-top:3px">
+                  Comma or space separated. The hub's own namespace and <code>kube-system</code> are refused; the namespaces must exist.
+                </div>
+              </div>
+            )}
           </div>
         )}
         <details>

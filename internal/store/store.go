@@ -32,6 +32,16 @@ const (
 // States lists every state, for validation and metrics.
 var States = []string{StateCreating, StateRunning, StateStopping, StateStopped, StateFailed, StateDeleting}
 
+// Kubernetes access modes of a session (Session.K8sAccess).
+const (
+	K8sAccessOff       = "off"
+	K8sAccessReadOnly  = "readonly"
+	K8sAccessNamespace = "namespace"
+)
+
+// K8sAccessModes lists every mode, for validation.
+var K8sAccessModes = []string{K8sAccessOff, K8sAccessReadOnly, K8sAccessNamespace}
+
 // User is a login account.
 type User struct {
 	ID           string
@@ -113,8 +123,12 @@ type Session struct {
 	StorageClass string
 	// RuntimeClass overrides the chart-wide runtimeClassName; empty = default.
 	RuntimeClass string
-	// ServiceAccount mounts the chart's read-only runner ServiceAccount.
-	ServiceAccount bool
+	// K8sAccess is what the pod may do in the cluster: K8sAccessOff (no
+	// identity), K8sAccessReadOnly (the chart's read-only runner
+	// ServiceAccount) or K8sAccessNamespace (an account of its own, read-only
+	// like the shared one plus write access in K8sNamespaces).
+	K8sAccess      string
+	K8sNamespaces  []string
 	Resources      config.Resources
 	NodeSelector   map[string]string
 	Tolerations    []config.Toleration
