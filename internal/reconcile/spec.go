@@ -42,7 +42,18 @@ type Config struct {
 	// ServiceAccount is the read-only ServiceAccount a session may opt
 	// into (its token is then mounted); empty means never.
 	ServiceAccount string
-	ExtraEnv       map[string]string
+	// NamespaceWrite allows the "namespace" access mode: a session gets an
+	// account of its own, read-only like ServiceAccount plus WriteClusterRole
+	// in the namespaces it lists (see access.go). The hub needs the RBAC the
+	// chart grants for it.
+	NamespaceWrite bool
+	// ReadClusterRole and WriteClusterRole are the ClusterRoles those
+	// accounts are bound to (view and edit by default); ClusterWideRead
+	// binds the read role across the cluster instead of the hub namespace.
+	ReadClusterRole  string
+	WriteClusterRole string
+	ClusterWideRead  bool
+	ExtraEnv         map[string]string
 	// TmpInit adds an init container, running as root, that gives the /tmp
 	// emptyDir the sticky bit (chmod 1777). Kubernetes creates emptyDirs
 	// world-writable without it, and Claude Code refuses such a directory
@@ -74,6 +85,12 @@ func (c Config) Defaults() Config {
 	}
 	if c.RunnerImageTag == "" {
 		c.RunnerImageTag = "latest"
+	}
+	if c.ReadClusterRole == "" {
+		c.ReadClusterRole = "view"
+	}
+	if c.WriteClusterRole == "" {
+		c.WriteClusterRole = "edit"
 	}
 	return c
 }
@@ -273,12 +290,15 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 		repos = []store.Repo{}
 	}
 	reposJSON, _ := json.Marshal(repos)
+	access, namespaces := effectiveAccess(s, cfg)
 	env := []corev1.EnvVar{
 		{Name: runner.EnvAgent, Value: s.Agent},
 		{Name: runner.EnvAutonomous, Value: strconv.FormatBool(s.Autonomous)},
 		{Name: runner.EnvRepos, Value: string(reposJSON)},
 		{Name: runner.EnvSessionName, Value: s.Name},
 		{Name: runner.EnvWorkspace, Value: WorkspacePath},
+		{Name: runner.EnvK8sAccess, Value: access},
+		{Name: runner.EnvK8sNamespaces, Value: strings.Join(namespaces, ",")},
 		{Name: "HOME", Value: WorkspacePath + "/home"},
 	}
 	for _, k := range sortedKeys(cfg.ExtraEnv) {
@@ -360,8 +380,12 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 	if rc := cmp.Or(s.RuntimeClass, cfg.RuntimeClass); rc != "" {
 		pod.Spec.RuntimeClassName = ptr.To(rc)
 	}
-	if cfg.ServiceAccount != "" && s.ServiceAccount {
+	switch access {
+	case store.K8sAccessReadOnly:
 		pod.Spec.ServiceAccountName = cfg.ServiceAccount
+		pod.Spec.AutomountServiceAccountToken = ptr.To(true)
+	case store.K8sAccessNamespace:
+		pod.Spec.ServiceAccountName = SessionAccountName(s.ID)
 		pod.Spec.AutomountServiceAccountToken = ptr.To(true)
 	}
 	if cfg.TmpInit {
@@ -387,6 +411,22 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 		}}
 	}
 	return pod
+}
+
+// effectiveAccess is the access mode a pod actually gets: what the session
+// asked for, if the hub is set up for it, else none.
+func effectiveAccess(s *store.Session, cfg Config) (string, []string) {
+	switch s.K8sAccess {
+	case store.K8sAccessReadOnly:
+		if cfg.ServiceAccount != "" {
+			return store.K8sAccessReadOnly, nil
+		}
+	case store.K8sAccessNamespace:
+		if cfg.NamespaceWrite && len(s.K8sNamespaces) > 0 {
+			return store.K8sAccessNamespace, s.K8sNamespaces
+		}
+	}
+	return store.K8sAccessOff, nil
 }
 
 // PodReady reports whether the pod is Running with Ready=True.

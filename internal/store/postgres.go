@@ -197,13 +197,13 @@ func (r pgUsers) UpsertPassword(ctx context.Context, username, hash string) (*Us
 
 type pgSessions struct{ pool *pgxpool.Pool }
 
-const sessionCols = `id, owner_id, name, agent, repos, image_tag, pvc_size, storage_class, runtime_class, service_account,
+const sessionCols = `id, owner_id, name, agent, repos, image_tag, pvc_size, storage_class, runtime_class, k8s_access, k8s_namespaces,
 	resources, node_selector, tolerations, env, autonomous, state, state_reason, generation,
 	created_at, updated_at, last_attached_at, last_output_at, deleted_at`
 
 func scanSession(row pgx.Row) (*Session, error) {
 	var s Session
-	err := row.Scan(&s.ID, &s.OwnerID, &s.Name, &s.Agent, &s.Repos, &s.ImageTag, &s.PVCSize, &s.StorageClass, &s.RuntimeClass, &s.ServiceAccount,
+	err := row.Scan(&s.ID, &s.OwnerID, &s.Name, &s.Agent, &s.Repos, &s.ImageTag, &s.PVCSize, &s.StorageClass, &s.RuntimeClass, &s.K8sAccess, &s.K8sNamespaces,
 		&s.Resources, &s.NodeSelector, &s.Tolerations, &s.Env, &s.Autonomous, &s.State, &s.StateReason, &s.Generation,
 		&s.CreatedAt, &s.UpdatedAt, &s.LastAttachedAt, &s.LastOutputAt, &s.DeletedAt)
 	if err != nil {
@@ -246,9 +246,10 @@ func (r pgSessions) Create(ctx context.Context, s *Session) error {
 	if s.Env == nil {
 		s.Env = map[string]string{}
 	}
+	normaliseK8s(s)
 	_, err := r.pool.Exec(ctx, `INSERT INTO sessions (`+sessionCols+`) VALUES
-		($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
-		s.ID, s.OwnerID, s.Name, s.Agent, s.Repos, s.ImageTag, s.PVCSize, s.StorageClass, s.RuntimeClass, s.ServiceAccount,
+		($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+		s.ID, s.OwnerID, s.Name, s.Agent, s.Repos, s.ImageTag, s.PVCSize, s.StorageClass, s.RuntimeClass, s.K8sAccess, s.K8sNamespaces,
 		s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous, s.State, s.StateReason, s.Generation,
 		s.CreatedAt, s.UpdatedAt, s.LastAttachedAt, s.LastOutputAt, s.DeletedAt)
 	return mapErr(err)
@@ -287,10 +288,22 @@ func (r pgSessions) Update(ctx context.Context, s *Session) (*Session, error) {
 	if s.Env == nil {
 		s.Env = map[string]string{}
 	}
-	return scanSession(r.pool.QueryRow(ctx, `UPDATE sessions SET name=$2, repos=$3, image_tag=$4, runtime_class=$5, service_account=$6,
-		resources=$7, node_selector=$8, tolerations=$9, env=$10, autonomous=$11, updated_at=now()
+	normaliseK8s(s)
+	return scanSession(r.pool.QueryRow(ctx, `UPDATE sessions SET name=$2, repos=$3, image_tag=$4, runtime_class=$5, k8s_access=$6, k8s_namespaces=$7,
+		resources=$8, node_selector=$9, tolerations=$10, env=$11, autonomous=$12, updated_at=now()
 		WHERE id=$1 RETURNING `+sessionCols,
-		s.ID, s.Name, s.Repos, s.ImageTag, s.RuntimeClass, s.ServiceAccount, s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous))
+		s.ID, s.Name, s.Repos, s.ImageTag, s.RuntimeClass, s.K8sAccess, s.K8sNamespaces, s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous))
+}
+
+// normaliseK8s fills the access mode and namespace list so the columns never
+// hold NULL or an empty string.
+func normaliseK8s(s *Session) {
+	if s.K8sAccess == "" {
+		s.K8sAccess = K8sAccessOff
+	}
+	if s.K8sNamespaces == nil {
+		s.K8sNamespaces = []string{}
+	}
 }
 
 func (r pgSessions) SetState(ctx context.Context, id, state, reason string) (*Session, error) {

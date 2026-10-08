@@ -4,6 +4,7 @@
 package session
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -48,6 +49,11 @@ type Defaults struct {
 	// ServiceAccount is the name of the read-only runner ServiceAccount a
 	// session may opt into; empty when the chart does not create one.
 	ServiceAccount string `json:"service_account"`
+	// K8sNamespaceWrite is whether the "namespace" access mode (write
+	// access in chosen namespaces) is enabled on this hub.
+	K8sNamespaceWrite bool `json:"k8s_namespace_write"`
+	// Namespace is the hub's own, which no session may write to.
+	Namespace string `json:"-"`
 }
 
 // Service is the session business logic.
@@ -94,9 +100,67 @@ type CreateRequest struct {
 	Tolerations  []config.Toleration `json:"tolerations"`
 	Env          map[string]string   `json:"env"`
 	Autonomous   *bool               `json:"autonomous"`
-	// ServiceAccount mounts the chart's read-only runner ServiceAccount so
-	// kubectl works inside the pod. Refused when the chart offers none.
-	ServiceAccount bool `json:"service_account"`
+	// K8sAccess is what kubectl in the pod may do: "off" (default), "readonly"
+	// (the chart's read-only runner ServiceAccount) or "namespace" (read-only
+	// plus write access in K8sNamespaces). Refused when the hub is not set
+	// up for the mode.
+	K8sAccess     string   `json:"k8s_access"`
+	K8sNamespaces []string `json:"k8s_namespaces"`
+}
+
+// MaxK8sNamespaces caps the namespaces a session may write to.
+const MaxK8sNamespaces = 20
+
+// protectedNamespaces never get write access from a session.
+var protectedNamespaces = map[string]bool{"kube-system": true, "kube-public": true, "kube-node-lease": true}
+
+// validateK8sAccess checks the access mode against what the hub offers and
+// normalises the namespace list (trimmed, deduplicated, empty outside
+// namespace mode).
+func (s *Service) validateK8sAccess(req *CreateRequest) error {
+	req.K8sAccess = cmp.Or(strings.TrimSpace(req.K8sAccess), store.K8sAccessOff)
+	switch req.K8sAccess {
+	case store.K8sAccessOff:
+		req.K8sNamespaces = nil
+		return nil
+	case store.K8sAccessReadOnly, store.K8sAccessNamespace:
+		if s.Defaults.ServiceAccount == "" {
+			return &ValidationError{"no runner service account is configured (chart value runner.serviceAccount.enabled)"}
+		}
+	default:
+		return &ValidationError{"k8s_access must be one of " + strings.Join(store.K8sAccessModes, ", ")}
+	}
+	if req.K8sAccess == store.K8sAccessReadOnly {
+		req.K8sNamespaces = nil
+		return nil
+	}
+	if !s.Defaults.K8sNamespaceWrite {
+		return &ValidationError{"write access per namespace is not enabled (chart value runner.serviceAccount.namespaceWrite)"}
+	}
+	var namespaces []string
+	seen := map[string]bool{}
+	for _, ns := range req.K8sNamespaces {
+		ns = strings.TrimSpace(ns)
+		if ns == "" || seen[ns] {
+			continue
+		}
+		if !dnsLabelRE.MatchString(ns) {
+			return &ValidationError{"invalid namespace " + ns}
+		}
+		if ns == s.Defaults.Namespace || protectedNamespaces[ns] {
+			return &ValidationError{"namespace " + ns + " cannot be written to from a session"}
+		}
+		seen[ns] = true
+		namespaces = append(namespaces, ns)
+	}
+	if len(namespaces) == 0 {
+		return &ValidationError{"namespace access needs at least one namespace"}
+	}
+	if len(namespaces) > MaxK8sNamespaces {
+		return &ValidationError{fmt.Sprintf("at most %d namespaces per session", MaxK8sNamespaces)}
+	}
+	req.K8sNamespaces = namespaces
+	return nil
 }
 
 // Kubernetes name and label syntax, checked here so a bad value is a 400
@@ -165,6 +229,7 @@ var reservedEnv = map[string]bool{
 	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvRepos: true,
 	runner.EnvWorkspace: true, runner.EnvListen: true, "HOME": true, "PATH": true,
 	runner.EnvGitSSHKey: true, runner.EnvGitHTTPSToken: true, runner.EnvGitHubToken: true,
+	runner.EnvK8sAccess: true, runner.EnvK8sNamespaces: true,
 }
 
 // MaxRepos caps the repositories per session.
@@ -284,8 +349,8 @@ func (s *Service) validate(req *CreateRequest) ([]store.Repo, error) {
 	if err := validateScheduling(*req); err != nil {
 		return nil, err
 	}
-	if req.ServiceAccount && s.Defaults.ServiceAccount == "" {
-		return nil, &ValidationError{"no runner service account is configured (chart value runner.serviceAccount.enabled)"}
+	if err := s.validateK8sAccess(req); err != nil {
+		return nil, err
 	}
 	return repos, nil
 }
@@ -312,7 +377,8 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 	sess := &store.Session{
 		OwnerID: owner.ID, Name: req.Name, Agent: req.Agent, Repos: repos,
 		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, RuntimeClass: req.RuntimeClass, Resources: req.Resources,
-		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous, ServiceAccount: req.ServiceAccount,
+		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
+		K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
 		State: store.StateCreating,
 	}
 	if err := s.Store.Sessions().Create(ctx, sess); err != nil {
@@ -345,7 +411,8 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 		return nil, err
 	}
 	next := *sess
-	next.Name, next.Repos, next.ImageTag, next.RuntimeClass, next.ServiceAccount = req.Name, repos, req.ImageTag, req.RuntimeClass, req.ServiceAccount
+	next.Name, next.Repos, next.ImageTag, next.RuntimeClass = req.Name, repos, req.ImageTag, req.RuntimeClass
+	next.K8sAccess, next.K8sNamespaces = req.K8sAccess, req.K8sNamespaces
 	next.Resources, next.NodeSelector, next.Tolerations, next.Env = req.Resources, req.NodeSelector, req.Tolerations, req.Env
 	if req.Autonomous != nil {
 		next.Autonomous = *req.Autonomous
@@ -751,7 +818,8 @@ type View struct {
 	Tolerations    []config.Toleration `json:"tolerations"`
 	Env            map[string]string   `json:"env"`
 	Autonomous     bool                `json:"autonomous"`
-	ServiceAccount bool                `json:"service_account"`
+	K8sAccess      string              `json:"k8s_access"`
+	K8sNamespaces  []string            `json:"k8s_namespaces"`
 	State          string              `json:"state"`
 	StateReason    string              `json:"state_reason"`
 	CreatedAt      time.Time           `json:"created_at"`
@@ -776,12 +844,16 @@ func (s *Service) View(sess *store.Session) View {
 	v := View{
 		ID: sess.ID, Name: sess.Name, Agent: sess.Agent, Repos: sess.Repos,
 		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, RuntimeClass: sess.RuntimeClass, Resources: sess.Resources,
-		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous, ServiceAccount: sess.ServiceAccount,
+		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
+		K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
 		State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
 	}
 	if v.Repos == nil {
 		v.Repos = []store.Repo{}
+	}
+	if v.K8sNamespaces == nil {
+		v.K8sNamespaces = []string{}
 	}
 	if v.NodeSelector == nil {
 		v.NodeSelector = map[string]string{}

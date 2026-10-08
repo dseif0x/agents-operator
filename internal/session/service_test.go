@@ -504,12 +504,34 @@ func TestUpdate(t *testing.T) {
 	if _, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "", Agent: "claude"}); err == nil {
 		t.Fatal("empty name accepted")
 	}
-	if _, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "sa", ServiceAccount: true}); err == nil {
-		t.Fatal("service account accepted without one configured")
+	if _, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "sa", K8sAccess: store.K8sAccessReadOnly}); err == nil {
+		t.Fatal("read-only access accepted without a service account configured")
 	}
 	svc.Defaults.ServiceAccount = "runner-view"
-	if up, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "sa", ServiceAccount: true}); err != nil || !up.ServiceAccount {
-		t.Fatalf("service account = %+v, %v", up, err)
+	if up, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "sa", K8sAccess: store.K8sAccessReadOnly, K8sNamespaces: []string{"ignored"}}); err != nil || up.K8sAccess != store.K8sAccessReadOnly || len(up.K8sNamespaces) != 0 {
+		t.Fatalf("read-only access = %+v, %v", up, err)
+	}
+	// Namespace mode needs the hub to offer it, at least one namespace, and never the hub's own.
+	if _, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "sa", K8sAccess: store.K8sAccessNamespace, K8sNamespaces: []string{"dev"}}); err == nil {
+		t.Fatal("namespace access accepted without namespaceWrite")
+	}
+	svc.Defaults.K8sNamespaceWrite = true
+	svc.Defaults.Namespace = "agents"
+	for _, bad := range [][]string{nil, {" "}, {"agents"}, {"kube-system"}, {"Not_Valid"}} {
+		if _, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "sa", K8sAccess: store.K8sAccessNamespace, K8sNamespaces: bad}); err == nil {
+			t.Fatalf("namespaces %q accepted", bad)
+		}
+	}
+	if _, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "sa", K8sAccess: "cluster-admin"}); err == nil {
+		t.Fatal("unknown mode accepted")
+	}
+	up, err = svc.Update(ctx, u, sess.ID, CreateRequest{Name: "sa", K8sAccess: store.K8sAccessNamespace, K8sNamespaces: []string{" dev ", "staging", "dev"}})
+	if err != nil || up.K8sAccess != store.K8sAccessNamespace || strings.Join(up.K8sNamespaces, ",") != "dev,staging" {
+		t.Fatalf("namespace access = %+v, %v", up, err)
+	}
+	// Off clears the list.
+	if up, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "sa", K8sNamespaces: []string{"dev"}}); err != nil || up.K8sAccess != store.K8sAccessOff || len(up.K8sNamespaces) != 0 {
+		t.Fatalf("off = %+v, %v", up, err)
 	}
 	// Another user cannot edit it.
 	other := &store.User{Username: "bob", PasswordHash: "x"}

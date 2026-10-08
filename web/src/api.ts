@@ -41,7 +41,9 @@ export interface Session {
   tolerations: Toleration[];
   env: Record<string, string>;
   autonomous: boolean;
-  service_account: boolean;
+  /** What kubectl in the pod may do: nothing, read the cluster, or also write in k8s_namespaces. */
+  k8s_access: K8sAccess;
+  k8s_namespaces: string[];
   state: SessionState;
   state_reason: string;
   created_at: string;
@@ -66,6 +68,8 @@ export interface Activity {
   since: string;
 }
 
+export type K8sAccess = "off" | "readonly" | "namespace";
+
 export type SessionState = "creating" | "running" | "stopping" | "stopped" | "failed" | "deleting";
 
 export interface SessionEvent {
@@ -86,6 +90,8 @@ export interface SessionDefaults {
   runtime_class: string;
   /** Name of the read-only runner ServiceAccount sessions may opt into; empty when the chart has none. */
   service_account: string;
+  /** Whether sessions may ask for write access in namespaces of their choosing. */
+  k8s_namespace_write: boolean;
 }
 
 export interface Credential {
@@ -120,7 +126,8 @@ export interface CreateSessionRequest {
   tolerations?: Toleration[];
   env?: Record<string, string>;
   autonomous?: boolean;
-  service_account?: boolean;
+  k8s_access?: K8sAccess;
+  k8s_namespaces?: string[];
 }
 
 export class ApiError extends Error {

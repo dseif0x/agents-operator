@@ -79,6 +79,14 @@ spec:
               value: {{ .Values.runner.runtimeClassName | quote }}
             - name: AGENTS_OPERATOR_RUNNER_SERVICE_ACCOUNT
               value: {{ if .Values.runner.serviceAccount.enabled }}{{ include "agents-operator.runnerServiceAccountName" . | quote }}{{ else }}""{{ end }}
+            - name: AGENTS_OPERATOR_RUNNER_NAMESPACE_WRITE
+              value: {{ and .Values.runner.serviceAccount.enabled .Values.runner.serviceAccount.namespaceWrite | quote }}
+            - name: AGENTS_OPERATOR_RUNNER_READ_CLUSTER_ROLE
+              value: {{ .Values.runner.serviceAccount.clusterRole | quote }}
+            - name: AGENTS_OPERATOR_RUNNER_WRITE_CLUSTER_ROLE
+              value: {{ .Values.runner.serviceAccount.writeClusterRole | quote }}
+            - name: AGENTS_OPERATOR_RUNNER_CLUSTER_WIDE_READ
+              value: {{ .Values.runner.serviceAccount.clusterWide | quote }}
             - name: AGENTS_OPERATOR_RUNNER_TMP_INIT
               value: {{ .Values.runner.tmpInit | quote }}
             - name: AGENTS_OPERATOR_RUNNER_EXTRA_ENV

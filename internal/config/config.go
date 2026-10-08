@@ -119,6 +119,15 @@ type Config struct {
 	// RunnerServiceAccount is the read-only ServiceAccount sessions may opt
 	// into; empty means the option is off.
 	RunnerServiceAccount string
+	// RunnerNamespaceWrite enables the "namespace" access mode: a session
+	// gets an account of its own with RunnerWriteClusterRole in the
+	// namespaces it lists, on top of RunnerReadClusterRole (in the hub
+	// namespace, or cluster-wide with RunnerClusterWideRead). The chart
+	// grants the hub the RBAC for it and sets all four.
+	RunnerNamespaceWrite   bool
+	RunnerReadClusterRole  string
+	RunnerWriteClusterRole string
+	RunnerClusterWideRead  bool
 	// RunnerExtraEnv is injected into every session pod (non-secret).
 	RunnerExtraEnv map[string]string
 	// RunnerTmpInit adds the root init container that gives /tmp the sticky
@@ -207,24 +216,28 @@ func load(get lookup) (*Config, error) {
 	}
 
 	c := &Config{
-		ListenAddr:            str("LISTEN_ADDR", ":8080"),
-		DatabaseURL:           required("DATABASE_URL"),
-		Kubeconfig:            str("KUBECONFIG", ""),
-		RunnerImage:           str("RUNNER_IMAGE", "ghcr.io/dseif0x/agents-operator-runner"),
-		RunnerImageTag:        str("RUNNER_IMAGE_TAG", "latest"),
-		RunnerImagePullPolicy: str("RUNNER_IMAGE_PULL_POLICY", "IfNotPresent"),
-		DefaultStorageClass:   str("DEFAULT_STORAGE_CLASS", ""),
-		DefaultPVCSize:        str("DEFAULT_PVC_SIZE", "20Gi"),
-		RunnerRuntimeClass:    str("RUNNER_RUNTIME_CLASS", ""),
-		RunnerServiceAccount:  str("RUNNER_SERVICE_ACCOUNT", ""),
-		RunnerTmpInit:         boolean("RUNNER_TMP_INIT", true),
-		AdminUsername:         str("ADMIN_USERNAME", "admin"),
-		AdminPasswordHash:     str("ADMIN_PASSWORD_HASH", ""),
-		AdminPassword:         str("ADMIN_PASSWORD", ""),
-		IdleStopAfter:         dur("IDLE_STOP_AFTER", 0),
-		LogLevel:              str("LOG_LEVEL", "info"),
-		ReconcileInterval:     dur("RECONCILE_INTERVAL", 30*time.Second),
-		StatusPollEvery:       dur("STATUS_POLL_INTERVAL", 10*time.Second),
+		ListenAddr:             str("LISTEN_ADDR", ":8080"),
+		DatabaseURL:            required("DATABASE_URL"),
+		Kubeconfig:             str("KUBECONFIG", ""),
+		RunnerImage:            str("RUNNER_IMAGE", "ghcr.io/dseif0x/agents-operator-runner"),
+		RunnerImageTag:         str("RUNNER_IMAGE_TAG", "latest"),
+		RunnerImagePullPolicy:  str("RUNNER_IMAGE_PULL_POLICY", "IfNotPresent"),
+		DefaultStorageClass:    str("DEFAULT_STORAGE_CLASS", ""),
+		DefaultPVCSize:         str("DEFAULT_PVC_SIZE", "20Gi"),
+		RunnerRuntimeClass:     str("RUNNER_RUNTIME_CLASS", ""),
+		RunnerServiceAccount:   str("RUNNER_SERVICE_ACCOUNT", ""),
+		RunnerNamespaceWrite:   boolean("RUNNER_NAMESPACE_WRITE", false),
+		RunnerReadClusterRole:  str("RUNNER_READ_CLUSTER_ROLE", "view"),
+		RunnerWriteClusterRole: str("RUNNER_WRITE_CLUSTER_ROLE", "edit"),
+		RunnerClusterWideRead:  boolean("RUNNER_CLUSTER_WIDE_READ", false),
+		RunnerTmpInit:          boolean("RUNNER_TMP_INIT", true),
+		AdminUsername:          str("ADMIN_USERNAME", "admin"),
+		AdminPasswordHash:      str("ADMIN_PASSWORD_HASH", ""),
+		AdminPassword:          str("ADMIN_PASSWORD", ""),
+		IdleStopAfter:          dur("IDLE_STOP_AFTER", 0),
+		LogLevel:               str("LOG_LEVEL", "info"),
+		ReconcileInterval:      dur("RECONCILE_INTERVAL", 30*time.Second),
+		StatusPollEvery:        dur("STATUS_POLL_INTERVAL", 10*time.Second),
 		DefaultResources: Resources{
 			Requests: ResourceList{CPU: str("DEFAULT_CPU_REQUEST", "250m"), Memory: str("DEFAULT_MEMORY_REQUEST", "512Mi")},
 			Limits:   ResourceList{CPU: str("DEFAULT_CPU_LIMIT", "2"), Memory: str("DEFAULT_MEMORY_LIMIT", "4Gi")},

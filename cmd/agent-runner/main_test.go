@@ -155,6 +155,15 @@ func TestAgentsFile(t *testing.T) {
 	if b, _ := os.ReadFile(ws.AgentsFile()); !strings.Contains(string(b), "read-only Kubernetes ServiceAccount") {
 		t.Fatal("AGENTS.md does not mention the mounted ServiceAccount")
 	}
+	// In namespace mode it is told where it may write.
+	t.Setenv(runner.EnvK8sAccess, "namespace")
+	t.Setenv(runner.EnvK8sNamespaces, "dev, staging")
+	if err := ws.writeAgentsFile(repos); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(ws.AgentsFile()); !strings.Contains(string(b), "write access") || !strings.Contains(string(b), "`dev`, `staging`") || strings.Contains(string(b), "read-only Kubernetes ServiceAccount") {
+		t.Fatalf("AGENTS.md in namespace mode:\n%s", b)
+	}
 	// A second boot regenerates the generated files.
 	if err := ws.writeAgentsFile(nil); err != nil {
 		t.Fatal(err)

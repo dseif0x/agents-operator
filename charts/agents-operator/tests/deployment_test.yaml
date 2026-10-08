@@ -101,12 +101,34 @@ tests:
       runner.tmpInit: false
       runner.maxResources.limits.cpu: "8"
       runner.serviceAccount.enabled: true
+      runner.serviceAccount.namespaceWrite: true
+      runner.serviceAccount.clusterWide: true
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: AGENTS_OPERATOR_RUNNER_SERVICE_ACCOUNT
             value: RELEASE-NAME-agents-operator-runner
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_RUNNER_NAMESPACE_WRITE
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_RUNNER_READ_CLUSTER_ROLE
+            value: view
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_RUNNER_WRITE_CLUSTER_ROLE
+            value: edit
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_RUNNER_CLUSTER_WIDE_READ
+            value: "true"
       - contains:
           path: spec.template.spec.containers[0].env
           content:

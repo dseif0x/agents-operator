@@ -7,6 +7,7 @@ import (
 
 	"github.com/dseif0x/agents-operator/internal/config"
 	"github.com/dseif0x/agents-operator/internal/k8s"
+	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/store"
 )
 
@@ -312,25 +313,49 @@ func TestClampMaxResources(t *testing.T) {
 	}
 }
 
-func TestBuildPodServiceAccount(t *testing.T) {
+func TestBuildPodK8sAccess(t *testing.T) {
 	s := testSession()
 	cfg := testCfg()
 	cfg.ServiceAccount = "runner-view"
-	// Not asked: no identity, as before.
+	envOf := func(pod *corev1.Pod, name string) string {
+		for _, e := range pod.Spec.Containers[0].Env {
+			if e.Name == name {
+				return e.Value
+			}
+		}
+		return "<unset>"
+	}
+	// Off: no identity, as before.
 	pod := BuildPod(s, cfg)
-	if pod.Spec.ServiceAccountName != "" || *pod.Spec.AutomountServiceAccountToken {
-		t.Fatalf("identity without asking: %s %v", pod.Spec.ServiceAccountName, *pod.Spec.AutomountServiceAccountToken)
+	if pod.Spec.ServiceAccountName != "" || *pod.Spec.AutomountServiceAccountToken || envOf(pod, runner.EnvK8sAccess) != "off" {
+		t.Fatalf("identity without asking: %+v", pod.Spec)
 	}
-	// Asked and configured: the read-only account with its token mounted.
-	s.ServiceAccount = true
+	// Read-only: the shared account with its token mounted.
+	s.K8sAccess = store.K8sAccessReadOnly
 	pod = BuildPod(s, cfg)
-	if pod.Spec.ServiceAccountName != "runner-view" || !*pod.Spec.AutomountServiceAccountToken {
-		t.Fatalf("service account not applied: %+v", pod.Spec)
+	if pod.Spec.ServiceAccountName != "runner-view" || !*pod.Spec.AutomountServiceAccountToken || envOf(pod, runner.EnvK8sAccess) != "readonly" {
+		t.Fatalf("read-only not applied: %+v", pod.Spec)
 	}
-	// Asked but the chart offers none: nothing.
+	// Read-only asked but the chart offers none: nothing.
 	cfg.ServiceAccount = ""
 	pod = BuildPod(s, cfg)
-	if pod.Spec.ServiceAccountName != "" || *pod.Spec.AutomountServiceAccountToken {
+	if pod.Spec.ServiceAccountName != "" || *pod.Spec.AutomountServiceAccountToken || envOf(pod, runner.EnvK8sAccess) != "off" {
 		t.Fatalf("identity without a configured account: %+v", pod.Spec)
+	}
+	// Namespace mode: the session's own account, and the runner is told where it may write.
+	cfg.ServiceAccount, cfg.NamespaceWrite = "runner-view", true
+	s.K8sAccess, s.K8sNamespaces = store.K8sAccessNamespace, []string{"dev", "staging"}
+	pod = BuildPod(s, cfg)
+	if pod.Spec.ServiceAccountName != SessionAccountName(s.ID) || !*pod.Spec.AutomountServiceAccountToken {
+		t.Fatalf("namespace mode not applied: %+v", pod.Spec)
+	}
+	if envOf(pod, runner.EnvK8sAccess) != "namespace" || envOf(pod, runner.EnvK8sNamespaces) != "dev,staging" {
+		t.Fatalf("runner env: %s %s", envOf(pod, runner.EnvK8sAccess), envOf(pod, runner.EnvK8sNamespaces))
+	}
+	// Namespace mode on a hub without it: no identity rather than the wrong one.
+	cfg.NamespaceWrite = false
+	pod = BuildPod(s, cfg)
+	if pod.Spec.ServiceAccountName != "" || *pod.Spec.AutomountServiceAccountToken || envOf(pod, runner.EnvK8sAccess) != "off" {
+		t.Fatalf("namespace mode without namespaceWrite: %+v", pod.Spec)
 	}
 }

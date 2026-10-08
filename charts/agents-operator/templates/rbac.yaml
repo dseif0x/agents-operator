@@ -12,8 +12,10 @@ metadata:
 automountServiceAccountToken: true
 {{- end }}
 ---
-# Namespace-scoped Role with exactly the verbs the hub needs. No cluster
-# roles, no exec, no nodes.
+{{- $namespaceWrite := and .Values.runner.serviceAccount.enabled .Values.runner.serviceAccount.namespaceWrite }}
+# Namespace-scoped Role with exactly the verbs the hub needs. No exec, no
+# nodes. The only cluster-scoped rights are the ones namespace write access
+# for sessions needs, and only when that is turned on (below).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -36,7 +38,53 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create"]
+  {{- if $namespaceWrite }}
+  # Per-session ServiceAccounts for the "namespace" access mode.
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "create", "delete"]
+  {{- end }}
 ---
+{{- if $namespaceWrite }}
+# Sessions in "namespace" mode get RoleBindings in the namespaces they list,
+# which only a ClusterRole can grant. "bind" lets the hub hand out the two
+# ClusterRoles without holding their permissions itself.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agents-operator.fullname" . }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: [{{ .Values.runner.serviceAccount.clusterRole | quote }}, {{ .Values.runner.serviceAccount.writeClusterRole | quote }}]
+    verbs: ["bind"]
+  {{- if .Values.runner.serviceAccount.clusterWide }}
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["get", "list", "create", "delete"]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "agents-operator.fullname" . }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "agents-operator.fullname" . }}-{{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agents-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+{{- end }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:

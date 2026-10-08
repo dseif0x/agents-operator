@@ -123,30 +123,40 @@ The root filesystem is read-only in the pod; `/tmp` is an emptyDir and everythin
 
 ## Kubernetes access for sessions
 
-Session pods carry no Kubernetes identity unless you turn on the runner ServiceAccount and the session asks for it:
+Session pods carry no Kubernetes identity unless you turn on the runner ServiceAccount and the session asks for it. "Kubernetes access" on the session form is a dropdown with three modes, and a stopped session can be edited to another one:
+
+| Mode | What the pod gets | Needs |
+| --- | --- | --- |
+| Off (default) | nothing | |
+| Read-only | the shared runner ServiceAccount, bound to `clusterRole` | `runner.serviceAccount.enabled` |
+| Read-only + write in namespaces | a ServiceAccount of its own: the same read access, plus `writeClusterRole` in the namespaces the owner lists | `runner.serviceAccount.namespaceWrite` as well |
 
 ```yaml
 runner:
   serviceAccount:
     enabled: true
-    clusterRole: view     # the built-in read-only role; never Secrets
-    clusterWide: false    # true binds it across all namespaces
+    clusterRole: view       # the built-in read-only role; never Secrets
+    clusterWide: false      # true binds it across all namespaces
+    namespaceWrite: false   # true offers the third mode
+    writeClusterRole: edit  # the built-in role for the listed namespaces
   networkPolicy:
-    apiServerCIDRs: []    # see below
+    apiServerCIDRs: []      # see below
 ```
 
-The chart creates `<release>-agents-operator-runner` (no automount) and binds it to the ClusterRole, in the release namespace by default or cluster-wide with `clusterWide: true`. A session created or edited with "Kubernetes access" ticked gets `serviceAccountName` set and the token mounted; `kubectl` ships in the runner image and the generated AGENTS.md tells the agent what it may do (get, describe, logs; no changes, no Secrets, no exec). Nothing changes for sessions that did not ask.
+Read-only: the chart creates `<release>-agents-operator-runner` (no automount) and binds it to the ClusterRole, in the release namespace by default or cluster-wide with `clusterWide: true`. A session in this mode gets `serviceAccountName` set and the token mounted; `kubectl` ships in the runner image and the generated AGENTS.md tells the agent what it may do (get, describe, logs; no changes, no Secrets, no exec). Nothing changes for sessions that did not ask.
+
+Namespace mode: the hub creates `agents-operator-<id>` (a ServiceAccount in the release namespace) when the session starts, binds it to `clusterRole` the same way the shared account is bound, and creates a RoleBinding to `writeClusterRole` in every listed namespace. The built-in `edit` role creates, changes and deletes workloads and reads Secrets in those namespaces but cannot touch Roles or RoleBindings, so a session can never widen its own access. The hub's own namespace, `kube-system`, `kube-public` and `kube-node-lease` are refused; a namespace that does not exist fails the start with that reason. Account and bindings are deleted when the pod goes (stop or delete), rebuilt on the next start from the current list, and swept as orphans after two minutes should a row disappear underneath them (`kubectl get rolebindings -A -l agents-operator.io/session` lists what exists). Turning `namespaceWrite` on grants the hub, in addition to its namespace Role, `serviceaccounts` in the release namespace and a ClusterRole with `rolebindings` (get, list, create, delete) in every namespace, `bind` on the two named ClusterRoles (so it can hand them out without holding their permissions itself) and, with `clusterWide`, `clusterrolebindings`. Sessions already in namespace mode when the value is turned off again fail to start with a reason until edited back to another mode.
 
 The session NetworkPolicy blocks the cluster ranges, so the API server has to be opened explicitly. With the account enabled the chart adds egress rules for the API server endpoints. It reads them from the cluster's `kubernetes` Endpoints and Service at install or upgrade time (`helm lookup`), which `helm template` and `ct` cannot do; set `runner.networkPolicy.apiServerCIDRs` (control-plane node IPs and the `kubernetes` ClusterIP, as /32s) to spell them out, and `apiServerPort` if the API server does not listen on 6443. Most CNIs evaluate egress after kube-proxy's DNAT, which is why the node IPs matter and not only the service IP.
 
 ## Security checklist
 
-- Session pods: non-root 1000, read-only root, no capabilities, seccomp RuntimeDefault, no SA token unless the session opted into the read-only runner ServiceAccount (below), no host namespaces or paths. Not configurable, with one exception: a `tmp-sticky` init container runs `chmod 1777 /tmp` as root (read-only root, every capability dropped, no privilege escalation) so the `/tmp` emptyDir gets the sticky bit Claude Code demands for its socket directory; without it the CLI warns on every start that cross-session messaging is off. Namespaces enforcing the "restricted" Pod Security Standard reject a root init container; set `runner.tmpInit=false` there and live with the warning.
+- Session pods: non-root 1000, read-only root, no capabilities, seccomp RuntimeDefault, no SA token unless the session opted into Kubernetes access (above), no host namespaces or paths. Not configurable, with one exception: a `tmp-sticky` init container runs `chmod 1777 /tmp` as root (read-only root, every capability dropped, no privilege escalation) so the `/tmp` emptyDir gets the sticky bit Claude Code demands for its socket directory; without it the CLI warns on every start that cross-session messaging is off. Namespaces enforcing the "restricted" Pod Security Standard reject a root init container; set `runner.tmpInit=false` there and live with the warning.
 - Resource limits always set: `runner.resources` is what a session gets by default, `runner.maxResources` the most it may ask for (a limit not listed there is capped at its default). Requests never exceed limits.
 - `runner.networkPolicy.enabled=true` (default): session pods reach DNS, 443 and 22 anywhere except `blockedCIDRs` (k3s pod and service ranges by default; adjust for your CNI), plus `egressCIDRs`. Only the hub reaches them, on 7681. They cannot reach each other or the API server. Verify from inside a pod: `curl -m3 https://kubernetes.default` must fail, `git ls-remote git@github.com:x/y` and `curl https://api.anthropic.com` must succeed.
 - Hub: distroless, non-root, read-only root. Cookies `HttpOnly; Secure; SameSite=Lax`, rotated on login. CSRF header on every non-GET API call. WebSocket `Origin` checked against the public host. Host header allowlist (`allowedHosts` + the public host). Login lockout after 10 failures per IP for 15 minutes. argon2id passwords.
 - Runner tokens: 32 random bytes per session, rotated on every start, never logged.
-- The Role is namespace-scoped with exactly: pods (get, list, watch, create, delete), pods/log (get), persistentvolumeclaims (get, list, watch, create, delete), secrets (get, list, watch, create, update, delete), events (create). CI asserts this with `kubectl auth can-i --list` on kind.
+- The Role is namespace-scoped with exactly: pods (get, list, watch, create, delete), pods/log (get), persistentvolumeclaims (get, list, watch, create, delete), secrets (get, list, watch, create, update, delete), events (create). Only `runner.serviceAccount.namespaceWrite` adds anything (serviceaccounts here, rolebindings anywhere, `bind` on the two ClusterRoles; see above). Check with `kubectl auth can-i --list --as=system:serviceaccount:<ns>:<release>-agents-operator`.
 
 ## Metrics
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -354,5 +356,214 @@ func TestCreatingTimeout(t *testing.T) {
 	h.reconcile(s.ID)
 	if got := h.session(s.ID); got.State != store.StateFailed {
 		t.Fatalf("state = %s (%s)", got.State, got.StateReason)
+	}
+}
+
+// accessHarness is a harness whose hub may hand out namespace write access.
+func accessHarness(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t)
+	h.r.cfg.ServiceAccount = "runner-view"
+	h.r.cfg.NamespaceWrite = true
+	return h
+}
+
+func (h *harness) roleBindings(id string) map[string]string {
+	h.t.Helper()
+	out := map[string]string{}
+	list, err := h.cs.RbacV1().RoleBindings("").List(h.ctx, metav1.ListOptions{LabelSelector: k8s.LabelSession + "=" + id})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	for _, rb := range list.Items {
+		out[rb.Namespace] = rb.RoleRef.Name
+	}
+	return out
+}
+
+func (h *harness) serviceAccount(id string) *corev1.ServiceAccount {
+	sa, err := h.cs.CoreV1().ServiceAccounts(h.ns).Get(h.ctx, SessionAccountName(id), metav1.GetOptions{})
+	if err != nil {
+		return nil
+	}
+	return sa
+}
+
+func TestNamespaceAccessLifecycle(t *testing.T) {
+	h := accessHarness(t)
+	s := &store.Session{OwnerID: "u1", Name: "ns", Agent: "claude", State: store.StateCreating, PVCSize: "5Gi",
+		K8sAccess: store.K8sAccessNamespace, K8sNamespaces: []string{"dev", "staging"}}
+	if err := h.st.Sessions().Create(h.ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	h.converge(s.ID)
+
+	// The account, read access in the hub namespace and write access in each listed namespace.
+	sa := h.serviceAccount(s.ID)
+	if sa == nil || *sa.AutomountServiceAccountToken || sa.Labels[k8s.LabelSession] != s.ID {
+		t.Fatalf("service account = %+v", sa)
+	}
+	want := map[string]string{h.ns: "view", "dev": "edit", "staging": "edit"}
+	if got := h.roleBindings(s.ID); !reflect.DeepEqual(got, want) {
+		t.Fatalf("role bindings = %v, want %v", got, want)
+	}
+	if p := h.pod(s.ID); p.Spec.ServiceAccountName != SessionAccountName(s.ID) || !*p.Spec.AutomountServiceAccountToken {
+		t.Fatalf("pod identity = %q", p.Spec.ServiceAccountName)
+	}
+	if _, err := h.cs.RbacV1().ClusterRoleBindings().Get(h.ctx, ObjectName(s.ID), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatal("cluster-wide read binding without clusterWide")
+	}
+
+	// Stop: the pod goes and the credentials with it.
+	if _, err := h.st.Sessions().SetState(h.ctx, s.ID, store.StateStopping, ""); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile(s.ID)
+	h.eventually("pod deleted", func() bool { return h.r.observe(s.ID).pod == nil })
+	h.reconcile(s.ID)
+	if h.session(s.ID).State != store.StateStopped || h.serviceAccount(s.ID) != nil || len(h.roleBindings(s.ID)) != 0 {
+		t.Fatalf("stop left credentials: sa=%v bindings=%v", h.serviceAccount(s.ID) != nil, h.roleBindings(s.ID))
+	}
+
+	// Edited while stopped (one namespace dropped, cluster-wide read now) and started again.
+	edited := *h.session(s.ID)
+	edited.K8sNamespaces = []string{"dev"}
+	if _, err := h.st.Sessions().Update(h.ctx, &edited); err != nil {
+		t.Fatal(err)
+	}
+	h.r.cfg.ClusterWideRead = true
+	if _, err := h.st.Sessions().Bump(h.ctx, s.ID, store.StateCreating); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile(s.ID) // rotates the secret
+	h.eventually("secret rotated", func() bool {
+		sec := h.r.observe(s.ID).secret
+		return sec != nil && sec.Annotations[k8s.AnnotationGeneration] == "2"
+	})
+	h.reconcile(s.ID) // account, bindings, pod
+	want = map[string]string{"dev": "edit"}
+	if got := h.roleBindings(s.ID); !reflect.DeepEqual(got, want) {
+		t.Fatalf("role bindings after edit = %v, want %v", got, want)
+	}
+	crb, err := h.cs.RbacV1().ClusterRoleBindings().Get(h.ctx, ObjectName(s.ID), metav1.GetOptions{})
+	if err != nil || crb.RoleRef.Name != "view" || crb.Subjects[0].Name != SessionAccountName(s.ID) || crb.Subjects[0].Namespace != h.ns {
+		t.Fatalf("cluster role binding = %+v, %v", crb, err)
+	}
+	// A pass with everything in place changes nothing and a binding someone
+	// pointed elsewhere is put back.
+	rb, _ := h.cs.RbacV1().RoleBindings("dev").Get(h.ctx, ObjectName(s.ID), metav1.GetOptions{})
+	rb.Subjects[0].Name = "someone-else"
+	if _, err := h.cs.RbacV1().RoleBindings("dev").Update(h.ctx, rb, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.r.ensureAccess(h.ctx, h.session(s.ID)); err != nil {
+		t.Fatal(err)
+	}
+	rb, _ = h.cs.RbacV1().RoleBindings("dev").Get(h.ctx, ObjectName(s.ID), metav1.GetOptions{})
+	if rb.Subjects[0].Name != SessionAccountName(s.ID) {
+		t.Fatalf("binding not repaired: %+v", rb.Subjects)
+	}
+
+	// Delete: everything goes, including the cluster-wide binding.
+	h.eventually("pod in cache", func() bool { return h.r.observe(s.ID).pod != nil })
+	if _, err := h.st.Sessions().SetState(h.ctx, s.ID, store.StateDeleting, ""); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile(s.ID)
+	h.eventually("objects gone", func() bool {
+		o := h.r.observe(s.ID)
+		return o.pod == nil && o.pvc == nil && o.secret == nil
+	})
+	h.reconcile(s.ID)
+	if h.session(s.ID) != nil || h.serviceAccount(s.ID) != nil || len(h.roleBindings(s.ID)) != 0 {
+		t.Fatal("delete left credentials")
+	}
+	if _, err := h.cs.RbacV1().ClusterRoleBindings().Get(h.ctx, ObjectName(s.ID), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatal("cluster role binding remains")
+	}
+}
+
+func TestReadOnlyAndOffRemoveStaleAccess(t *testing.T) {
+	h := accessHarness(t)
+	s := &store.Session{OwnerID: "u1", Name: "ro", Agent: "claude", State: store.StateCreating, PVCSize: "5Gi", K8sAccess: store.K8sAccessReadOnly}
+	if err := h.st.Sessions().Create(h.ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	// Leftovers from an earlier namespace-mode start are cleaned up on the way.
+	if _, err := h.cs.RbacV1().RoleBindings("dev").Create(h.ctx, BuildRoleBinding(s, h.r.cfg, "dev", "edit"), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	h.converge(s.ID)
+	if p := h.pod(s.ID); p.Spec.ServiceAccountName != "runner-view" {
+		t.Fatalf("read-only pod identity = %q", p.Spec.ServiceAccountName)
+	}
+	if h.serviceAccount(s.ID) != nil || len(h.roleBindings(s.ID)) != 0 {
+		t.Fatal("read-only session kept namespace-mode objects")
+	}
+}
+
+func TestNamespaceAccessWithoutHubSupportFails(t *testing.T) {
+	h := newHarness(t)
+	h.r.cfg.ServiceAccount = "runner-view"
+	s := &store.Session{OwnerID: "u1", Name: "ns", Agent: "claude", State: store.StateCreating, PVCSize: "5Gi",
+		K8sAccess: store.K8sAccessNamespace, K8sNamespaces: []string{"dev"}}
+	if err := h.st.Sessions().Create(h.ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile(s.ID)
+	h.eventually("pvc and secret", func() bool {
+		o := h.r.observe(s.ID)
+		return o.pvc != nil && o.secret != nil
+	})
+	h.reconcile(s.ID)
+	if got := h.session(s.ID); got.State != store.StateFailed || !strings.Contains(got.StateReason, "namespaceWrite") {
+		t.Fatalf("state = %s (%s)", got.State, got.StateReason)
+	}
+	if h.pod(s.ID) != nil {
+		t.Fatal("pod created without the account it names")
+	}
+}
+
+func TestOrphanedAccessIsRemoved(t *testing.T) {
+	h := accessHarness(t)
+	ghost := &store.Session{ID: "99999999-9999-4999-8999-999999999998", OwnerID: "ghost", Name: "ghost", Agent: "shell",
+		K8sAccess: store.K8sAccessNamespace, K8sNamespaces: []string{"dev"}}
+	sa := BuildServiceAccount(ghost, h.r.cfg)
+	sa.CreationTimestamp = metav1.Now()
+	if _, err := h.cs.CoreV1().ServiceAccounts(h.ns).Create(h.ctx, sa, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.cs.RbacV1().RoleBindings("dev").Create(h.ctx, BuildRoleBinding(ghost, h.r.cfg, "dev", "edit"), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// ReconcileAll finds them by label even without pod, PVC or Secret.
+	h.r.ReconcileAll(h.ctx)
+	found := false
+	for h.r.queue.Len() > 0 {
+		id, _ := h.r.queue.Get()
+		found = found || id == ghost.ID
+		h.r.queue.Done(id)
+	}
+	if !found {
+		t.Fatal("orphaned access not enqueued")
+	}
+	// Young: kept. Old: removed.
+	h.reconcile(ghost.ID)
+	if h.serviceAccount(ghost.ID) == nil {
+		t.Fatal("orphan removed too early")
+	}
+	h.r.now = func() time.Time { return time.Now().Add(10 * time.Minute) }
+	h.reconcile(ghost.ID)
+	if h.serviceAccount(ghost.ID) != nil || len(h.roleBindings(ghost.ID)) != 0 {
+		t.Fatal("orphaned access not removed")
+	}
+	// Bindings without an account go right away.
+	if _, err := h.cs.RbacV1().RoleBindings("dev").Create(h.ctx, BuildRoleBinding(ghost, h.r.cfg, "dev", "edit"), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	h.r.now = time.Now
+	h.reconcile(ghost.ID)
+	if len(h.roleBindings(ghost.ID)) != 0 {
+		t.Fatal("binding without account not removed")
 	}
 }

@@ -351,7 +351,7 @@ function Drawer(props: { session: Session; tab: "events" | "logs" | "info"; setT
                 .map(([k, v]) => `, ${k} ${v}`)
                 .join("")}`,
               `runtime class: ${s.runtime_class || "(chart default)"}`,
-              `k8s access:    ${s.service_account ? "read-only ServiceAccount mounted" : "none"}`,
+              `k8s access:    ${s.k8s_access === "namespace" ? "read-only + write in " + (s.k8s_namespaces || []).join(", ") : s.k8s_access === "readonly" ? "read-only ServiceAccount mounted" : "none"}`,
               Object.keys(s.node_selector || {}).length
                 ? `node selector: ${Object.entries(s.node_selector)
                     .map(([k, v]) => `${k}=${v}`)

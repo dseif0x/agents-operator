@@ -102,6 +102,7 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | `AGENT`, `AUTONOMOUS` | pod spec | which CLI to run; `claude` gets `--dangerously-skip-permissions` when true |
 | `REPOS` | pod spec | JSON list of `{url, branch, path}`; each is cloned into `/workspace/<path>` on first boot; the agent starts in `/workspace` |
 | `AGENTS_OPERATOR_SESSION` | pod spec | session name |
+| `K8S_ACCESS`, `K8S_NAMESPACES` | pod spec | what the mounted ServiceAccount may do (`off`, `readonly`, `namespace`) and, in namespace mode, the comma-separated namespaces with write access; only used for the generated AGENTS.md |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL` | per-session Secret (from the user Secret) | model credentials |
 | `CLAUDE_CODE_OAUTH_TOKEN` | per-session Secret | long-lived Claude subscription token from `claude setup-token`; read by Claude Code itself |
 | `GIT_USER_NAME`, `GIT_USER_EMAIL` | per-session Secret | seeded into `~/.gitconfig` |

@@ -61,6 +61,10 @@ runner:
     clusterRole: view
     # -- Bind it across the cluster (ClusterRoleBinding) rather than only in the release namespace (RoleBinding)
     clusterWide: false
+    # -- Offer the "namespace" access mode: such a session gets a ServiceAccount of its own, bound to `clusterRole` like the shared one plus `writeClusterRole` in the namespaces its owner lists. The hub is then allowed to create ServiceAccounts here and RoleBindings in any namespace (and ClusterRoleBindings with `clusterWide`), and to bind those two roles
+    namespaceWrite: false
+    # -- ClusterRole granted in a session's listed namespaces; the built-in `edit` changes workloads and reads Secrets there but never touches RBAC
+    writeClusterRole: edit
   networkPolicy:
     # -- Create a default-deny NetworkPolicy for session pods
     enabled: true

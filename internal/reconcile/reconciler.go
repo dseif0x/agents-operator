@@ -155,6 +155,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) {
 			ids[s.Labels[k8s.LabelSession]] = struct{}{}
 		}
 	}
+	for _, id := range r.accessSessionIDs(ctx) {
+		ids[id] = struct{}{}
+	}
 	delete(ids, "")
 	for id := range ids {
 		r.queue.Add(id)
@@ -240,6 +243,21 @@ func (r *Reconciler) reconcileOrphan(ctx context.Context, id string, o observed)
 			return err
 		}
 	}
+	if r.cfg.NamespaceWrite {
+		// The account and its bindings: gone once the account is old enough,
+		// or right away when bindings outlived their account.
+		sa, err := r.cs.CoreV1().ServiceAccounts(r.cfg.Namespace).Get(ctx, SessionAccountName(id), metav1.GetOptions{})
+		if apierrors.IsNotFound(err) || (err == nil && old(sa.CreationTimestamp)) {
+			if err == nil {
+				r.log.Warn("deleting orphaned service account", "serviceaccount", sa.Name)
+			}
+			if err := r.removeAccess(ctx, id); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -309,6 +327,13 @@ func (r *Reconciler) reconcileCreating(ctx context.Context, sess *store.Session,
 		r.requeueSoon(sess.ID)
 		return nil
 	}
+	if err := r.ensureAccess(ctx, sess); err != nil {
+		var ae *accessError
+		if errors.As(err, &ae) {
+			return r.fail(ctx, sess, "kubernetes access: "+ae.msg)
+		}
+		return err
+	}
 	pod := BuildPod(sess, r.cfg)
 	if _, err := r.cs.CoreV1().Pods(r.cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		if apierrors.IsAlreadyExists(err) {
@@ -336,6 +361,11 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, sess *store.Session, 
 
 func (r *Reconciler) reconcileStopping(ctx context.Context, sess *store.Session, o observed) error {
 	if o.pod == nil {
+		// No pod, no credentials: the account and bindings go with it and
+		// come back on the next start.
+		if err := r.removeAccess(ctx, sess.ID); err != nil {
+			return err
+		}
 		return r.setState(ctx, sess, store.StateStopped, "")
 	}
 	if o.pod.DeletionTimestamp == nil {
@@ -378,6 +408,9 @@ func (r *Reconciler) reconcileDeleting(ctx context.Context, sess *store.Session,
 	if pending {
 		r.requeueSoon(sess.ID)
 		return nil
+	}
+	if err := r.removeAccess(ctx, sess.ID); err != nil {
+		return err
 	}
 	if err := r.store.Sessions().Delete(ctx, sess.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err

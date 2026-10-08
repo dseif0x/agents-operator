@@ -141,6 +141,7 @@ func (r memSessions) Create(_ context.Context, s *Session) error {
 	}
 	now := time.Now()
 	s.CreatedAt, s.UpdatedAt = now, now
+	normaliseK8s(s)
 	r.m.sessions[s.ID] = copySession(s)
 	return nil
 }
@@ -182,7 +183,9 @@ func (r memSessions) Update(_ context.Context, s *Session) (*Session, error) {
 	if !ok {
 		return nil, ErrNotFound
 	}
-	cur.Name, cur.Repos, cur.ImageTag, cur.RuntimeClass, cur.ServiceAccount = s.Name, s.Repos, s.ImageTag, s.RuntimeClass, s.ServiceAccount
+	cur.Name, cur.Repos, cur.ImageTag, cur.RuntimeClass = s.Name, s.Repos, s.ImageTag, s.RuntimeClass
+	cur.K8sAccess, cur.K8sNamespaces = s.K8sAccess, append([]string(nil), s.K8sNamespaces...)
+	normaliseK8s(cur)
 	cur.Resources, cur.NodeSelector, cur.Tolerations, cur.Env, cur.Autonomous = s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous
 	cur.UpdatedAt = time.Now()
 	return copySession(cur), nil
