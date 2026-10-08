@@ -5,10 +5,15 @@ metadata:
   labels:
     {{- include "agents-operator.labels" . | nindent 4 }}
 spec:
-  # One replica only: the reconciler and informers must not run twice.
+  # One replica serves; a rolling update briefly runs two. The reconciler
+  # runs in whichever holds the leader Lease, so the overlap is safe and
+  # the API, UI and terminals stay up throughout.
   replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       {{- include "agents-operator.selectorLabels" . | nindent 6 }}
@@ -57,6 +62,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: AGENTS_OPERATOR_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: AGENTS_OPERATOR_LEADER_LEASE
+              value: {{ include "agents-operator.fullname" . | quote }}
             - name: AGENTS_OPERATOR_RUNNER_IMAGE
               value: {{ .Values.runner.image.repository | quote }}
             - name: AGENTS_OPERATOR_RUNNER_IMAGE_TAG

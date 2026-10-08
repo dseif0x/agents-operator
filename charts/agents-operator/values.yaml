@@ -1,6 +1,8 @@
 # Default values for agents-operator.
-# Only one replica is supported: the reconciler and the informers must not
-# run twice, and the Deployment uses strategy Recreate for that reason.
+# The hub runs one replica. Upgrades roll with maxSurge 1 so the API, UI
+# and terminals never go away; the reconciler runs in whichever pod holds
+# the leader Lease. Scaling beyond one replica is not supported yet: SSE
+# events and runner status live in each process.
 
 image:
   # -- Hub image repository

@@ -458,6 +458,19 @@ func TestSyncLogin(t *testing.T) {
 		t.Fatalf("no login event recorded: %+v", events)
 	}
 
+	// A hub that is not the leader still polls, so its pages show live
+	// status, but leaves the side effects to the leader.
+	svc.Leading = func() bool { return false }
+	fr.setLoginAt(time.Now().Add(90 * time.Second))
+	svc.PollOnce(ctx)
+	if fr.count() != 2 {
+		t.Fatalf("a follower exported a login: exports=%d", fr.count())
+	}
+	if _, ok := svc.live.Load(sess.ID); !ok {
+		t.Fatal("a follower did not record live status")
+	}
+	svc.Leading = nil
+
 	// A shell session's runner is never asked for a login.
 	sh, _ := svc.Create(ctx, u, CreateRequest{Name: "s", Agent: "shell"})
 	_, _ = svc.Store.Sessions().SetState(ctx, sh.ID, store.StateRunning, "")

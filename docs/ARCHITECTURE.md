@@ -5,7 +5,7 @@ agents-operator is a self-hosted mission control for AI coding agents. Every ses
 ## Components
 
 ```
- browser ──HTTPS/WSS──▶ hub (Go, 1 replica) ──ws://podIP:7681──▶ session pod
+ browser ──HTTPS/WSS──▶ hub (Go, 1 replica, rolled with surge) ──ws://podIP:7681──▶ session pod
                           │  REST API, SSE                       │ agent-runner (PTY owner)
                           │  WebSocket proxy                     │ claude / opencode / codex
                           │  reconciler (Pods, PVCs, Secrets)    │ /workspace  ← PVC
@@ -15,7 +15,7 @@ agents-operator is a self-hosted mission control for AI coding agents. Every ses
 
 | Piece | Runs as | Owns |
 | --- | --- | --- |
-| **hub** (`cmd/agents-operator`) | Deployment, 1 replica, distroless | REST API, SSE feed, WebSocket terminal proxy, reconciler, embedded SPA |
+| **hub** (`cmd/agents-operator`) | Deployment, 1 replica, distroless, leader Lease for rolling updates | REST API, SSE feed, WebSocket terminal proxy, reconciler (leader only), embedded SPA |
 | **agent-runner** (`cmd/agent-runner`) | PID 1 in every session pod (under tini) | The PTY, the 2 MiB scrollback ring buffer, the runner WebSocket on `:7681`, the loopback hook endpoint on `127.0.0.1:7682` that turns Claude Code's hook events into the session's activity |
 | **Postgres** | Bitnami subchart or external | users, sessions, session_events, user_credentials |
 
