@@ -134,13 +134,16 @@ const (
 	AgentClaude   = "claude"
 	AgentOpenCode = "opencode"
 	AgentCodex    = "codex"
+	// AgentUnjailed is the Unjailed CLI (github.com/unjailedai/unjailedCLI),
+	// built into the image from a pinned commit of that repository.
+	AgentUnjailed = "unjailed"
 	// AgentShell is a plain bash shell. It is not an AI agent but is handy
 	// for debugging a pod and for tests.
 	AgentShell = "shell"
 )
 
 // Agents lists every agent the runner image understands.
-var Agents = []string{AgentClaude, AgentOpenCode, AgentCodex, AgentShell}
+var Agents = []string{AgentClaude, AgentOpenCode, AgentCodex, AgentUnjailed, AgentShell}
 
 // ValidAgent reports whether name is one of Agents.
 func ValidAgent(name string) bool {

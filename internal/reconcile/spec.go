@@ -157,6 +157,7 @@ var credentialEnv = map[string]string{
 	store.CredAnthropicBaseURL: "ANTHROPIC_BASE_URL",
 	store.CredClaudeOAuthToken: runner.EnvClaudeOAuthToken,
 	store.CredOpenAIAPIKey:     "OPENAI_API_KEY",
+	store.CredUnjailedAPIKey:   "UNJAILED_API_KEY",
 	store.CredGitSSHKey:        runner.EnvGitSSHKey,
 	store.CredGitHTTPSToken:    runner.EnvGitHTTPSToken,
 	store.CredGitHubToken:      runner.EnvGitHubToken,

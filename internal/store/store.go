@@ -57,6 +57,7 @@ const (
 	CredAnthropicAPIKey  = "anthropic_api_key"
 	CredAnthropicBaseURL = "anthropic_base_url"
 	CredOpenAIAPIKey     = "openai_api_key"
+	CredUnjailedAPIKey   = "unjailed_api_key"
 	CredGitSSHKey        = "git_ssh_key"
 	CredGitHTTPSToken    = "git_https_token"
 	CredGitHubToken      = "github_token"
@@ -72,7 +73,7 @@ const (
 
 // CredentialKinds lists every accepted kind.
 var CredentialKinds = []string{
-	CredAnthropicAPIKey, CredAnthropicBaseURL, CredClaudeOAuthToken, CredOpenAIAPIKey,
+	CredAnthropicAPIKey, CredAnthropicBaseURL, CredClaudeOAuthToken, CredOpenAIAPIKey, CredUnjailedAPIKey,
 	CredGitSSHKey, CredGitHTTPSToken, CredGitHubToken, CredGitUserName, CredGitUserEmail,
 	CredClaudeLogin, CredCodexLogin,
 }
@@ -80,7 +81,7 @@ var CredentialKinds = []string{
 // SecretKinds are the credential kinds whose values must never be echoed
 // back by the API. The others (base URL, git identity) are plain settings.
 var SecretKinds = map[string]bool{
-	CredAnthropicAPIKey: true, CredClaudeOAuthToken: true, CredOpenAIAPIKey: true, CredGitSSHKey: true,
+	CredAnthropicAPIKey: true, CredClaudeOAuthToken: true, CredOpenAIAPIKey: true, CredUnjailedAPIKey: true, CredGitSSHKey: true,
 	CredGitHTTPSToken: true, CredGitHubToken: true, CredClaudeLogin: true, CredCodexLogin: true,
 }
 

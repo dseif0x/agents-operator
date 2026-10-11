@@ -80,7 +80,7 @@ const keyValueLines = (m: Record<string, string | undefined> | undefined, skip: 
 // volume (agent, PVC size, storage class) locked.
 export function NewSession(props: { user: User; onLogout: () => void; edit?: string }) {
   const editing = !!props.edit;
-  const [agents, setAgents] = useState<string[]>(["claude", "opencode", "codex", "shell"]);
+  const [agents, setAgents] = useState<string[]>(["claude", "opencode", "codex", "unjailed", "shell"]);
   const [name, setName] = useState("");
   const [agent, setAgent] = useState("claude");
   const [repos, setRepos] = useState("");

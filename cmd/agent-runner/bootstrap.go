@@ -27,6 +27,7 @@ import (
 //   - seed saved CLI logins (AGENTS_OPERATOR_LOGIN_<KIND>) when the file is absent
 //   - answer Claude Code's first-run prompts in ~/.claude.json when credentials exist,
 //     and its bypass-permissions consent in ~/.claude/settings.json when autonomous
+//   - turn on the Unjailed CLI's agent tools in ~/.unjailed/config.json
 //   - clone every entry of REPOS into /workspace/<path> when that directory is empty
 func (w *Workspace) Bootstrap(ctx context.Context) error {
 	home := w.HomeDir()
@@ -56,6 +57,7 @@ func (w *Workspace) Bootstrap(ctx context.Context) error {
 	}
 	w.prepareClaudeConfig(repos)
 	w.prepareClaudeSettings()
+	w.prepareUnjailedConfig()
 	if err := w.writeAgentsFile(repos); err != nil {
 		w.Log.Warn("cannot write AGENTS.md", "err", err)
 	}
@@ -574,6 +576,37 @@ func updateJSONFile(path string, mutate func(obj map[string]any) bool) (bool, er
 		return false, err
 	}
 	return true, os.WriteFile(path, out, 0o600)
+}
+
+// prepareUnjailedConfig turns on the Unjailed CLI's agent tools in
+// ~/.unjailed/config.json. The CLI starts with tools off, as a plain chat;
+// a session here is for coding, so it gets "cmds" (files and commands, each
+// confirmed) or, autonomous, "yolo" (no confirmation). The CLI has no flag
+// for this, and the user can change it with /tools, which writes the same
+// key, so an existing value is left alone.
+func (w *Workspace) prepareUnjailedConfig() {
+	if w.Agent != runner.AgentUnjailed {
+		return
+	}
+	mode := "cmds"
+	if autonomousEnv() {
+		mode = "yolo"
+	}
+	path := filepath.Join(w.HomeDir(), ".unjailed", "config.json")
+	changed, err := updateJSONFile(path, func(obj map[string]any) bool {
+		if _, ok := obj["tools"]; ok {
+			return false
+		}
+		obj["tools"] = mode
+		return true
+	})
+	if err != nil {
+		w.Log.Warn("cannot prepare Unjailed config", "err", err)
+		return
+	}
+	if changed {
+		w.Log.Info("prepared Unjailed config", "tools", mode)
+	}
 }
 
 // autonomousEnv reports whether the hub asked for an autonomous session.

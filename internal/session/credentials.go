@@ -140,7 +140,7 @@ func (c *Credentials) List(ctx context.Context, userID string) ([]Info, error) {
 // cleaned up before it is stored.
 var tokenKinds = map[string]bool{
 	store.CredAnthropicAPIKey: true, store.CredClaudeOAuthToken: true, store.CredOpenAIAPIKey: true,
-	store.CredGitHubToken: true, store.CredGitHTTPSToken: true,
+	store.CredUnjailedAPIKey: true, store.CredGitHubToken: true, store.CredGitHTTPSToken: true,
 }
 
 // claudeOAuthTokenPrefix is what `claude setup-token` output starts with.

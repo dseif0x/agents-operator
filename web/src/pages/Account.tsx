@@ -13,6 +13,7 @@ const FIELDS: { kind: string; label: string; help: string; multiline?: boolean; 
     secret: true,
   },
   { kind: "openai_api_key", label: "OpenAI API key", help: "OPENAI_API_KEY for Codex.", secret: true },
+  { kind: "unjailed_api_key", label: "Unjailed API key", help: "UNJAILED_API_KEY for the Unjailed CLI, from unjailedai.com/dashboard.", secret: true },
   { kind: "git_user_name", label: "Git user.name", help: "Seeded into ~/.gitconfig on first boot.", secret: false },
   { kind: "git_user_email", label: "Git user.email", help: "Seeded into ~/.gitconfig on first boot.", secret: false },
   { kind: "git_ssh_key", label: "Git SSH private key", help: "Installed as ~/.ssh/id_ed25519 (0600) in every session.", multiline: true, secret: true },

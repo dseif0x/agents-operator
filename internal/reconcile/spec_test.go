@@ -63,9 +63,10 @@ func TestBuildSecret(t *testing.T) {
 		store.CredGitHubToken:      []byte("ghp_x"),
 		store.CredClaudeOAuthToken: []byte("sk-ant-oat01-x"),
 		store.CredClaudeLogin:      []byte(`{"a":1}`),
+		store.CredUnjailedAPIKey:   []byte("sk-uj"),
 		"unknown":                  []byte("x"),
 	})
-	if string(sec.Data["RUNNER_TOKEN"]) != "tok" || string(sec.Data["ANTHROPIC_API_KEY"]) != "sk-ant" || string(sec.Data["GIT_SSH_KEY"]) != "-----BEGIN" || string(sec.Data["GH_TOKEN"]) != "ghp_x" || string(sec.Data["CLAUDE_CODE_OAUTH_TOKEN"]) != "sk-ant-oat01-x" {
+	if string(sec.Data["RUNNER_TOKEN"]) != "tok" || string(sec.Data["ANTHROPIC_API_KEY"]) != "sk-ant" || string(sec.Data["GIT_SSH_KEY"]) != "-----BEGIN" || string(sec.Data["GH_TOKEN"]) != "ghp_x" || string(sec.Data["CLAUDE_CODE_OAUTH_TOKEN"]) != "sk-ant-oat01-x" || string(sec.Data["UNJAILED_API_KEY"]) != "sk-uj" {
 		t.Fatalf("data = %v", sec.Data)
 	}
 	if string(sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"]) != "eyJhIjoxfQ==" {
