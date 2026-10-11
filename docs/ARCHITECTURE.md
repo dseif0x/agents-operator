@@ -7,7 +7,7 @@ agents-operator is a self-hosted mission control for AI coding agents. Every ses
 ```
  browser ──HTTPS/WSS──▶ hub (Go, 1 replica, rolled with surge) ──ws://podIP:7681──▶ session pod
                           │  REST API, SSE                       │ agent-runner (PTY owner)
-                          │  WebSocket proxy                     │ claude / opencode / codex
+                          │  WebSocket proxy                     │ claude / opencode / codex / unjailed
                           │  reconciler (Pods, PVCs, Secrets)    │ /workspace  ← PVC
                           ▼                                      │ RUNNER_TOKEN ← Secret
                         Postgres (session registry)
@@ -79,7 +79,7 @@ Closing the tab changes nothing in the pod. Reopening replays the last 2 MiB of 
 
 ## Credentials
 
-- **API key mode**: values live in the per-user Secret `agents-operator-user-<id>` (managed by `internal/session/credentials.go`). At session creation the reconciler projects the known keys into the per-session Secret as env (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, git identity, `GIT_SSH_KEY`, `GIT_HTTPS_TOKEN`, `GH_TOKEN`).
+- **API key mode**: values live in the per-user Secret `agents-operator-user-<id>` (managed by `internal/session/credentials.go`). At session creation the reconciler projects the known keys into the per-session Secret as env (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `UNJAILED_API_KEY`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, git identity, `GIT_SSH_KEY`, `GIT_HTTPS_TOKEN`, `GH_TOKEN`).
 - **Subscription token**: `claude_oauth_token` is the long-lived token `claude setup-token` prints (the user runs it inside any session and pastes the result on the account page). It reaches Claude Code as `CLAUDE_CODE_OAUTH_TOKEN`, never rotates and is safe to share between any number of sessions, which makes it the recommended way to run a subscription here.
 - **First-run prompts**: when a Claude session has something to sign in with (a seeded login, the OAuth token or an API key), the runner answers Claude Code's first-run questions in `~/.claude.json` before the CLI starts: onboarding is marked complete, the API key from the environment is pre-approved, and `/workspace` and every repository directory are marked trusted. For autonomous sessions the consent dialog behind `--dangerously-skip-permissions` is answered in `~/.claude/settings.json`; the user gave that consent by choosing autonomous mode. Existing keys are never changed. Without credentials the CLI's own login flow stays the first screen.
 - **GitHub repository picker**: with a `github_token` set, the New Session form can browse the repositories the token can see (`GET /api/v1/me/github/repos`, via `internal/github`, cached per token for five minutes). Entries are ranked by how often the user has started a session with them (the `repo_usage` table, which survives session deletion), then alphabetically; the search box filters by name and description. The hub is the only component that talks to the GitHub API here; it never passes the token to the browser.

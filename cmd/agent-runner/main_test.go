@@ -219,6 +219,9 @@ func TestAgentCommand(t *testing.T) {
 	if c := AgentCommand(runner.AgentShell, true, "/w", nil); c.Path != "bash" {
 		t.Fatalf("shell = %+v", c)
 	}
+	if c := AgentCommand(runner.AgentUnjailed, true, "/w", nil); c.Path != "unjailed" || len(c.Args) != 0 {
+		t.Fatalf("unjailed = %+v", c)
+	}
 }
 
 func TestPrepareClaudeConfig(t *testing.T) {
@@ -416,5 +419,57 @@ func TestPrepareClaudeSettings(t *testing.T) {
 	other.prepareClaudeSettings()
 	if _, err := os.Stat(filepath.Join(other.HomeDir(), ".claude", "settings.json")); err == nil {
 		t.Fatal("settings written for a codex session")
+	}
+}
+
+func TestPrepareUnjailedConfig(t *testing.T) {
+	ws := &Workspace{Root: t.TempDir(), Agent: runner.AgentUnjailed, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	cfg := filepath.Join(ws.HomeDir(), ".unjailed", "config.json")
+	read := func() map[string]any {
+		b, err := os.ReadFile(cfg)
+		if err != nil {
+			return nil
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatalf("invalid config.json: %v\n%s", err, b)
+		}
+		return m
+	}
+
+	// Supervised: tools on, each change confirmed.
+	t.Setenv(runner.EnvAutonomous, "false")
+	ws.prepareUnjailedConfig()
+	if m := read(); m["tools"] != "cmds" {
+		t.Fatalf("supervised config = %v", m)
+	}
+	if st, err := os.Stat(cfg); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode: %v %v", st, err)
+	}
+
+	// Autonomous: no confirmation; the user's other keys survive.
+	if err := os.WriteFile(cfg, []byte(`{"apiKey":"sk-x","model":"glm-5.3"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(runner.EnvAutonomous, "true")
+	ws.prepareUnjailedConfig()
+	if m := read(); m["tools"] != "yolo" || m["apiKey"] != "sk-x" || m["model"] != "glm-5.3" {
+		t.Fatalf("autonomous config = %v", m)
+	}
+
+	// A mode the user picked with /tools is kept.
+	if err := os.WriteFile(cfg, []byte(`{"tools":"read"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws.prepareUnjailedConfig()
+	if m := read(); m["tools"] != "read" {
+		t.Fatalf("user choice overridden: %v", m)
+	}
+
+	// Other agents get nothing.
+	other := &Workspace{Root: t.TempDir(), Agent: runner.AgentClaude, Log: ws.Log}
+	other.prepareUnjailedConfig()
+	if _, err := os.Stat(filepath.Join(other.HomeDir(), ".unjailed")); err == nil {
+		t.Fatal("config written for a claude session")
 	}
 }

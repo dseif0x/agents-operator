@@ -90,7 +90,7 @@ With hook events (see below) the document also carries the agent's own account, 
 
 Claude Code fires a hook on every lifecycle event, and the runner installs one for the events it cares about in `~/.claude/settings.json` on boot (`SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `Notification`, `Stop`, `StopFailure`, `Elicitation`). Each is a `command` hook running `agent-runner hook`, marked `async` so the CLI neither waits for it nor can be blocked by it; the helper reads the event JSON from stdin, posts it to the runner at `http://127.0.0.1:7682/hook` and exits 0 whatever happens. Hook groups the user added to the same file are kept; the runner's is recognised by its command and added once per event. Events from subagents (`agent_id` set) are ignored so a Task's inner tool calls do not flip the main agent's state. The listener is loopback only: nothing outside the pod can post to it, and nothing posted to it changes what the CLI does.
 
-Codex and OpenCode have no hooks installed yet and fall back to the tail heuristic. `login_updated_at` is present only when the agent CLI rewrote its credential file after boot (a login or a token refresh; files seeded by the runner do not count); if the owner has that login saved and the account copy is older, the hub sends `export_login` and replaces it.
+Codex, OpenCode and Unjailed have no hooks installed yet and fall back to the tail heuristic. `login_updated_at` is present only when the agent CLI rewrote its credential file after boot (a login or a token refresh; files seeded by the runner do not count); if the owner has that login saved and the account copy is older, the hub sends `export_login` and replaces it.
 
 ## Runner environment
 
@@ -103,7 +103,7 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | `REPOS` | pod spec | JSON list of `{url, branch, path}`; each is cloned into `/workspace/<path>` on first boot; the agent starts in `/workspace` |
 | `AGENTS_OPERATOR_SESSION` | pod spec | session name |
 | `K8S_ACCESS`, `K8S_NAMESPACES` | pod spec | what the mounted ServiceAccount may do (`off`, `readonly`, `namespace`) and, in namespace mode, the comma-separated namespaces with write access; only used for the generated AGENTS.md |
-| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL` | per-session Secret (from the user Secret) | model credentials |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `UNJAILED_API_KEY`, `ANTHROPIC_BASE_URL` | per-session Secret (from the user Secret) | model credentials |
 | `CLAUDE_CODE_OAUTH_TOKEN` | per-session Secret | long-lived Claude subscription token from `claude setup-token`; read by Claude Code itself |
 | `GIT_USER_NAME`, `GIT_USER_EMAIL` | per-session Secret | seeded into `~/.gitconfig` |
 | `GIT_SSH_KEY` | per-session Secret | written to `~/.ssh/id_ed25519` (0600); removed from the agent's env |
@@ -112,5 +112,7 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | `AGENTS_OPERATOR_LOGIN_<KIND>` | per-session Secret | base64 login bundle seeded into HOME on first boot; only the files known for that kind are written, and never over an existing file |
 
 For `AGENT=claude` the runner also prepares `~/.claude.json` before the CLI starts: with any credential present (seeded login, `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`) onboarding is marked complete, an API key from the environment is pre-approved, and `/workspace` plus every repository directory are marked trusted. With `AUTONOMOUS=true` the consent behind `--dangerously-skip-permissions` is recorded in `~/.claude/settings.json` (`skipDangerousModePermissionPrompt`). Keys that already exist are left as they are.
+
+For `AGENT=unjailed` the runner sets `tools` in `~/.unjailed/config.json` when it is absent: `cmds` (file edits and commands, each confirmed) or, with `AUTONOMOUS=true`, `yolo` (no confirmation). The CLI has no command-line flag for this and starts with tools off otherwise. A mode chosen later with `/tools` is kept. The CLI does not read `AGENTS.md`.
 
 The agent's `TMPDIR` is a private `0700` directory under the pod's `/tmp`. Claude Code keeps its cross-session messaging socket under `/tmp` and vets every ancestor of that directory: a world-writable directory without the sticky bit is refused with a warning on every start, and that is exactly what Kubernetes makes of an emptyDir (a PVC root with `fsGroup` is group-writable and refused as well; `XDG_RUNTIME_DIR`, `CLAUDE_CODE_TMPDIR` and `--messaging-socket-path` under either mount fail the same check). Since the non-root runner cannot change the mount's mode, the pod runs a `tmp-sticky` init container as root that does `chmod 1777 /tmp` before the runner starts (`runner.tmpInit`, on by default; see OPERATIONS.md).

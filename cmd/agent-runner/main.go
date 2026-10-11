@@ -170,6 +170,10 @@ func AgentCommand(agent string, autonomous bool, dir string, env []string) serve
 		return server.Command{Path: "opencode", Args: nil, Dir: dir, Env: env}
 	case runner.AgentCodex:
 		return server.Command{Path: "codex", Args: nil, Dir: dir, Env: env}
+	case runner.AgentUnjailed:
+		// No permission flag: the tools mode lives in ~/.unjailed/config.json
+		// (see prepareUnjailedConfig).
+		return server.Command{Path: "unjailed", Args: nil, Dir: dir, Env: env}
 	default:
 		return server.Command{Path: "bash", Args: []string{"-l"}, Dir: dir, Env: env}
 	}
