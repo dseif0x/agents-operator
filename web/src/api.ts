@@ -41,6 +41,8 @@ export interface Session {
   tolerations: Toleration[];
   env: Record<string, string>;
   autonomous: boolean;
+  /** Whether the agent gets the owner's SSH key and HTTPS/GitHub tokens; without them the runner only clones with them. */
+  git_credentials: boolean;
   /** What kubectl in the pod may do: nothing, read the cluster, or also write in k8s_namespaces. */
   k8s_access: K8sAccess;
   k8s_namespaces: string[];
@@ -126,6 +128,7 @@ export interface CreateSessionRequest {
   tolerations?: Toleration[];
   env?: Record<string, string>;
   autonomous?: boolean;
+  git_credentials?: boolean;
   k8s_access?: K8sAccess;
   k8s_namespaces?: string[];
 }

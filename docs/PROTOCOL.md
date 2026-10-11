@@ -100,6 +100,7 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | --- | --- | --- |
 | `RUNNER_TOKEN` | per-session Secret | bearer token, rotated on every start; runner-only (see below) |
 | `AGENT`, `AUTONOMOUS` | pod spec | which CLI to run; `claude` gets `--dangerously-skip-permissions` when true |
+| `AGENT_GIT_CREDENTIALS` | pod spec | `false` keeps `GIT_SSH_KEY`, `GIT_HTTPS_TOKEN` and `GH_TOKEN` runner-only: used for the first-boot clones, never given to the agent; absent means `true` |
 | `REPOS` | pod spec | JSON list of `{url, branch, path}`; each is cloned into `/workspace/<path>` on first boot; the agent starts in `/workspace` |
 | `AGENTS_OPERATOR_SESSION` | pod spec | session name |
 | `K8S_ACCESS`, `K8S_NAMESPACES` | pod spec | what the mounted ServiceAccount may do (`off`, `readonly`, `namespace`) and, in namespace mode, the comma-separated namespaces with write access; only used for the generated AGENTS.md |
@@ -112,7 +113,7 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | `AGENTS_OPERATOR_LOGIN_<KIND>` | per-session Secret | base64 login bundle seeded into HOME on first boot; only the files known for that kind are written, and never over an existing file; runner-only |
 | `AGENTS_OPERATOR_PRIVATE_FILE` | `agent-runner init` | where init put the runner-only variables; the runner reads and deletes the file at start |
 
-The runner-only variables never reach the agent. `agent-runner init`, the image's entrypoint, moves them into a fresh 0600 file under `/tmp` and execs tini without them, so `/proc/1/environ` does not hold them; the runner loads and deletes the file before the agent starts, leaves them out of the agent's environment and marks itself non-dumpable (`PR_SET_DUMPABLE` 0), which closes its `/proc` entries and ptrace to the agent, a process of the same user without capabilities.
+The runner-only variables (and, with `AGENT_GIT_CREDENTIALS=false`, the git tokens) never reach the agent. `agent-runner init`, the image's entrypoint, moves them into a fresh 0600 file under `/tmp` and execs tini without them, so `/proc/1/environ` does not hold them; the runner loads and deletes the file before the agent starts, leaves them out of the agent's environment and marks itself non-dumpable (`PR_SET_DUMPABLE` 0), which closes its `/proc` entries and ptrace to the agent, a process of the same user without capabilities.
 
 For `AGENT=claude` the runner also prepares `~/.claude.json` before the CLI starts: with any credential present (seeded login, `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`) onboarding is marked complete, an API key from the environment is pre-approved, and `/workspace` plus every repository directory are marked trusted. With `AUTONOMOUS=true` the consent behind `--dangerously-skip-permissions` is recorded in `~/.claude/settings.json` (`skipDangerousModePermissionPrompt`). Keys that already exist are left as they are.
 

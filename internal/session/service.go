@@ -105,6 +105,10 @@ type CreateRequest struct {
 	Tolerations  []config.Toleration `json:"tolerations"`
 	Env          map[string]string   `json:"env"`
 	Autonomous   *bool               `json:"autonomous"`
+	// GitCredentials false keeps the owner's SSH key and HTTPS/GitHub
+	// tokens from the agent (the runner still clones with them). Default
+	// true; on an edit, absent keeps the current value.
+	GitCredentials *bool `json:"git_credentials"`
 	// K8sAccess is what kubectl in the pod may do: "off" (default), "readonly"
 	// (the chart's read-only runner ServiceAccount) or "namespace" (read-only
 	// plus write access in K8sNamespaces). Refused when the hub is not set
@@ -231,7 +235,7 @@ var envKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // reservedEnv cannot be overridden per session.
 var reservedEnv = map[string]bool{
-	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvRepos: true,
+	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvAgentGitCredentials: true, runner.EnvRepos: true,
 	runner.EnvWorkspace: true, runner.EnvListen: true, "HOME": true, "PATH": true,
 	runner.EnvGitSSHKey: true, runner.EnvGitHTTPSToken: true, runner.EnvGitHubToken: true,
 	runner.EnvK8sAccess: true, runner.EnvK8sNamespaces: true,
@@ -381,11 +385,12 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 	if req.Autonomous != nil {
 		autonomous = *req.Autonomous
 	}
+	noGit := req.GitCredentials != nil && !*req.GitCredentials
 	sess := &store.Session{
 		OwnerID: owner.ID, Name: req.Name, Agent: req.Agent, Repos: repos,
 		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, RuntimeClass: req.RuntimeClass, Resources: req.Resources,
 		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
-		K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
+		NoGitCredentials: noGit, K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
 		State: store.StateCreating,
 	}
 	if err := s.Store.Sessions().Create(ctx, sess); err != nil {
@@ -423,6 +428,9 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 	next.Resources, next.NodeSelector, next.Tolerations, next.Env = req.Resources, req.NodeSelector, req.Tolerations, req.Env
 	if req.Autonomous != nil {
 		next.Autonomous = *req.Autonomous
+	}
+	if req.GitCredentials != nil {
+		next.NoGitCredentials = !*req.GitCredentials
 	}
 	updated, err := s.Store.Sessions().Update(ctx, &next)
 	if err != nil {
@@ -828,6 +836,7 @@ type View struct {
 	Tolerations    []config.Toleration `json:"tolerations"`
 	Env            map[string]string   `json:"env"`
 	Autonomous     bool                `json:"autonomous"`
+	GitCredentials bool                `json:"git_credentials"`
 	K8sAccess      string              `json:"k8s_access"`
 	K8sNamespaces  []string            `json:"k8s_namespaces"`
 	State          string              `json:"state"`
@@ -855,7 +864,7 @@ func (s *Service) View(sess *store.Session) View {
 		ID: sess.ID, Name: sess.Name, Agent: sess.Agent, Repos: sess.Repos,
 		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, RuntimeClass: sess.RuntimeClass, Resources: sess.Resources,
 		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
-		K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
+		GitCredentials: !sess.NoGitCredentials, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
 		State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
 	}

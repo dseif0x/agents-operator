@@ -197,7 +197,7 @@ func TestBuildPod(t *testing.T) {
 	for _, e := range c.Env {
 		env[e.Name] = e.Value
 	}
-	if env["AGENT"] != "claude" || env["AUTONOMOUS"] != "true" || env["FOO"] != "bar" || env["ANTHROPIC_BASE_URL"] != "http://cliproxy" {
+	if env["AGENT"] != "claude" || env["AUTONOMOUS"] != "true" || env["AGENT_GIT_CREDENTIALS"] != "true" || env["FOO"] != "bar" || env["ANTHROPIC_BASE_URL"] != "http://cliproxy" {
 		t.Fatalf("env = %v", env)
 	}
 	if env["REPOS"] != `[{"url":"git@github.com:x/y.git","branch":"main","path":"y"},{"url":"https://github.com/x/z.git","path":"z"}]` {

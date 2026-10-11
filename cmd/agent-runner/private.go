@@ -34,9 +34,23 @@ import (
 const privateFilePattern = "agents-operator-private-*"
 
 // runnerPrivate reports whether an environment variable is for the runner
-// alone and must never reach the agent.
+// alone and must never reach the agent. The git tokens join them when the
+// session keeps git credentials from the agent.
 func runnerPrivate(key string) bool {
-	return key == runner.EnvRunnerToken || key == runner.EnvGitSSHKey || strings.HasPrefix(key, runner.EnvSeedPrefix)
+	return key == runner.EnvRunnerToken || key == runner.EnvGitSSHKey || strings.HasPrefix(key, runner.EnvSeedPrefix) ||
+		(gitToken(key) && !agentGitCredentials())
+}
+
+// gitToken reports whether key carries a git or GitHub token.
+func gitToken(key string) bool {
+	return key == runner.EnvGitHTTPSToken || key == runner.EnvGitHubToken || key == "GITHUB_TOKEN"
+}
+
+// agentGitCredentials reports whether the agent may use the owner's git
+// credentials; only an explicit "false" withholds them.
+func agentGitCredentials() bool {
+	v := os.Getenv(runner.EnvAgentGitCredentials)
+	return !strings.EqualFold(v, "false") && v != "0"
 }
 
 // splitPrivateEnv separates the runner-only variables from the rest.

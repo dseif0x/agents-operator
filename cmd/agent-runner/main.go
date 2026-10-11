@@ -215,6 +215,9 @@ type Workspace struct {
 	Agent string
 	Log   *slog.Logger
 	repos []store.Repo
+	// cloneKey is the SSH key file the clones use when the agent must not
+	// have the key; it exists only during Bootstrap.
+	cloneKey string
 }
 
 // HomeDir is the agent's HOME on the PVC.
