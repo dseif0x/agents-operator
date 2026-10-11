@@ -338,7 +338,7 @@ function Drawer(props: { session: Session; tab: "events" | "logs" | "info"; setT
               `id:            ${s.id}`,
               `pod:           ${s.pod_name}`,
               `state:         ${s.state}${s.state_reason ? " (" + s.state_reason + ")" : ""}`,
-              `agent:         ${s.agent}${s.autonomous ? " (autonomous)" : ""}`,
+              `agent:         ${s.agent}${s.autonomous ? " (autonomous)" : ""}${s.git_credentials === false ? " (no git credentials)" : ""}`,
               ...(s.repos?.length
                 ? s.repos.map((r, i) => `${i === 0 ? "repos:         " : "               "}/workspace/${r.path}  ←  ${r.url}${r.branch ? " @ " + r.branch : ""}`)
                 : ["repos:         (none)"]),

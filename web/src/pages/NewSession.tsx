@@ -97,6 +97,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
   const [k8sAccess, setK8sAccess] = useState<K8sAccess>("off");
   const [k8sNamespaces, setK8sNamespaces] = useState("");
   const [autonomous, setAutonomous] = useState(true);
+  const [gitCredentials, setGitCredentials] = useState(true);
   const [editable, setEditable] = useState<boolean | null>(editing ? null : true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -146,6 +147,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         setK8sAccess(s.k8s_access || "off");
         setK8sNamespaces((s.k8s_namespaces || []).join(", "));
         setAutonomous(s.autonomous);
+        setGitCredentials(s.git_credentials ?? true);
         setEditable(s.state === "stopped" || s.state === "failed");
       })
       .catch((e) => setError((e as Error).message));
@@ -188,7 +190,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
       return;
     }
     setBusy(true);
-    const req: CreateSessionRequest = { name, agent, repos: parsed.repos, autonomous, k8s_access: k8sAccess };
+    const req: CreateSessionRequest = { name, agent, repos: parsed.repos, autonomous, git_credentials: gitCredentials, k8s_access: k8sAccess };
     if (k8sAccess === "namespace") {
       req.k8s_namespaces = k8sNamespaces
         .split(/[\s,]+/)
@@ -322,6 +324,13 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
           <input id="auto" type="checkbox" checked={autonomous} onChange={(e) => setAutonomous((e.target as HTMLInputElement).checked)} />
           <label for="auto" style="margin:0;color:inherit">
             Autonomous (skip permission prompts; Claude gets <code>--dangerously-skip-permissions</code>)
+          </label>
+        </div>
+        <div class="checkbox">
+          <input id="gitcreds" type="checkbox" checked={gitCredentials} onChange={(e) => setGitCredentials((e.target as HTMLInputElement).checked)} />
+          <label for="gitcreds" style="margin:0;color:inherit">
+            Git credentials for the agent (your SSH key and HTTPS/GitHub tokens). Off: the repos are still cloned with them, but the agent can only
+            commit, not push or use <code>gh</code>
           </label>
         </div>
         {defaults?.service_account && (

@@ -36,8 +36,9 @@ The NOTES print how to read the generated admin password. Set your model credent
 Agents run with permission checks skipped, on real repos, with real credentials, so the pod boundary is the only boundary:
 
 - non-root (UID 1000), read-only root filesystem, all capabilities dropped, seccomp RuntimeDefault, no service account token unless a session opts into Kubernetes access (read-only, or read-only plus `edit` in namespaces its owner lists), no host network/paths/privileged. There is no values flag to relax any of this.
-- default-deny NetworkPolicy: DNS, 443 and 22 outward (minus cluster ranges), inbound only from the hub.
-- per-session random runner tokens rotated on every start; per-user credentials in Kubernetes Secrets, never echoed by the API.
+- default-deny NetworkPolicy: cluster DNS, and 443 and 22 outward to public addresses only (no private or link-local ranges, so neither the cluster, the nodes nor your LAN), inbound only from the hub.
+- per-session random runner tokens rotated on every start; per-user credentials in Kubernetes Secrets, never echoed by the API. A session gets only the model credentials its agent uses; git credentials go to every agent unless the session turns them off, in which case the runner only clones with them and the agent can commit but not push.
+- the runner token, SSH key and saved-login seeds never sit in the agent's reach: they are moved out of PID 1's environment before it starts, and the runner, which holds them, is non-dumpable.
 - hub: distroless, cookie sessions (`HttpOnly; Secure; SameSite=Lax`), CSRF header on writes, Origin and Host allowlists, login rate limiting, argon2id.
 - namespace-scoped Role with exactly the verbs needed; cluster-wide rights only when namespace write access for sessions is turned on, and only the ones that needs.
 

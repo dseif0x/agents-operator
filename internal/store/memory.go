@@ -187,6 +187,7 @@ func (r memSessions) Update(_ context.Context, s *Session) (*Session, error) {
 	cur.K8sAccess, cur.K8sNamespaces = s.K8sAccess, append([]string(nil), s.K8sNamespaces...)
 	normaliseK8s(cur)
 	cur.Resources, cur.NodeSelector, cur.Tolerations, cur.Env, cur.Autonomous = s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous
+	cur.NoGitCredentials = s.NoGitCredentials
 	cur.UpdatedAt = time.Now()
 	return copySession(cur), nil
 }

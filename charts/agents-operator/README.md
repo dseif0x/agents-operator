@@ -22,7 +22,7 @@ The `auth.existingSecret` must contain `cookieSecret` (32+ bytes hex) and either
 
 ## Session pod security
 
-Every session pod runs non-root (UID 1000), with `readOnlyRootFilesystem`, all capabilities dropped, `seccompProfile: RuntimeDefault`, no service account token, no host namespaces and no host paths. None of this is configurable. `runner.networkPolicy` adds a default-deny policy: DNS, 443 and 22 outward (minus `blockedCIDRs`), plus `egressCIDRs`; inbound only from the hub on 7681.
+Every session pod runs non-root (UID 1000), with `readOnlyRootFilesystem`, all capabilities dropped, `seccompProfile: RuntimeDefault`, no service account token, no host namespaces and no host paths. None of this is configurable. `runner.networkPolicy` adds a default-deny policy: DNS to the cluster DNS (`dnsTo`), 443 and 22 outward minus `blockedCIDRs` (every private and link-local range, so neither the cluster, the nodes nor your LAN), plus `egressCIDRs`; inbound only from the hub on 7681.
 
 ## Requirements
 
@@ -79,8 +79,9 @@ Kubernetes: `>=1.27.0-0`
 | runner.maxResources | object | `{}` | The most a session may ask for, per limit (e.g. `limits: {cpu: "8", memory: 32Gi, nvidia.com/gpu: 2}`); a limit left out here is capped at its default |
 | runner.networkPolicy.apiServerCIDRs | list | `[]` | Where session pods may reach the Kubernetes API once the runner ServiceAccount is on: CIDRs of the API server endpoints (control-plane node IPs) plus the `kubernetes` service IP. Empty = read from the cluster's `kubernetes` Endpoints and Service at install time (`helm template` cannot, and renders no rule) |
 | runner.networkPolicy.apiServerPort | int | `6443` | Port of the API server on those endpoints (the service IP is always allowed on 443) |
-| runner.networkPolicy.blockedCIDRs | list | `["10.42.0.0/16","10.43.0.0/16"]` | CIDRs excluded from the "443/22 anywhere" rules: cluster pod and service ranges (k3s defaults) |
-| runner.networkPolicy.egressCIDRs | list | `[]` | Extra allowed egress CIDRs (all ports), e.g. an in-cluster LLM proxy |
+| runner.networkPolicy.blockedCIDRs | list | `["10.0.0.0/8","172.16.0.0/12","192.168.0.0/16","100.64.0.0/10","169.254.0.0/16"]` | CIDRs excluded from the "443/22 anywhere" rules: every private, shared (CGNAT, Tailscale) and link-local IPv4 range, which covers the cluster's pod and service ranges, the nodes and the LAN around them. Open what sessions need with `egressCIDRs` |
+| runner.networkPolicy.dnsTo | list | `[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}},"podSelector":{"matchLabels":{"k8s-app":"kube-dns"}}}]` | Where session pods may send DNS queries (NetworkPolicy "to" peers, port 53). Default: the cluster DNS pods (`k8s-app: kube-dns` in `kube-system`, as on k3s and most distributions). With NodeLocal DNSCache add its address as an ipBlock (e.g. `169.254.20.10/32`); `[]` allows DNS to any address |
+| runner.networkPolicy.egressCIDRs | list | `[]` | Extra allowed egress CIDRs (all ports), e.g. an in-cluster LLM proxy or a git server on your LAN |
 | runner.networkPolicy.enabled | bool | `true` | Create a default-deny NetworkPolicy for session pods |
 | runner.networkPolicy.extraEgress | list | `[]` | Extra peers allowed to egress to on any port (raw NetworkPolicy "to" entries) |
 | runner.nodeSelector | object | `{}` | Node selector applied to every session pod |

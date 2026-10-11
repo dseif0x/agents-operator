@@ -110,7 +110,7 @@ func TestLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.State != store.StateCreating || sess.PVCSize != "20Gi" || sess.StorageClass != "nfs-fast" || !sess.Autonomous {
+	if sess.State != store.StateCreating || sess.PVCSize != "20Gi" || sess.StorageClass != "nfs-fast" || !sess.Autonomous || sess.NoGitCredentials {
 		t.Fatalf("defaults not applied: %+v", sess)
 	}
 	if len(sess.Repos) != 1 || sess.Repos[0].Path != "y" || sess.Repos[0].URL != "git@github.com:x/y.git" {
@@ -490,7 +490,7 @@ func TestUpdate(t *testing.T) {
 	}
 	edit := CreateRequest{Name: "edited", Agent: "codex", PVCSize: "99Gi", StorageClass: "other", ImageTag: "1.2.3", RuntimeClass: "gvisor",
 		Repos: []store.Repo{{URL: "https://x/app.git"}, {URL: "https://x/lib.git"}}, Env: map[string]string{"A": "b"}, Autonomous: ptr.To(false),
-		Resources: config.Resources{Limits: config.ResourceList{CPU: "2", Memory: "1Gi"}}}
+		GitCredentials: ptr.To(false), Resources: config.Resources{Limits: config.ResourceList{CPU: "2", Memory: "1Gi"}}}
 	// Only stopped or failed sessions can be edited.
 	if _, err := svc.Update(ctx, u, sess.ID, edit); err != ErrInvalidTransition {
 		t.Fatalf("update while creating = %v", err)
@@ -507,8 +507,11 @@ func TestUpdate(t *testing.T) {
 	if up.Agent != "claude" || up.PVCSize != "5Gi" || up.StorageClass != "nfs-fast" {
 		t.Fatalf("immutable fields changed: %+v", up)
 	}
-	if up.Name != "edited" || up.ImageTag != "1.2.3" || up.RuntimeClass != "gvisor" || len(up.Repos) != 2 || up.Repos[1].Path != "lib" || up.Env["A"] != "b" || up.Autonomous || up.Resources.Limits.Memory != "1Gi" {
+	if up.Name != "edited" || up.ImageTag != "1.2.3" || up.RuntimeClass != "gvisor" || len(up.Repos) != 2 || up.Repos[1].Path != "lib" || up.Env["A"] != "b" || up.Autonomous || up.Resources.Limits.Memory != "1Gi" || !up.NoGitCredentials {
 		t.Fatalf("update = %+v", up)
+	}
+	if v := svc.View(up); v.GitCredentials {
+		t.Fatal("view reports git credentials for a session without them")
 	}
 	if up.State != store.StateStopped || len(orch.notified) != notified {
 		t.Fatalf("update changed state or notified the reconciler: %+v", up)

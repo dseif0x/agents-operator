@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Runner image: agent-runner (PID 1 via tini) plus the agent CLIs.
+# Runner image: agent-runner (under tini as PID 1) plus the agent CLIs.
 # Built for linux/amd64 and linux/arm64. Base images pinned by digest.
 
 FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS build
@@ -104,5 +104,7 @@ COPY --from=build /out/agent-runner /usr/local/bin/agent-runner
 
 WORKDIR /workspace
 EXPOSE 7681
+# `agent-runner init` moves the runner-only secrets out of the environment
+# before tini starts, so PID 1 does not carry them (cmd/agent-runner/private.go).
 # tini reaps zombies and forwards signals; agent-runner forwards SIGTERM to the agent.
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/agent-runner"]
+ENTRYPOINT ["/usr/local/bin/agent-runner", "init", "/usr/bin/tini", "--", "/usr/local/bin/agent-runner"]

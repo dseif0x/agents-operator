@@ -128,21 +128,25 @@ type Session struct {
 	// identity), K8sAccessReadOnly (the chart's read-only runner
 	// ServiceAccount) or K8sAccessNamespace (an account of its own, read-only
 	// like the shared one plus write access in K8sNamespaces).
-	K8sAccess      string
-	K8sNamespaces  []string
-	Resources      config.Resources
-	NodeSelector   map[string]string
-	Tolerations    []config.Toleration
-	Env            map[string]string
-	Autonomous     bool
-	State          string
-	StateReason    string
-	Generation     int
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastAttachedAt *time.Time
-	LastOutputAt   *time.Time
-	DeletedAt      *time.Time
+	K8sAccess     string
+	K8sNamespaces []string
+	Resources     config.Resources
+	NodeSelector  map[string]string
+	Tolerations   []config.Toleration
+	Env           map[string]string
+	Autonomous    bool
+	// NoGitCredentials keeps the owner's git credentials (SSH key, HTTPS
+	// and GitHub tokens) from the agent. The runner still clones with them
+	// on first boot; the agent can commit but not push or use the GitHub API.
+	NoGitCredentials bool
+	State            string
+	StateReason      string
+	Generation       int
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	LastAttachedAt   *time.Time
+	LastOutputAt     *time.Time
+	DeletedAt        *time.Time
 }
 
 // Event is one row of session_events.
@@ -171,7 +175,8 @@ type Sessions interface {
 	ListAll(ctx context.Context) ([]*Session, error)
 	// Update replaces the editable settings (name, repos, image tag,
 	// runtime class, service account, resources, node selector,
-	// tolerations, env, autonomous) and returns the updated row.
+	// tolerations, env, autonomous, git credentials) and returns the
+	// updated row.
 	Update(ctx context.Context, s *Session) (*Session, error)
 	// SetState updates state and reason. It returns the updated row.
 	SetState(ctx context.Context, id, state, reason string) (*Session, error)

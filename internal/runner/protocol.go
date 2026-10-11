@@ -218,16 +218,24 @@ func DecodeLoginBundle(kind string, data []byte) LoginBundle {
 // Environment variables the runner reads. All of them are injected by the
 // hub through the per-session Secret or the pod spec.
 const (
-	EnvRunnerToken   = "RUNNER_TOKEN"
-	EnvAgent         = "AGENT"
-	EnvAutonomous    = "AUTONOMOUS"
-	EnvRepos         = "REPOS"    // JSON list of {url, branch, path}; cloned under WORKSPACE
-	EnvGitHubToken   = "GH_TOKEN" // GitHub token for gh and https clones of github.com
-	EnvGitUserName   = "GIT_USER_NAME"
-	EnvGitUserEmail  = "GIT_USER_EMAIL"
-	EnvGitSSHKey     = "GIT_SSH_KEY"            // private key contents
-	EnvGitHTTPSToken = "GIT_HTTPS_TOKEN"        // token for https clones
-	EnvSeedPrefix    = "AGENTS_OPERATOR_LOGIN_" // + upper(kind): base64 credential file to seed
+	EnvRunnerToken = "RUNNER_TOKEN"
+	EnvAgent       = "AGENT"
+	EnvAutonomous  = "AUTONOMOUS"
+	// EnvAgentGitCredentials is "false" when the agent must not get the git
+	// credentials (GIT_SSH_KEY, GIT_HTTPS_TOKEN, GH_TOKEN): the runner then
+	// keeps them to itself and uses them only to clone. Absent means true.
+	EnvAgentGitCredentials = "AGENT_GIT_CREDENTIALS"
+	EnvRepos               = "REPOS"    // JSON list of {url, branch, path}; cloned under WORKSPACE
+	EnvGitHubToken         = "GH_TOKEN" // GitHub token for gh and https clones of github.com
+	EnvGitUserName         = "GIT_USER_NAME"
+	EnvGitUserEmail        = "GIT_USER_EMAIL"
+	EnvGitSSHKey           = "GIT_SSH_KEY"            // private key contents
+	EnvGitHTTPSToken       = "GIT_HTTPS_TOKEN"        // token for https clones
+	EnvSeedPrefix          = "AGENTS_OPERATOR_LOGIN_" // + upper(kind): base64 credential file to seed
+	// EnvPrivateFile is set by `agent-runner init`: the file holding the
+	// runner-only variables above (RUNNER_TOKEN, GIT_SSH_KEY, the login
+	// seeds), moved out of the environment so PID 1 does not carry them.
+	EnvPrivateFile = "AGENTS_OPERATOR_PRIVATE_FILE"
 	// EnvClaudeOAuthToken is Claude Code's own long-lived token variable (the
 	// output of `claude setup-token`); EnvAnthropicAPIKey its API key. The
 	// runner only looks at them to skip the CLI's onboarding prompts.

@@ -30,17 +30,36 @@ tests:
           path: spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/instance"]
           value: hub
 
-  - it: allows DNS, 443 and 22 outside the cluster ranges
+  - it: allows DNS to the cluster DNS only
     asserts:
       - equal:
           path: spec.egress[0].ports[0].port
           value: 53
       - equal:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: kube-system
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["k8s-app"]
+          value: kube-dns
+
+  - it: allows DNS anywhere when dnsTo is emptied
+    set:
+      runner.networkPolicy.dnsTo: []
+    asserts:
+      - equal:
+          path: spec.egress[0].ports[1].port
+          value: 53
+      - notExists:
+          path: spec.egress[0].to
+
+  - it: allows 443 and 22 outside every private and link-local range
+    asserts:
+      - equal:
           path: spec.egress[1].to[0].ipBlock.cidr
           value: 0.0.0.0/0
-      - contains:
+      - equal:
           path: spec.egress[1].to[0].ipBlock.except
-          content: 10.43.0.0/16
+          value: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
       - contains:
           path: spec.egress[1].ports
           content:

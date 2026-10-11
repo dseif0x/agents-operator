@@ -24,7 +24,7 @@ The `auth.existingSecret` must contain `cookieSecret` (32+ bytes hex) and either
 
 ## Session pod security
 
-Every session pod runs non-root (UID 1000), with `readOnlyRootFilesystem`, all capabilities dropped, `seccompProfile: RuntimeDefault`, no service account token, no host namespaces and no host paths. None of this is configurable. `runner.networkPolicy` adds a default-deny policy: DNS, 443 and 22 outward (minus `blockedCIDRs`), plus `egressCIDRs`; inbound only from the hub on 7681.
+Every session pod runs non-root (UID 1000), with `readOnlyRootFilesystem`, all capabilities dropped, `seccompProfile: RuntimeDefault`, no service account token, no host namespaces and no host paths. None of this is configurable. `runner.networkPolicy` adds a default-deny policy: DNS to the cluster DNS (`dnsTo`), 443 and 22 outward minus `blockedCIDRs` (every private and link-local range, so neither the cluster, the nodes nor your LAN), plus `egressCIDRs`; inbound only from the hub on 7681.
 
 {{ template "chart.requirementsSection" . }}
 

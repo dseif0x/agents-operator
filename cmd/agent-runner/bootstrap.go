@@ -49,6 +49,7 @@ func (w *Workspace) Bootstrap(ctx context.Context) error {
 	if err := w.installGitCredentials(); err != nil {
 		return err
 	}
+	defer w.dropCloneKey()
 	w.seedLogins()
 
 	repos, err := w.Repos()
@@ -144,16 +145,20 @@ func (w *Workspace) Repos() ([]store.Repo, error) {
 	return repos, nil
 }
 
-// Env is the environment the agent runs with.
-func (w *Workspace) Env() []string {
+// Env is the environment the agent runs with: the git credentials only
+// when the session lets the agent have them.
+func (w *Workspace) Env() []string { return w.env(agentGitCredentials()) }
+
+// cloneEnv is the environment of the first-boot clones, which always use
+// the git credentials there are.
+func (w *Workspace) cloneEnv() []string { return w.env(true) }
+
+func (w *Workspace) env(git bool) []string {
 	env := []string{}
-	skip := map[string]bool{
-		runner.EnvRunnerToken: true, runner.EnvGitSSHKey: true,
-	}
 	hasGitHubToken := false
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if skip[k] || strings.HasPrefix(k, runner.EnvSeedPrefix) {
+		if runnerPrivate(k) && !(git && gitToken(k)) {
 			continue
 		}
 		if k == "GITHUB_TOKEN" {
@@ -171,9 +176,16 @@ func (w *Workspace) Env() []string {
 		"npm_config_cache="+filepath.Join(w.HomeDir(), ".npm"),
 		"TMPDIR="+w.TempDir(),
 	)
-	hasSSHKey := os.Getenv(runner.EnvGitSSHKey) != ""
+	if !git {
+		return env
+	}
+	keyPath := w.sshKeyPath()
+	if !agentGitCredentials() {
+		keyPath = w.cloneKey // only while cloning; empty otherwise
+	}
+	hasSSHKey := os.Getenv(runner.EnvGitSSHKey) != "" && keyPath != ""
 	if hasSSHKey {
-		env = append(env, "GIT_SSH_COMMAND=ssh -i "+w.sshKeyPath()+" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new")
+		env = append(env, "GIT_SSH_COMMAND=ssh -i "+keyPath+" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new")
 	}
 	// gh reads GH_TOKEN; some tools (and GitHub Actions conventions) want GITHUB_TOKEN.
 	ghToken := os.Getenv(runner.EnvGitHubToken)
@@ -246,22 +258,43 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 	default:
 		b.WriteString("- This pod carries a read-only Kubernetes ServiceAccount, so `kubectl` works in-cluster for reading: `kubectl get`, `describe`, `logs`, `top`, `-A` for all namespaces. It cannot create, change or delete anything, read Secrets, or exec into pods; say so rather than retrying when such a command is denied.\n")
 	}
-	if os.Getenv(runner.EnvGitHubToken) != "" {
-		b.WriteString("- The GitHub CLI `gh` is installed and authenticated (`GH_TOKEN`). Use it for pull requests, reviews, issues, checks and Actions runs, e.g. `gh pr view`, `gh pr create`, `gh run list`, `gh run view <id> --log-failed`. HTTPS pushes to github.com use the same token.\n")
-	} else {
-		b.WriteString("- The GitHub CLI `gh` is installed but no GitHub token is configured; it will not be able to call the API.\n")
-	}
+	// What git and gh can do: with the session's credentials withheld, or
+	// none configured on the account, say plainly that pushing will fail.
+	agentGit := agentGitCredentials()
+	ghToken := agentGit && os.Getenv(runner.EnvGitHubToken) != ""
+	sshKey := agentGit && os.Getenv(runner.EnvGitSSHKey) != ""
+	httpsToken := agentGit && os.Getenv(runner.EnvGitHTTPSToken) != ""
+	canPush := ghToken || sshKey || httpsToken
 	switch {
-	case os.Getenv(runner.EnvGitSSHKey) != "":
-		b.WriteString("- Git over SSH is configured with a deploy key at `~/.ssh/id_ed25519`.\n")
-	case os.Getenv(runner.EnvGitHubToken) != "":
-		b.WriteString("- No SSH key is configured; `git@github.com:` remotes are rewritten to HTTPS automatically.\n")
+	case !agentGit:
+		b.WriteString("- This session gives you no git credentials: its owner turned them off. You can commit, but pushing, fetching private repositories and the GitHub API (`gh`) will fail. Leave your work committed on a branch and say so when you finish; do not look for or ask for credentials.\n")
+	case !canPush:
+		b.WriteString("- No git credentials are configured (no SSH key or token on the owner's account). You can commit, but pushing, fetching private repositories and the GitHub API (`gh`) will fail. Leave your work committed on a branch and say so when you finish.\n")
+	default:
+		if ghToken {
+			b.WriteString("- The GitHub CLI `gh` is installed and authenticated (`GH_TOKEN`). Use it for pull requests, reviews, issues, checks and Actions runs, e.g. `gh pr view`, `gh pr create`, `gh run list`, `gh run view <id> --log-failed`. HTTPS pushes to github.com use the same token.\n")
+		} else {
+			b.WriteString("- The GitHub CLI `gh` is installed but no GitHub token is configured; it will not be able to call the API.\n")
+		}
+		switch {
+		case sshKey:
+			b.WriteString("- Git over SSH is configured with a deploy key at `~/.ssh/id_ed25519`.\n")
+		case ghToken:
+			b.WriteString("- No SSH key is configured; `git@github.com:` remotes are rewritten to HTTPS automatically.\n")
+		}
+		if httpsToken {
+			b.WriteString("- Git over HTTPS uses a configured token for every host.\n")
+		}
 	}
 	if name := os.Getenv(runner.EnvGitUserName); name != "" {
 		b.WriteString("- Commits are authored as " + name + " <" + os.Getenv(runner.EnvGitUserEmail) + ">.\n")
 	}
 	b.WriteString("\n## Conventions\n\n")
-	b.WriteString("- Work on branches and open pull requests rather than pushing to the default branch, unless told otherwise.\n")
+	if canPush {
+		b.WriteString("- Work on branches and open pull requests rather than pushing to the default branch, unless told otherwise.\n")
+	} else {
+		b.WriteString("- Work on a branch and commit there; the owner pushes it.\n")
+	}
 	b.WriteString("- Never write credentials to files inside the repositories; tokens come from the environment.\n")
 	b.WriteString("- Each repository may contain its own AGENTS.md or CLAUDE.md with project rules; those take precedence over this file.\n")
 	content := b.String()
@@ -312,21 +345,50 @@ func (w *Workspace) seedGitConfig() error {
 // installGitCredentials writes the SSH key with mode 0600. Kubernetes
 // Secret volumes cannot produce a file ssh accepts (they are group readable
 // once fsGroup applies), so the key is passed through the environment and
-// materialised here.
+// materialised here. When the agent must not have it, the key goes to a
+// temporary file outside HOME for the clones instead (dropCloneKey removes
+// it before the agent starts) and any key an earlier boot installed is
+// removed.
 func (w *Workspace) installGitCredentials() error {
 	key := os.Getenv(runner.EnvGitSSHKey)
 	path := w.sshKeyPath()
-	if key == "" {
+	if key == "" || !agentGitCredentials() {
 		_ = os.Remove(path)
+	}
+	if key == "" {
 		return nil
 	}
 	if !strings.HasSuffix(key, "\n") {
 		key += "\n"
 	}
+	if !agentGitCredentials() {
+		f, err := os.CreateTemp("", "agents-operator-clone-key-*")
+		if err != nil {
+			return fmt.Errorf("write clone key: %w", err)
+		}
+		_, err = f.WriteString(key)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			_ = os.Remove(f.Name())
+			return fmt.Errorf("write clone key: %w", err)
+		}
+		w.cloneKey = f.Name()
+		return nil
+	}
 	if err := os.WriteFile(path, []byte(key), 0o600); err != nil {
 		return fmt.Errorf("write ssh key: %w", err)
 	}
 	return os.Chmod(path, 0o600)
+}
+
+// dropCloneKey removes the temporary clone key, if there is one.
+func (w *Workspace) dropCloneKey() {
+	if w.cloneKey != "" {
+		_ = os.Remove(w.cloneKey)
+		w.cloneKey = ""
+	}
 }
 
 // seedLogins writes saved CLI credential files when they do not exist yet.
@@ -625,7 +687,7 @@ func (w *Workspace) clone(ctx context.Context, url, branch, dst string) error {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, "git", args...)
-	cmd.Env = w.Env()
+	cmd.Env = w.cloneEnv()
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("git clone %s: %w", url, err)
