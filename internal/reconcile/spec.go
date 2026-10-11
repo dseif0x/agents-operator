@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -165,19 +166,47 @@ var credentialEnv = map[string]string{
 	store.CredGitUserEmail:     runner.EnvGitUserEmail,
 }
 
+// modelCredentials are the credential kinds that sign in to a model
+// provider. A session only gets the ones its agent uses (agentCredentials);
+// git credentials and identity go to every session.
+var modelCredentials = map[string]bool{
+	store.CredAnthropicAPIKey: true, store.CredAnthropicBaseURL: true, store.CredClaudeOAuthToken: true,
+	store.CredOpenAIAPIKey: true, store.CredUnjailedAPIKey: true, store.CredClaudeLogin: true, store.CredCodexLogin: true,
+}
+
+// agentCredentials lists the model credentials each agent's CLI reads, so a
+// prompt-injected agent cannot read the keys of providers it never talks
+// to. The shell has no model behind it and gets all of them, for running
+// any CLI by hand. An agent missing here gets none.
+var agentCredentials = map[string][]string{
+	runner.AgentClaude:   {store.CredAnthropicAPIKey, store.CredAnthropicBaseURL, store.CredClaudeOAuthToken, store.CredClaudeLogin},
+	runner.AgentOpenCode: {store.CredAnthropicAPIKey, store.CredAnthropicBaseURL, store.CredOpenAIAPIKey},
+	runner.AgentCodex:    {store.CredOpenAIAPIKey, store.CredCodexLogin},
+	runner.AgentUnjailed: {store.CredUnjailedAPIKey},
+}
+
+// credentialFor reports whether a session running agent gets credential kind.
+func credentialFor(agent, kind string) bool {
+	if !modelCredentials[kind] || agent == runner.AgentShell {
+		return true
+	}
+	return slices.Contains(agentCredentials[agent], kind)
+}
+
 // BuildSecret returns the per-session Secret: the runner token plus the
-// user's credentials projected as env. userSecret is the data of the
-// per-user Secret (may be nil).
+// user's credentials projected as env, limited to the model credentials
+// the session's agent uses. userSecret is the data of the per-user Secret
+// (may be nil).
 func BuildSecret(s *store.Session, cfg Config, token string, userSecret map[string][]byte) *corev1.Secret {
 	data := map[string][]byte{runner.EnvRunnerToken: []byte(token)}
 	for kind, env := range credentialEnv {
-		if v, ok := userSecret[kind]; ok && len(v) > 0 {
+		if v, ok := userSecret[kind]; ok && len(v) > 0 && credentialFor(s.Agent, kind) {
 			data[env] = v
 		}
 	}
 	// Saved CLI logins are seeded on first boot; the runner expects base64.
 	for kind := range runner.LoginFiles {
-		if v, ok := userSecret[kind]; ok && len(v) > 0 {
+		if v, ok := userSecret[kind]; ok && len(v) > 0 && credentialFor(s.Agent, kind) {
 			data[runner.EnvSeedPrefix+strings.ToUpper(kind)] = []byte(base64.StdEncoding.EncodeToString(v))
 		}
 	}

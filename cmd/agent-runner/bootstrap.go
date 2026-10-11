@@ -147,13 +147,10 @@ func (w *Workspace) Repos() ([]store.Repo, error) {
 // Env is the environment the agent runs with.
 func (w *Workspace) Env() []string {
 	env := []string{}
-	skip := map[string]bool{
-		runner.EnvRunnerToken: true, runner.EnvGitSSHKey: true,
-	}
 	hasGitHubToken := false
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if skip[k] || strings.HasPrefix(k, runner.EnvSeedPrefix) {
+		if runnerPrivate(k) {
 			continue
 		}
 		if k == "GITHUB_TOKEN" {

@@ -74,12 +74,23 @@ runner:
     apiServerCIDRs: []
     # -- Port of the API server on those endpoints (the service IP is always allowed on 443)
     apiServerPort: 6443
-    # -- Extra allowed egress CIDRs (all ports), e.g. an in-cluster LLM proxy
+    # -- Extra allowed egress CIDRs (all ports), e.g. an in-cluster LLM proxy or a git server on your LAN
     egressCIDRs: []
-    # -- CIDRs excluded from the "443/22 anywhere" rules: cluster pod and service ranges (k3s defaults)
+    # -- CIDRs excluded from the "443/22 anywhere" rules: every private, shared (CGNAT, Tailscale) and link-local IPv4 range, which covers the cluster's pod and service ranges, the nodes and the LAN around them. Open what sessions need with `egressCIDRs`
     blockedCIDRs:
-      - 10.42.0.0/16
-      - 10.43.0.0/16
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 100.64.0.0/10
+      - 169.254.0.0/16
+    # -- Where session pods may send DNS queries (NetworkPolicy "to" peers, port 53). Default: the cluster DNS pods (`k8s-app: kube-dns` in `kube-system`, as on k3s and most distributions). With NodeLocal DNSCache add its address as an ipBlock (e.g. `169.254.20.10/32`); `[]` allows DNS to any address
+    dnsTo:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
     # -- Extra peers allowed to egress to on any port (raw NetworkPolicy "to" entries)
     extraEgress: []
 

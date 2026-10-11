@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"slices"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -66,11 +67,14 @@ func TestBuildSecret(t *testing.T) {
 		store.CredUnjailedAPIKey:   []byte("sk-uj"),
 		"unknown":                  []byte("x"),
 	})
-	if string(sec.Data["RUNNER_TOKEN"]) != "tok" || string(sec.Data["ANTHROPIC_API_KEY"]) != "sk-ant" || string(sec.Data["GIT_SSH_KEY"]) != "-----BEGIN" || string(sec.Data["GH_TOKEN"]) != "ghp_x" || string(sec.Data["CLAUDE_CODE_OAUTH_TOKEN"]) != "sk-ant-oat01-x" || string(sec.Data["UNJAILED_API_KEY"]) != "sk-uj" {
+	if string(sec.Data["RUNNER_TOKEN"]) != "tok" || string(sec.Data["ANTHROPIC_API_KEY"]) != "sk-ant" || string(sec.Data["GIT_SSH_KEY"]) != "-----BEGIN" || string(sec.Data["GH_TOKEN"]) != "ghp_x" || string(sec.Data["CLAUDE_CODE_OAUTH_TOKEN"]) != "sk-ant-oat01-x" {
 		t.Fatalf("data = %v", sec.Data)
 	}
 	if string(sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"]) != "eyJhIjoxfQ==" {
 		t.Fatalf("login seed = %q", sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"])
+	}
+	if _, ok := sec.Data["UNJAILED_API_KEY"]; ok {
+		t.Fatal("Unjailed key projected into a claude session")
 	}
 	if _, ok := sec.Data["unknown"]; ok {
 		t.Fatal("unknown key projected")
@@ -82,6 +86,45 @@ func TestBuildSecret(t *testing.T) {
 	sec = BuildSecret(s, testCfg(), "tok2", nil)
 	if len(sec.Data) != 1 || string(sec.Data["RUNNER_TOKEN"]) != "tok2" {
 		t.Fatalf("data = %v", sec.Data)
+	}
+}
+
+func TestBuildSecretScopesModelCredentials(t *testing.T) {
+	user := map[string][]byte{
+		store.CredAnthropicAPIKey:  []byte("sk-ant"),
+		store.CredAnthropicBaseURL: []byte("https://proxy"),
+		store.CredClaudeOAuthToken: []byte("sk-ant-oat01-x"),
+		store.CredOpenAIAPIKey:     []byte("sk-oai"),
+		store.CredClaudeLogin:      []byte(`{"a":1}`),
+		store.CredCodexLogin:       []byte(`{"c":1}`),
+		store.CredUnjailedAPIKey:   []byte("sk-uj"),
+		store.CredGitHubToken:      []byte("ghp_x"),
+		store.CredGitSSHKey:        []byte("-----BEGIN"),
+		store.CredGitUserEmail:     []byte("a@b.c"),
+	}
+	git := []string{"GH_TOKEN", "GIT_SSH_KEY", "GIT_USER_EMAIL"}
+	for agent, want := range map[string][]string{
+		runner.AgentClaude:   {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"},
+		runner.AgentOpenCode: {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY"},
+		runner.AgentCodex:    {"OPENAI_API_KEY", "AGENTS_OPERATOR_LOGIN_CODEX_LOGIN"},
+		runner.AgentUnjailed: {"UNJAILED_API_KEY"},
+		runner.AgentShell: {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "UNJAILED_API_KEY",
+			"AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN", "AGENTS_OPERATOR_LOGIN_CODEX_LOGIN"},
+		"some-future-agent": nil,
+	} {
+		s := testSession()
+		s.Agent = agent
+		data := BuildSecret(s, testCfg(), "tok", user).Data
+		want = append(append([]string{"RUNNER_TOKEN"}, git...), want...)
+		got := make([]string, 0, len(data))
+		for k := range data {
+			got = append(got, k)
+		}
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: keys = %v, want %v", agent, got, want)
+		}
 	}
 }
 

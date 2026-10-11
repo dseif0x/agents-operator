@@ -228,6 +228,10 @@ const (
 	EnvGitSSHKey     = "GIT_SSH_KEY"            // private key contents
 	EnvGitHTTPSToken = "GIT_HTTPS_TOKEN"        // token for https clones
 	EnvSeedPrefix    = "AGENTS_OPERATOR_LOGIN_" // + upper(kind): base64 credential file to seed
+	// EnvPrivateFile is set by `agent-runner init`: the file holding the
+	// runner-only variables above (RUNNER_TOKEN, GIT_SSH_KEY, the login
+	// seeds), moved out of the environment so PID 1 does not carry them.
+	EnvPrivateFile = "AGENTS_OPERATOR_PRIVATE_FILE"
 	// EnvClaudeOAuthToken is Claude Code's own long-lived token variable (the
 	// output of `claude setup-token`); EnvAnthropicAPIKey its API key. The
 	// runner only looks at them to skip the CLI's onboarding prompts.

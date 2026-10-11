@@ -1,7 +1,7 @@
 {{- if .Values.runner.networkPolicy.enabled }}
-# Default-deny policy for session pods. They may talk to DNS, to 443 and 22
-# anywhere outside the cluster ranges, and to the extra CIDRs listed in
-# values. Only the hub may reach them, on the runner port.
+# Default-deny policy for session pods. They may talk to the cluster DNS, to
+# 443 and 22 anywhere outside the private ranges, and to the extra CIDRs
+# listed in values. Only the hub may reach them, on the runner port.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -31,7 +31,11 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # HTTPS and git over SSH, anywhere except cluster-internal ranges.
+      {{- with .Values.runner.networkPolicy.dnsTo }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    # HTTPS and git over SSH, anywhere except private and cluster ranges.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

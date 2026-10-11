@@ -28,6 +28,9 @@ func main() {
 		gitCredentialHelper(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		os.Exit(initMain(os.Args[2:]))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "hook" {
 		hookForward(hookURL(), os.Stdin)
 		return
@@ -50,6 +53,16 @@ func run() int {
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(*logLevel)}))
 	slog.SetDefault(log)
+
+	// Before anything can start the agent: take back what init moved out of
+	// the environment, and close this process to the agent (private.go).
+	if err := loadPrivateEnv(); err != nil {
+		log.Error("cannot load the private environment", "err", err)
+		return 2
+	}
+	if err := hideProcess(); err != nil {
+		log.Warn("cannot mark the runner non-dumpable; the agent can read its environment", "err", err)
+	}
 
 	token := os.Getenv(runner.EnvRunnerToken)
 	if token == "" {

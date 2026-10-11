@@ -69,6 +69,7 @@
             "apiServerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "egressCIDRs": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-fA-F.:]+/[0-9]+$" } },
             "blockedCIDRs": { "type": "array", "items": { "type": "string", "pattern": "^[0-9a-fA-F.:]+/[0-9]+$" } },
+            "dnsTo": { "type": "array", "items": { "type": "object" } },
             "extraEgress": { "type": "array" }
           }
         }
