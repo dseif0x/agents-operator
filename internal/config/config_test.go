@@ -102,3 +102,34 @@ func TestResourceListJSON(t *testing.T) {
 		t.Fatal("non-quantity accepted")
 	}
 }
+
+func TestEgressPolicy(t *testing.T) {
+	base := map[string]string{
+		"AGENTS_OPERATOR_DATABASE_URL":          "postgres://x",
+		"AGENTS_OPERATOR_PUBLIC_URL":            "https://agents-operator.example.com",
+		"AGENTS_OPERATOR_COOKIE_SECRET":         strings.Repeat("ab", 32),
+		"AGENTS_OPERATOR_RUNNER_EGRESS_ALLOWED": `["192.168.0.0/16"]`,
+		"AGENTS_OPERATOR_RUNNER_EGRESS_DENIED":  `["10.42.0.0/16"]`,
+	}
+	// Without the chart's NetworkPolicy the ranges are ignored: off.
+	c, err := load(env(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, err := c.EgressPolicy(); err != nil || p.Enabled() {
+		t.Fatalf("policy without network policy = %+v, %v", p, err)
+	}
+	base["AGENTS_OPERATOR_RUNNER_NETWORK_POLICY"] = "true"
+	if c, err = load(env(base)); err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.EgressPolicy()
+	if err != nil || len(p.Allowed) != 1 || p.Allowed[0].String() != "192.168.0.0/16" || len(p.Denied) != 1 {
+		t.Fatalf("policy = %+v, %v", p, err)
+	}
+	// A bad CIDR stops the hub at startup.
+	base["AGENTS_OPERATOR_RUNNER_EGRESS_ALLOWED"] = `["192.168.0.0/33"]`
+	if _, err := load(env(base)); err == nil || !strings.Contains(err.Error(), "RUNNER_EGRESS_ALLOWED") {
+		t.Fatalf("bad CIDR: %v", err)
+	}
+}

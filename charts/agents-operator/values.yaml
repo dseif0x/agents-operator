@@ -93,6 +93,17 @@ runner:
             k8s-app: kube-dns
     # -- Extra peers allowed to egress to on any port (raw NetworkPolicy "to" entries)
     extraEgress: []
+    sessionEgress:
+      # -- Ranges a session may open for itself (its "local network access" list: an address or CIDR, optionally with a port), through a NetworkPolicy of its own on top of this one. Empty turns the option off
+      allowedCIDRs:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 100.64.0.0/10
+      # -- Ranges no session may open even inside `allowedCIDRs`: the cluster's pod and service ranges (k3s defaults; adjust for your CNI), so sessions cannot reach each other, the hub, Postgres or the API service
+      deniedCIDRs:
+        - 10.42.0.0/16
+        - 10.43.0.0/16
 
 auth:
   # -- argon2id hash for the admin user (`agents-operator hash-password`); if empty a random password is generated

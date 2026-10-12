@@ -98,6 +98,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
   const [k8sNamespaces, setK8sNamespaces] = useState("");
   const [autonomous, setAutonomous] = useState(true);
   const [gitCredentials, setGitCredentials] = useState(true);
+  const [egress, setEgress] = useState("");
   const [editable, setEditable] = useState<boolean | null>(editing ? null : true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -148,6 +149,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         setK8sNamespaces((s.k8s_namespaces || []).join(", "));
         setAutonomous(s.autonomous);
         setGitCredentials(s.git_credentials ?? true);
+        setEgress((s.egress || []).join("\n"));
         setEditable(s.state === "stopped" || s.state === "failed");
       })
       .catch((e) => setError((e as Error).message));
@@ -202,6 +204,10 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         return;
       }
     }
+    req.egress = egress
+      .split(/[\s,]+/)
+      .map((d) => d.trim())
+      .filter(Boolean);
     if (imageTag) req.image_tag = imageTag;
     if (pvcSize) req.pvc_size = pvcSize;
     if (storageClass) req.storage_class = storageClass;
@@ -333,6 +339,22 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
             commit, not push or use <code>gh</code>
           </label>
         </div>
+        {!!(defaults?.egress_allowed?.length || egress) && (
+          <div>
+            <label for="egress">Local network access</label>
+            <textarea
+              id="egress"
+              value={egress}
+              onInput={(e) => setEgress((e.target as HTMLTextAreaElement).value)}
+              placeholder={"192.168.1.10\n192.168.1.20:8080\n192.168.2.0/24"}
+              spellcheck={false}
+            />
+            <div class="muted" style="font-size:12px;margin-top:3px">
+              Addresses on your network the agent may reach, one per line: an IP or CIDR, optionally with a port (TCP and UDP; every port
+              without one). Everything else private stays blocked. Allowed ranges: {(defaults?.egress_allowed || []).join(", ") || "none"}.
+            </div>
+          </div>
+        )}
         {defaults?.service_account && (
           <div class="form-grid">
             <div>

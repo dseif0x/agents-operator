@@ -100,6 +100,12 @@ spec:
               value: {{ .Values.runner.serviceAccount.clusterWide | quote }}
             - name: AGENTS_OPERATOR_RUNNER_TMP_INIT
               value: {{ .Values.runner.tmpInit | quote }}
+            - name: AGENTS_OPERATOR_RUNNER_NETWORK_POLICY
+              value: {{ .Values.runner.networkPolicy.enabled | quote }}
+            - name: AGENTS_OPERATOR_RUNNER_EGRESS_ALLOWED
+              value: {{ .Values.runner.networkPolicy.sessionEgress.allowedCIDRs | toJson | quote }}
+            - name: AGENTS_OPERATOR_RUNNER_EGRESS_DENIED
+              value: {{ .Values.runner.networkPolicy.sessionEgress.deniedCIDRs | toJson | quote }}
             - name: AGENTS_OPERATOR_RUNNER_EXTRA_ENV
               value: {{ .Values.runner.extraEnv | toJson | quote }}
             - name: AGENTS_OPERATOR_IDLE_STOP_AFTER

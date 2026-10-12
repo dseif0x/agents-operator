@@ -113,6 +113,18 @@ func k8sWriteNamespaces() []string {
 	return out
 }
 
+// egressDestinations lists the local network destinations the hub opened
+// for this session (EGRESS).
+func egressDestinations() []string {
+	var out []string
+	for _, d := range strings.Split(os.Getenv(runner.EnvEgress), ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // joinCode renders names as `a`, `b` for Markdown.
 func joinCode(names []string) string {
 	quoted := make([]string, len(names))
@@ -249,6 +261,9 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 	b.WriteString("\n## Environment\n\n")
 	b.WriteString("- Everything under `" + w.Root + "` (including `HOME=" + w.HomeDir() + "`) survives stops, restarts and reconnects. `/tmp` is scratch. The rest of the filesystem is read-only.\n")
 	b.WriteString("- You run as an unprivileged user (UID 1000). Network access is limited to DNS, HTTPS (443) and SSH (22) outside the cluster.\n")
+	if dests := egressDestinations(); len(dests) > 0 {
+		b.WriteString("- On the local network this session may also reach " + joinCode(dests) + " (every port unless one is given). Other private addresses, the cluster and its nodes stay blocked.\n")
+	}
 	b.WriteString("- Available tools: git, ripgrep, jq, curl, tmux, kubectl, Node.js, Python 3, build-essential.\n")
 	switch namespaces := k8sWriteNamespaces(); {
 	case !hasServiceAccount():

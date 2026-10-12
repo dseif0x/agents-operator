@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/dseif0x/agents-operator/internal/config"
+	"github.com/dseif0x/agents-operator/internal/egress"
 	"github.com/dseif0x/agents-operator/internal/github"
 	"github.com/dseif0x/agents-operator/internal/reconcile"
 	"github.com/dseif0x/agents-operator/internal/runner"
@@ -54,6 +55,10 @@ type Defaults struct {
 	K8sNamespaceWrite bool `json:"k8s_namespace_write"`
 	// Namespace is the hub's own, which no session may write to.
 	Namespace string `json:"-"`
+	// Egress is what sessions may open on the local network; EgressAllowed
+	// shows its ranges on the form (empty: the field is hidden).
+	Egress        egress.Policy `json:"-"`
+	EgressAllowed []string      `json:"egress_allowed"`
 }
 
 // Service is the session business logic.
@@ -109,6 +114,10 @@ type CreateRequest struct {
 	// tokens from the agent (the runner still clones with them). Default
 	// true; on an edit, absent keeps the current value.
 	GitCredentials *bool `json:"git_credentials"`
+	// Egress lists local network destinations the agent may reach beyond
+	// the chart's NetworkPolicy: `192.168.1.10`, `192.168.1.0/24`,
+	// `192.168.1.10:8080`. Each must lie in Defaults.Egress's allowed ranges.
+	Egress []string `json:"egress"`
 	// K8sAccess is what kubectl in the pod may do: "off" (default), "readonly"
 	// (the chart's read-only runner ServiceAccount) or "namespace" (read-only
 	// plus write access in K8sNamespaces). Refused when the hub is not set
@@ -238,7 +247,7 @@ var reservedEnv = map[string]bool{
 	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvAgentGitCredentials: true, runner.EnvRepos: true,
 	runner.EnvWorkspace: true, runner.EnvListen: true, "HOME": true, "PATH": true,
 	runner.EnvGitSSHKey: true, runner.EnvGitHTTPSToken: true, runner.EnvGitHubToken: true,
-	runner.EnvK8sAccess: true, runner.EnvK8sNamespaces: true,
+	runner.EnvK8sAccess: true, runner.EnvK8sNamespaces: true, runner.EnvEgress: true,
 }
 
 // MaxRepos caps the repositories per session.
@@ -363,6 +372,11 @@ func (s *Service) validate(req *CreateRequest) ([]store.Repo, error) {
 	if err := s.validateK8sAccess(req); err != nil {
 		return nil, err
 	}
+	egress, err := s.Defaults.Egress.Check(req.Egress)
+	if err != nil {
+		return nil, &ValidationError{"egress: " + err.Error()}
+	}
+	req.Egress = egress
 	return repos, nil
 }
 
@@ -390,7 +404,7 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 		OwnerID: owner.ID, Name: req.Name, Agent: req.Agent, Repos: repos,
 		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, RuntimeClass: req.RuntimeClass, Resources: req.Resources,
 		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
-		NoGitCredentials: noGit, K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
+		NoGitCredentials: noGit, Egress: req.Egress, K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
 		State: store.StateCreating,
 	}
 	if err := s.Store.Sessions().Create(ctx, sess); err != nil {
@@ -425,6 +439,7 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 	next := *sess
 	next.Name, next.Repos, next.ImageTag, next.RuntimeClass = req.Name, repos, req.ImageTag, req.RuntimeClass
 	next.K8sAccess, next.K8sNamespaces = req.K8sAccess, req.K8sNamespaces
+	next.Egress = req.Egress
 	next.Resources, next.NodeSelector, next.Tolerations, next.Env = req.Resources, req.NodeSelector, req.Tolerations, req.Env
 	if req.Autonomous != nil {
 		next.Autonomous = *req.Autonomous
@@ -837,6 +852,7 @@ type View struct {
 	Env            map[string]string   `json:"env"`
 	Autonomous     bool                `json:"autonomous"`
 	GitCredentials bool                `json:"git_credentials"`
+	Egress         []string            `json:"egress"`
 	K8sAccess      string              `json:"k8s_access"`
 	K8sNamespaces  []string            `json:"k8s_namespaces"`
 	State          string              `json:"state"`
@@ -864,7 +880,7 @@ func (s *Service) View(sess *store.Session) View {
 		ID: sess.ID, Name: sess.Name, Agent: sess.Agent, Repos: sess.Repos,
 		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, RuntimeClass: sess.RuntimeClass, Resources: sess.Resources,
 		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
-		GitCredentials: !sess.NoGitCredentials, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
+		GitCredentials: !sess.NoGitCredentials, Egress: sess.Egress, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
 		State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
 	}
@@ -873,6 +889,9 @@ func (s *Service) View(sess *store.Session) View {
 	}
 	if v.K8sNamespaces == nil {
 		v.K8sNamespaces = []string{}
+	}
+	if v.Egress == nil {
+		v.Egress = []string{}
 	}
 	if v.NodeSelector == nil {
 		v.NodeSelector = map[string]string{}

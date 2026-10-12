@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dseif0x/agents-operator/internal/egress"
 )
 
 // Prefix is prepended to every environment variable name.
@@ -128,6 +130,16 @@ type Config struct {
 	RunnerReadClusterRole  string
 	RunnerWriteClusterRole string
 	RunnerClusterWideRead  bool
+	// RunnerNetworkPolicy says the chart's default-deny NetworkPolicy
+	// covers session pods; only then may the hub add per-session egress
+	// policies (alone, one would isolate the pod instead of opening it), and
+	// only then does the chart grant the RBAC for them.
+	RunnerNetworkPolicy bool
+	// RunnerEgressAllowed are the ranges a session may open on top of that
+	// policy, RunnerEgressDenied the ones it never may (the cluster's own).
+	// Empty RunnerEgressAllowed turns per-session egress off.
+	RunnerEgressAllowed []string
+	RunnerEgressDenied  []string
 	// RunnerExtraEnv is injected into every session pod (non-secret).
 	RunnerExtraEnv map[string]string
 	// RunnerTmpInit adds the root init container that gives /tmp the sticky
@@ -156,6 +168,23 @@ type Config struct {
 	ShutdownDelay time.Duration
 	// HubPodLabels lets the reconciler find itself for NetworkPolicy docs;
 	// unused by code today, kept for the chart's sake.
+}
+
+// EgressPolicy is what sessions may open on the local network. It is empty
+// (off) without the chart's NetworkPolicy.
+func (c *Config) EgressPolicy() (egress.Policy, error) {
+	if !c.RunnerNetworkPolicy {
+		return egress.Policy{}, nil
+	}
+	allowed, err := egress.ParsePrefixes(c.RunnerEgressAllowed)
+	if err != nil {
+		return egress.Policy{}, fmt.Errorf("%sRUNNER_EGRESS_ALLOWED: %w", Prefix, err)
+	}
+	denied, err := egress.ParsePrefixes(c.RunnerEgressDenied)
+	if err != nil {
+		return egress.Policy{}, fmt.Errorf("%sRUNNER_EGRESS_DENIED: %w", Prefix, err)
+	}
+	return egress.Policy{Allowed: allowed, Denied: denied}, nil
 }
 
 // RunnerImageRef returns image:tag.
@@ -247,6 +276,7 @@ func load(get lookup) (*Config, error) {
 		RunnerWriteClusterRole: str("RUNNER_WRITE_CLUSTER_ROLE", "edit"),
 		RunnerClusterWideRead:  boolean("RUNNER_CLUSTER_WIDE_READ", false),
 		RunnerTmpInit:          boolean("RUNNER_TMP_INIT", true),
+		RunnerNetworkPolicy:    boolean("RUNNER_NETWORK_POLICY", false),
 		AdminUsername:          str("ADMIN_USERNAME", "admin"),
 		AdminPasswordHash:      str("ADMIN_PASSWORD_HASH", ""),
 		AdminPassword:          str("ADMIN_PASSWORD", ""),
@@ -267,6 +297,11 @@ func load(get lookup) (*Config, error) {
 	jsonInto("RUNNER_NODE_SELECTOR", &c.RunnerNodeSelector)
 	jsonInto("RUNNER_TOLERATIONS", &c.RunnerTolerations)
 	jsonInto("RUNNER_EXTRA_ENV", &c.RunnerExtraEnv)
+	jsonInto("RUNNER_EGRESS_ALLOWED", &c.RunnerEgressAllowed)
+	jsonInto("RUNNER_EGRESS_DENIED", &c.RunnerEgressDenied)
+	if _, err := c.EgressPolicy(); err != nil {
+		errs = append(errs, err)
+	}
 
 	if raw := required("PUBLIC_URL"); raw != "" {
 		u, err := url.Parse(raw)

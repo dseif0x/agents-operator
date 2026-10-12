@@ -84,6 +84,8 @@ Kubernetes: `>=1.27.0-0`
 | runner.networkPolicy.egressCIDRs | list | `[]` | Extra allowed egress CIDRs (all ports), e.g. an in-cluster LLM proxy or a git server on your LAN |
 | runner.networkPolicy.enabled | bool | `true` | Create a default-deny NetworkPolicy for session pods |
 | runner.networkPolicy.extraEgress | list | `[]` | Extra peers allowed to egress to on any port (raw NetworkPolicy "to" entries) |
+| runner.networkPolicy.sessionEgress.allowedCIDRs | list | `["10.0.0.0/8","172.16.0.0/12","192.168.0.0/16","100.64.0.0/10"]` | Ranges a session may open for itself (its "local network access" list: an address or CIDR, optionally with a port), through a NetworkPolicy of its own on top of this one. Empty turns the option off |
+| runner.networkPolicy.sessionEgress.deniedCIDRs | list | `["10.42.0.0/16","10.43.0.0/16"]` | Ranges no session may open even inside `allowedCIDRs`: the cluster's pod and service ranges (k3s defaults; adjust for your CNI), so sessions cannot reach each other, the hub, Postgres or the API service |
 | runner.nodeSelector | object | `{}` | Node selector applied to every session pod |
 | runner.resources | object | `{"limits":{"cpu":"2","memory":"4Gi"},"requests":{"cpu":"250m","memory":"512Mi"}}` | Resources a session gets when it asks for nothing (requests and limits); an extended resource here (e.g. `nvidia.com/gpu: 1`) goes to every session |
 | runner.runtimeClassName | string | `""` | runtimeClassName for session pods (gVisor, Kata); empty = default runtime |

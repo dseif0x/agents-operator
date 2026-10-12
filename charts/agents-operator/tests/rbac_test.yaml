@@ -9,7 +9,13 @@ tests:
           of: Role
       - lengthEqual:
           path: rules
-          count: 6
+          count: 7
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["networking.k8s.io"]
+            resources: ["networkpolicies"]
+            verbs: ["get", "list", "create", "update", "delete"]
       - contains:
           path: rules
           content:
@@ -94,7 +100,7 @@ tests:
           of: Role
       - lengthEqual:
           path: rules
-          count: 7
+          count: 8
       - contains:
           path: rules
           content:
@@ -178,3 +184,18 @@ tests:
     asserts:
       - hasDocuments:
           count: 3
+
+  - it: manages no NetworkPolicies without the session NetworkPolicy
+    documentIndex: 1
+    set:
+      runner.networkPolicy.enabled: false
+    asserts:
+      - lengthEqual:
+          path: rules
+          count: 6
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["networking.k8s.io"]
+            resources: ["networkpolicies"]
+            verbs: ["get", "list", "create", "update", "delete"]
