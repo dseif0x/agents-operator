@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/dseif0x/agents-operator/internal/config"
+	"github.com/dseif0x/agents-operator/internal/egress"
 	"github.com/dseif0x/agents-operator/internal/github"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/store"
@@ -554,5 +556,49 @@ func TestUpdate(t *testing.T) {
 	_ = svc.Store.Users().Create(ctx, other)
 	if _, err := svc.Update(ctx, other, sess.ID, edit); err == nil {
 		t.Fatal("other user's edit accepted")
+	}
+}
+
+func TestEgressValidation(t *testing.T) {
+	svc, _, u := newService(t)
+	ctx := context.Background()
+	// A hub that opens nothing refuses any destination.
+	if _, err := svc.Create(ctx, u, CreateRequest{Name: "off", Agent: "shell", Egress: []string{"192.168.1.10"}}); err == nil || !strings.Contains(err.Error(), "egress") {
+		t.Fatalf("create on a hub without egress = %v", err)
+	}
+	allowed, _ := egress.ParsePrefixes([]string{"192.168.0.0/16"})
+	denied, _ := egress.ParsePrefixes([]string{"192.168.99.0/24"})
+	svc.Defaults.Egress = egress.Policy{Allowed: allowed, Denied: denied}
+
+	sess, err := svc.Create(ctx, u, CreateRequest{Name: "lan", Agent: "shell", Egress: []string{" 192.168.1.10:8080", "192.168.2.7/24", "192.168.1.10:8080"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(sess.Egress, []string{"192.168.1.10:8080", "192.168.2.0/24"}) {
+		t.Fatalf("stored egress = %q", sess.Egress)
+	}
+	if v := svc.View(sess); !slices.Equal(v.Egress, sess.Egress) {
+		t.Fatalf("view egress = %q", v.Egress)
+	}
+	for _, bad := range []string{"8.8.8.8", "192.168.99.5", "nas.local"} {
+		if _, err := svc.Create(ctx, u, CreateRequest{Name: "bad", Agent: "shell", Egress: []string{bad}}); err == nil {
+			t.Errorf("%q accepted", bad)
+		} else if _, ok := err.(*ValidationError); !ok {
+			t.Errorf("%q: %T is not a validation error", bad, err)
+		}
+	}
+	// Editing a stopped session replaces the list.
+	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateStopped, ""); err != nil {
+		t.Fatal(err)
+	}
+	up, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "lan", Egress: []string{"192.168.5.5"}})
+	if err != nil || !slices.Equal(up.Egress, []string{"192.168.5.5"}) {
+		t.Fatalf("update = %q, %v", up.Egress, err)
+	}
+	if up, err = svc.Update(ctx, u, sess.ID, CreateRequest{Name: "lan"}); err != nil || len(up.Egress) != 0 {
+		t.Fatalf("clearing = %q, %v", up.Egress, err)
+	}
+	if v := svc.View(up); v.Egress == nil {
+		t.Fatal("view renders egress as null")
 	}
 }

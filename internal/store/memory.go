@@ -188,6 +188,7 @@ func (r memSessions) Update(_ context.Context, s *Session) (*Session, error) {
 	normaliseK8s(cur)
 	cur.Resources, cur.NodeSelector, cur.Tolerations, cur.Env, cur.Autonomous = s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous
 	cur.NoGitCredentials = s.NoGitCredentials
+	cur.Egress = append([]string{}, s.Egress...)
 	cur.UpdatedAt = time.Now()
 	return copySession(cur), nil
 }

@@ -158,6 +158,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) {
 	for _, id := range r.accessSessionIDs(ctx) {
 		ids[id] = struct{}{}
 	}
+	for _, id := range r.egressSessionIDs(ctx) {
+		ids[id] = struct{}{}
+	}
 	delete(ids, "")
 	for id := range ids {
 		r.queue.Add(id)
@@ -242,6 +245,9 @@ func (r *Reconciler) reconcileOrphan(ctx context.Context, id string, o observed)
 		if err := ignoreNotFound(r.cs.CoreV1().Secrets(r.cfg.Namespace).Delete(ctx, name, metav1.DeleteOptions{})); err != nil {
 			return err
 		}
+	}
+	if err := r.orphanEgress(ctx, id, old); err != nil {
+		return err
 	}
 	if r.cfg.NamespaceWrite {
 		// The account and its bindings: gone once the account is old enough,
@@ -334,6 +340,12 @@ func (r *Reconciler) reconcileCreating(ctx context.Context, sess *store.Session,
 		}
 		return err
 	}
+	if err := r.ensureEgress(ctx, sess); err != nil {
+		if msg, ok := isEgressError(err); ok {
+			return r.fail(ctx, sess, "local network access: "+msg)
+		}
+		return err
+	}
 	pod := BuildPod(sess, r.cfg)
 	if _, err := r.cs.CoreV1().Pods(r.cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		if apierrors.IsAlreadyExists(err) {
@@ -410,6 +422,9 @@ func (r *Reconciler) reconcileDeleting(ctx context.Context, sess *store.Session,
 		return nil
 	}
 	if err := r.removeAccess(ctx, sess.ID); err != nil {
+		return err
+	}
+	if err := r.removeEgress(ctx, sess.ID); err != nil {
 		return err
 	}
 	if err := r.store.Sessions().Delete(ctx, sess.ID); err != nil && !errors.Is(err, store.ErrNotFound) {

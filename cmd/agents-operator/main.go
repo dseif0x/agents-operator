@@ -21,6 +21,7 @@ import (
 	"github.com/dseif0x/agents-operator/internal/api"
 	"github.com/dseif0x/agents-operator/internal/auth"
 	"github.com/dseif0x/agents-operator/internal/config"
+	"github.com/dseif0x/agents-operator/internal/egress"
 	"github.com/dseif0x/agents-operator/internal/github"
 	"github.com/dseif0x/agents-operator/internal/k8s"
 	"github.com/dseif0x/agents-operator/internal/reconcile"
@@ -122,11 +123,16 @@ func run() error {
 	session.RegisterMetrics(reg)
 
 	// Wiring.
+	egressPolicy, err := cfg.EgressPolicy() // validated by config.Load
+	if err != nil {
+		return err
+	}
 	rcfg := reconcile.Config{
 		Namespace: cfg.Namespace, RunnerImage: cfg.RunnerImage, RunnerImageTag: cfg.RunnerImageTag, ImagePullPolicy: cfg.RunnerImagePullPolicy,
 		DefaultStorageClass: cfg.DefaultStorageClass, DefaultPVCSize: cfg.DefaultPVCSize, DefaultResources: cfg.DefaultResources, MaxResources: cfg.MaxResources,
 		NodeSelector: cfg.RunnerNodeSelector, Tolerations: cfg.RunnerTolerations, RuntimeClass: cfg.RunnerRuntimeClass, ServiceAccount: cfg.RunnerServiceAccount, ExtraEnv: cfg.RunnerExtraEnv, TmpInit: cfg.RunnerTmpInit,
 		NamespaceWrite: cfg.RunnerNamespaceWrite, ReadClusterRole: cfg.RunnerReadClusterRole, WriteClusterRole: cfg.RunnerWriteClusterRole, ClusterWideRead: cfg.RunnerClusterWideRead,
+		NetworkPolicy: cfg.RunnerNetworkPolicy,
 	}
 	proxy := &term.Proxy{Resolver: &reconcile.Resolver{Informers: inf, Namespace: cfg.Namespace}, OriginPatterns: cfg.AllowedHosts, Log: log}
 	creds := &session.Credentials{Store: st, CS: cs, Namespace: cfg.Namespace}
@@ -136,6 +142,7 @@ func run() error {
 			PVCSize: cfg.DefaultPVCSize, StorageClass: cfg.DefaultStorageClass, Autonomous: true,
 			Resources: cfg.DefaultResources, MaxResources: cfg.MaxResources, RuntimeClass: cfg.RunnerRuntimeClass, ServiceAccount: cfg.RunnerServiceAccount,
 			K8sNamespaceWrite: cfg.RunnerNamespaceWrite, Namespace: cfg.Namespace,
+			Egress: egressPolicy, EgressAllowed: egressAllowed(egressPolicy),
 		},
 	}
 	rec := reconcile.New(rcfg, st, cs, inf, svc, cfg.ReconcileInterval, log)
@@ -230,4 +237,13 @@ func run() error {
 		return err
 	}
 	return fatal
+}
+
+// egressAllowed lists the ranges sessions may open, for the form.
+func egressAllowed(p egress.Policy) []string {
+	out := make([]string, len(p.Allowed))
+	for i, a := range p.Allowed {
+		out[i] = a.String()
+	}
+	return out
 }

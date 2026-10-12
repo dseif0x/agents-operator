@@ -43,6 +43,8 @@ export interface Session {
   autonomous: boolean;
   /** Whether the agent gets the owner's SSH key and HTTPS/GitHub tokens; without them the runner only clones with them. */
   git_credentials: boolean;
+  /** Local network destinations the agent may reach: `192.168.1.10`, `192.168.1.0/24`, `192.168.1.10:8080`. */
+  egress: string[];
   /** What kubectl in the pod may do: nothing, read the cluster, or also write in k8s_namespaces. */
   k8s_access: K8sAccess;
   k8s_namespaces: string[];
@@ -94,6 +96,8 @@ export interface SessionDefaults {
   service_account: string;
   /** Whether sessions may ask for write access in namespaces of their choosing. */
   k8s_namespace_write: boolean;
+  /** Ranges a session may open on the local network; empty when the hub allows none. */
+  egress_allowed: string[];
 }
 
 export interface Credential {
@@ -129,6 +133,7 @@ export interface CreateSessionRequest {
   env?: Record<string, string>;
   autonomous?: boolean;
   git_credentials?: boolean;
+  egress?: string[];
   k8s_access?: K8sAccess;
   k8s_namespaces?: string[];
 }

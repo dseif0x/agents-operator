@@ -55,6 +55,9 @@ type Config struct {
 	WriteClusterRole string
 	ClusterWideRead  bool
 	ExtraEnv         map[string]string
+	// NetworkPolicy says the chart's default-deny NetworkPolicy covers
+	// session pods, so a session's own egress policy widens it (egress.go).
+	NetworkPolicy bool
 	// TmpInit adds an init container, running as root, that gives the /tmp
 	// emptyDir the sticky bit (chmod 1777). Kubernetes creates emptyDirs
 	// world-writable without it, and Claude Code refuses such a directory
@@ -330,6 +333,7 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 		{Name: runner.EnvWorkspace, Value: WorkspacePath},
 		{Name: runner.EnvK8sAccess, Value: access},
 		{Name: runner.EnvK8sNamespaces, Value: strings.Join(namespaces, ",")},
+		{Name: runner.EnvEgress, Value: egressEnv(s, cfg)},
 		{Name: "HOME", Value: WorkspacePath + "/home"},
 	}
 	for _, k := range sortedKeys(cfg.ExtraEnv) {
@@ -503,4 +507,13 @@ func PodReason(pod *corev1.Pod) string {
 		return pod.Status.Reason + ": " + pod.Status.Message
 	}
 	return "pod " + strings.ToLower(string(pod.Status.Phase))
+}
+
+// egressEnv is what the runner tells the agent about local network access:
+// the session's destinations, when the hub opened them.
+func egressEnv(s *store.Session, cfg Config) string {
+	if !cfg.NetworkPolicy {
+		return ""
+	}
+	return strings.Join(s.Egress, ",")
 }

@@ -139,14 +139,18 @@ type Session struct {
 	// and GitHub tokens) from the agent. The runner still clones with them
 	// on first boot; the agent can commit but not push or use the GitHub API.
 	NoGitCredentials bool
-	State            string
-	StateReason      string
-	Generation       int
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	LastAttachedAt   *time.Time
-	LastOutputAt     *time.Time
-	DeletedAt        *time.Time
+	// Egress lists the local network destinations the agent may reach on
+	// top of the chart's NetworkPolicy, in internal/egress canonical form
+	// (`192.168.1.10`, `192.168.1.0/24`, `192.168.1.10:8080`).
+	Egress         []string
+	State          string
+	StateReason    string
+	Generation     int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastAttachedAt *time.Time
+	LastOutputAt   *time.Time
+	DeletedAt      *time.Time
 }
 
 // Event is one row of session_events.

@@ -473,3 +473,23 @@ func TestPrepareUnjailedConfig(t *testing.T) {
 		t.Fatal("config written for a claude session")
 	}
 }
+
+func TestAgentsFileEgress(t *testing.T) {
+	ws := &Workspace{Root: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	read := func() string {
+		t.Helper()
+		if err := ws.writeAgentsFile(nil); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(ws.AgentsFile())
+		return string(b)
+	}
+	t.Setenv(runner.EnvEgress, "")
+	if s := read(); strings.Contains(s, "On the local network") {
+		t.Fatalf("destinations claimed without any:\n%s", s)
+	}
+	t.Setenv(runner.EnvEgress, "192.168.1.10:8080, 192.168.2.0/24")
+	if s := read(); !strings.Contains(s, "may also reach `192.168.1.10:8080`, `192.168.2.0/24`") {
+		t.Fatalf("destinations missing:\n%s", s)
+	}
+}

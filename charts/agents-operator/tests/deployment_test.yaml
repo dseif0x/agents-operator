@@ -172,3 +172,34 @@ tests:
           content:
             name: AGENTS_OPERATOR_RUNNER_RUNTIME_CLASS
             value: gvisor
+
+  - it: passes the session egress ranges to the hub
+    set:
+      runner.networkPolicy.sessionEgress.allowedCIDRs: [192.168.1.0/24]
+      runner.networkPolicy.sessionEgress.deniedCIDRs: []
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_RUNNER_NETWORK_POLICY
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_RUNNER_EGRESS_ALLOWED
+            value: '["192.168.1.0/24"]'
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_RUNNER_EGRESS_DENIED
+            value: "[]"
+
+  - it: tells the hub when there is no session NetworkPolicy
+    set:
+      runner.networkPolicy.enabled: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_RUNNER_NETWORK_POLICY
+            value: "false"

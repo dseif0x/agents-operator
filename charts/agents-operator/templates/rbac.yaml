@@ -42,6 +42,12 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "create", "update"]
+  {{- if .Values.runner.networkPolicy.enabled }}
+  # Per-session NetworkPolicies for sessions' local network access.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  {{- end }}
   {{- if $namespaceWrite }}
   # Per-session ServiceAccounts for the "namespace" access mode.
   - apiGroups: [""]
