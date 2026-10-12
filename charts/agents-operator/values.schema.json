@@ -61,6 +61,26 @@
             "writeClusterRole": { "type": "string", "minLength": 1 }
           }
         },
+        "sandbox": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "domain": { "type": "string", "pattern": "^$|^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
+            "namespacePrefix": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,14}[a-z0-9-])?$" },
+            "podSecurity": { "type": "string", "enum": ["baseline", "restricted"] },
+            "chart": {
+              "type": "object",
+              "properties": {
+                "repo": { "type": "string" },
+                "name": { "type": "string", "minLength": 1 },
+                "version": { "type": "string", "minLength": 1 }
+              }
+            },
+            "installerImage": { "type": "string", "minLength": 1 },
+            "ingressFrom": { "type": "array", "items": { "type": "object" } },
+            "values": { "type": "object" }
+          }
+        },
         "networkPolicy": {
           "type": "object",
           "properties": {

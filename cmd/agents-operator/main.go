@@ -132,8 +132,8 @@ func run() error {
 		DefaultStorageClass: cfg.DefaultStorageClass, DefaultPVCSize: cfg.DefaultPVCSize, DefaultResources: cfg.DefaultResources, MaxResources: cfg.MaxResources,
 		NodeSelector: cfg.RunnerNodeSelector, Tolerations: cfg.RunnerTolerations, RuntimeClass: cfg.RunnerRuntimeClass, ServiceAccount: cfg.RunnerServiceAccount, ExtraEnv: cfg.RunnerExtraEnv, TmpInit: cfg.RunnerTmpInit,
 		NamespaceWrite: cfg.RunnerNamespaceWrite, ReadClusterRole: cfg.RunnerReadClusterRole, WriteClusterRole: cfg.RunnerWriteClusterRole, ClusterWideRead: cfg.RunnerClusterWideRead,
-		NetworkPolicy: cfg.RunnerNetworkPolicy,
-	}
+		NetworkPolicy: cfg.RunnerNetworkPolicy, Sandbox: cfg.Sandbox, HubServiceAccount: cfg.HubServiceAccount,
+	}.Defaults()
 	proxy := &term.Proxy{Resolver: &reconcile.Resolver{Informers: inf, Namespace: cfg.Namespace}, OriginPatterns: cfg.AllowedHosts, Log: log}
 	creds := &session.Credentials{Store: st, CS: cs, Namespace: cfg.Namespace}
 	svc := &session.Service{
@@ -142,6 +142,7 @@ func run() error {
 			PVCSize: cfg.DefaultPVCSize, StorageClass: cfg.DefaultStorageClass, Autonomous: true,
 			Resources: cfg.DefaultResources, MaxResources: cfg.MaxResources, RuntimeClass: cfg.RunnerRuntimeClass, ServiceAccount: cfg.RunnerServiceAccount,
 			K8sNamespaceWrite: cfg.RunnerNamespaceWrite, Namespace: cfg.Namespace,
+			K8sSandbox: cfg.Sandbox.Enabled, SandboxDomain: sandboxDomain(cfg.Sandbox), Sandbox: rcfg,
 			Egress: egressPolicy, EgressAllowed: egressAllowed(egressPolicy),
 		},
 	}
@@ -246,4 +247,13 @@ func egressAllowed(p egress.Policy) []string {
 		out[i] = a.String()
 	}
 	return out
+}
+
+// sandboxDomain is the sandbox Ingress domain shown on the form, when the
+// sandbox mode is on.
+func sandboxDomain(s config.Sandbox) string {
+	if !s.Enabled {
+		return ""
+	}
+	return s.Domain
 }

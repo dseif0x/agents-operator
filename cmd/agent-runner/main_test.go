@@ -103,6 +103,12 @@ func TestEnvHidesSecretsAndAddsGitHubToken(t *testing.T) {
 }
 
 func TestAgentsFile(t *testing.T) {
+	// Hermetic even inside a pod that has a token and access env of its own.
+	saTokenPath = filepath.Join(t.TempDir(), "absent")
+	t.Cleanup(func() { saTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token" })
+	for _, k := range []string{runner.EnvK8sAccess, runner.EnvK8sNamespaces, runner.EnvSandboxNamespace, runner.EnvSandboxHost, runner.EnvSandboxSecurity} {
+		t.Setenv(k, "")
+	}
 	root := t.TempDir()
 	t.Setenv(runner.EnvGitHubToken, "ghp_x")
 	t.Setenv(runner.EnvGitSSHKey, "")
@@ -163,6 +169,31 @@ func TestAgentsFile(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(ws.AgentsFile()); !strings.Contains(string(b), "write access") || !strings.Contains(string(b), "`dev`, `staging`") || strings.Contains(string(b), "read-only Kubernetes ServiceAccount") {
 		t.Fatalf("AGENTS.md in namespace mode:\n%s", b)
+	}
+	// In sandbox mode (no host token) it is told about its own cluster and the host's limits.
+	saTokenPath = filepath.Join(t.TempDir(), "absent")
+	t.Setenv(runner.EnvK8sAccess, "sandbox")
+	t.Setenv(runner.EnvSandboxNamespace, "sandbox-123")
+	t.Setenv(runner.EnvSandboxHost, "demo.sandbox.example.com")
+	t.Setenv(runner.EnvSandboxSecurity, "restricted")
+	if err := ws.writeAgentsFile(repos); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(ws.AgentsFile())
+	for _, want := range []string{"virtual cluster (vcluster)", "cluster-admin", "`sandbox-123`", "`restricted` Pod Security Standard", "`app.demo.sandbox.example.com`", "deleted together with the session"} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("AGENTS.md in sandbox mode lacks %q:\n%s", want, b)
+		}
+	}
+	if strings.Contains(string(b), "no Kubernetes credentials") {
+		t.Fatal("sandbox mode reported as no access")
+	}
+	t.Setenv(runner.EnvSandboxHost, "")
+	if err := ws.writeAgentsFile(repos); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(ws.AgentsFile()); !strings.Contains(string(b), "port-forward") {
+		t.Fatal("sandbox without a domain does not point to port-forward")
 	}
 	// A second boot regenerates the generated files.
 	if err := ws.writeAgentsFile(nil); err != nil {

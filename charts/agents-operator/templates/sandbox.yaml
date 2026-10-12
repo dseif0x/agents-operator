@@ -1,0 +1,186 @@
+{{- if .Values.runner.sandbox.enabled }}
+{{- $sb := .Values.runner.sandbox }}
+{{- $hubRole := include "agents-operator.sandboxRole" (dict "root" . "role" "hub") }}
+{{- $installerRole := include "agents-operator.sandboxRole" (dict "root" . "role" "installer") }}
+{{- $base := printf "%s-%s-sandbox" (include "agents-operator.fullname" .) .Release.Namespace | trunc 55 | trimSuffix "-" }}
+{{- $hubUser := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "agents-operator.serviceAccountName" .) }}
+# Sandbox clusters: a vcluster per session in a namespace of its own (see
+# internal/reconcile/sandbox.go).
+#
+# The hub's cluster-wide rights: namespaces (narrowed to sandbox namespaces
+# by the admission policy below), RoleBindings, and binding the two sandbox
+# roles. Everything else it does happens inside a sandbox namespace, through
+# the sandbox-hub role it binds itself there.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $base }}
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: [{{ $hubRole | quote }}, {{ $installerRole | quote }}]
+    verbs: ["bind"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $base }}
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $base }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agents-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# The hub's rights inside one sandbox namespace (bound there with a
+# RoleBinding): the installer's account, values and Job, the ingress
+# NetworkPolicy, and reading the vcluster's kubeconfig.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $hubRole }}
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["vc-vcluster"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "create", "update", "delete"]
+---
+# The installer Job's rights inside one sandbox namespace while it runs
+# `helm upgrade --install` of vcluster: everything there, including Roles
+# with rules beyond `admin` (vcluster's syncer patches pod status). Bound
+# with a RoleBinding only, so nothing cluster-scoped; the hub removes the
+# binding once the install succeeded.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $installerRole }}
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+# The hub may only create, change and delete namespaces marked as sandboxes,
+# named with the sandbox prefix and enforcing the chart's Pod Security level.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $base }}-namespaces
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["namespaces"]
+  matchConditions:
+    - name: hub
+      expression: request.userInfo.username == {{ $hubUser | quote }}
+  validations:
+    - expression: >-
+        request.operation == 'DELETE' ||
+        (has(object.metadata.labels) &&
+         'agents-operator.io/sandbox' in object.metadata.labels &&
+         object.metadata.labels['agents-operator.io/sandbox'] == 'true' &&
+         'pod-security.kubernetes.io/enforce' in object.metadata.labels &&
+         object.metadata.labels['pod-security.kubernetes.io/enforce'] == {{ $sb.podSecurity | quote }} &&
+         object.metadata.name.startsWith({{ $sb.namespacePrefix | quote }}))
+      message: {{ printf "agents-operator may only create or change sandbox namespaces (label agents-operator.io/sandbox=true, name prefix %s, pod-security.kubernetes.io/enforce=%s)" $sb.namespacePrefix $sb.podSecurity | quote }}
+    - expression: >-
+        request.operation == 'CREATE' ||
+        (has(oldObject.metadata.labels) &&
+         'agents-operator.io/sandbox' in oldObject.metadata.labels &&
+         oldObject.metadata.labels['agents-operator.io/sandbox'] == 'true')
+      message: agents-operator may only change or delete namespaces labelled agents-operator.io/sandbox=true
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $base }}-namespaces
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $base }}-namespaces
+  validationActions: ["Deny"]
+---
+# A sandbox's Ingresses (synced to its namespace by vcluster) may only claim
+# hosts below the sandbox's own DNS name, so a sandbox cannot take over
+# another app's or another sandbox's host on the shared ingress controller,
+# and none may set a catch-all default backend.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $base }}-ingress-hosts
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        agents-operator.io/sandbox: "true"
+    resourceRules:
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+  variables:
+    - name: host
+      expression: >-
+        has(namespaceObject.metadata.annotations) &&
+        'agents-operator.io/sandbox-host' in namespaceObject.metadata.annotations
+        ? namespaceObject.metadata.annotations['agents-operator.io/sandbox-host'] : ''
+  validations:
+    - expression: variables.host != ''
+      message: Ingresses are not published for this sandbox (the hub has no sandbox domain)
+    - expression: "!has(object.spec.defaultBackend)"
+      message: a sandbox Ingress needs host rules; a default backend would catch every host
+    - expression: >-
+        has(object.spec.rules) && object.spec.rules.all(r, has(r.host) &&
+        (r.host == variables.host || r.host.endsWith('.' + variables.host)))
+      messageExpression: "'every Ingress host must be ' + variables.host + ' or end in .' + variables.host"
+    - expression: >-
+        !has(object.spec.tls) || object.spec.tls.all(t, !has(t.hosts) ||
+        t.hosts.all(h, h == variables.host || h.endsWith('.' + variables.host)))
+      messageExpression: "'every TLS host must be ' + variables.host + ' or end in .' + variables.host"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $base }}-ingress-hosts
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $base }}-ingress-hosts
+  validationActions: ["Deny"]
+{{- end }}

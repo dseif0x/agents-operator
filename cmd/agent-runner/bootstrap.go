@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -111,6 +112,23 @@ func k8sWriteNamespaces() []string {
 		}
 	}
 	return out
+}
+
+// sandboxNotes describes the session's sandbox cluster (sandbox mode).
+func sandboxNotes() string {
+	ns := os.Getenv(runner.EnvSandboxNamespace)
+	host := os.Getenv(runner.EnvSandboxHost)
+	level := cmp.Or(os.Getenv(runner.EnvSandboxSecurity), "baseline")
+	var b strings.Builder
+	b.WriteString("- This session has a Kubernetes cluster of its own: a virtual cluster (vcluster) where you are cluster-admin. `kubectl` and `helm` use it through `KUBECONFIG`; create namespaces, CRDs, operators, ClusterRoles, Argo CD or anything else there. You have no access to the real (host) cluster, and nothing you do in the sandbox can reach it.\n")
+	b.WriteString("- Workloads you create run as ordinary pods in the host namespace `" + ns + "`. The host enforces there: the `" + level + "` Pod Security Standard (no privileged pods, host paths, host network or added capabilities), a ResourceQuota with default requests and limits per container, no `LoadBalancer` or `NodePort` Services, and network policies that let workloads reach the internet but not the local network or other cluster services. When something is rejected for these reasons, adapt the manifests (smaller requests, `ClusterIP` plus an Ingress) rather than retrying.\n")
+	if host != "" {
+		b.WriteString("- Ingresses are published by the host's ingress controller: every Ingress host must be `" + host + "` or end in `." + host + "` (for example `app." + host + "`); others are rejected. DNS records appear automatically. For TLS add the annotation `cert-manager.io/cluster-issuer` with the host's issuer and a `tls` section, like any Ingress. Use `ingressClassName` the host provides (or leave it empty for the default).\n")
+	} else {
+		b.WriteString("- Ingresses are not published to the host on this hub; use `kubectl port-forward` to reach services.\n")
+	}
+	b.WriteString("- The sandbox keeps running while this session is stopped (so a demo stays up) and is deleted together with the session.\n")
+	return b.String()
 }
 
 // egressDestinations lists the local network destinations the hub opened
@@ -266,6 +284,8 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 	}
 	b.WriteString("- Available tools: git, ripgrep, jq, curl, tmux, kubectl, Node.js, Python 3, build-essential.\n")
 	switch namespaces := k8sWriteNamespaces(); {
+	case os.Getenv(runner.EnvK8sAccess) == "sandbox":
+		b.WriteString(sandboxNotes())
 	case !hasServiceAccount():
 		b.WriteString("- This pod has no Kubernetes credentials; `kubectl` is installed but cannot reach a cluster. The session's owner can turn on Kubernetes access in the session settings.\n")
 	case len(namespaces) > 0:

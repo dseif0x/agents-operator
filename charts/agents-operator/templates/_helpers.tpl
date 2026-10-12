@@ -106,3 +106,11 @@ Renders YAML list items of {cidr, port}.
 {{- define "agents-operator.tlsSecretName" -}}
 {{- default (printf "%s-tls" (include "agents-operator.fullname" .)) .Values.ingress.tlsSecretName }}
 {{- end }}
+
+{{/*
+Name of a sandbox ClusterRole ("hub" or "installer"); cluster-scoped, so it
+carries the release namespace like the hub's other ClusterRole.
+*/}}
+{{- define "agents-operator.sandboxRole" -}}
+{{- printf "%s-%s-sandbox-%s" (include "agents-operator.fullname" .root) .root.Release.Namespace .role | trunc 63 | trimSuffix "-" }}
+{{- end }}

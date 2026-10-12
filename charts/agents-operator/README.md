@@ -89,6 +89,16 @@ Kubernetes: `>=1.27.0-0`
 | runner.nodeSelector | object | `{}` | Node selector applied to every session pod |
 | runner.resources | object | `{"limits":{"cpu":"2","memory":"4Gi"},"requests":{"cpu":"250m","memory":"512Mi"}}` | Resources a session gets when it asks for nothing (requests and limits); an extended resource here (e.g. `nvidia.com/gpu: 1`) goes to every session |
 | runner.runtimeClassName | string | `""` | runtimeClassName for session pods (gVisor, Kata); empty = default runtime |
+| runner.sandbox.chart.name | string | `"vcluster"` | vcluster chart name or `oci://` reference |
+| runner.sandbox.chart.repo | string | `"https://charts.loft.sh"` | Helm repository of the vcluster chart (ignored when `name` is an `oci://` reference) |
+| runner.sandbox.chart.version | string | `"0.37.3"` | vcluster chart version |
+| runner.sandbox.domain | string | `""` | DNS domain for sandbox Ingresses: a session's Ingress hosts must be `<session name>.<domain>` or below it (admission policy), and are served by the host's ingress controller. Empty: Ingresses are not synced to the host |
+| runner.sandbox.enabled | bool | `false` | Offer the "sandbox" access mode: such a session gets a virtual cluster (vcluster) of its own in a namespace `<namespacePrefix><session id>`, and only that cluster's kubeconfig. The hub may then create, label and delete namespaces carrying the sandbox label (enforced by a ValidatingAdmissionPolicy), create RoleBindings there and bind the two sandbox roles below. Needs Kubernetes 1.30+ for the admission policies |
+| runner.sandbox.ingressFrom | list | `[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}},"podSelector":{"matchLabels":{"app.kubernetes.io/name":"traefik"}}}]` | NetworkPolicy peers allowed to reach the sandbox's workloads (vcluster's own policies admit only the vcluster): the ingress controller. Default: Traefik in kube-system, as on k3s |
+| runner.sandbox.installerImage | string | `"alpine/helm:3.22.0"` | Image with the Helm CLI that installs vcluster (runs as a one-off Job in the sandbox namespace) |
+| runner.sandbox.namespacePrefix | string | `"sandbox-"` | Prefix of sandbox namespace names (at most 16 characters) |
+| runner.sandbox.podSecurity | string | `"baseline"` | Pod Security Standard enforced in sandbox namespaces, where the sandbox's workloads run: `baseline` (no privileged pods, host paths or host network) or `restricted` (vcluster's control plane runs as root by default, so `restricted` needs `values` that change its security context) |
+| runner.sandbox.values | object | `{}` | Extra vcluster chart values merged over the hub's (resource quota, scheduling, storage). The hub always sets: no ClusterRole, the in-cluster kubeconfig server, no LoadBalancer or NodePort Services |
 | runner.serviceAccount.clusterRole | string | `"view"` | ClusterRole it is bound to; the built-in `view` reads most things and never Secrets |
 | runner.serviceAccount.clusterWide | bool | `false` | Bind it across the cluster (ClusterRoleBinding) rather than only in the release namespace (RoleBinding) |
 | runner.serviceAccount.enabled | bool | `false` | Create a read-only ServiceAccount that sessions can opt into, so kubectl works inside the pod (the hub's own identity is the top-level `serviceAccount`) |

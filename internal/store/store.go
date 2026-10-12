@@ -37,10 +37,14 @@ const (
 	K8sAccessOff       = "off"
 	K8sAccessReadOnly  = "readonly"
 	K8sAccessNamespace = "namespace"
+	// K8sAccessSandbox gives the session a virtual cluster (vcluster) of its
+	// own, in a host namespace created for it, and only that cluster's
+	// kubeconfig: the agent is cluster-admin there and has no host access.
+	K8sAccessSandbox = "sandbox"
 )
 
 // K8sAccessModes lists every mode, for validation.
-var K8sAccessModes = []string{K8sAccessOff, K8sAccessReadOnly, K8sAccessNamespace}
+var K8sAccessModes = []string{K8sAccessOff, K8sAccessReadOnly, K8sAccessNamespace, K8sAccessSandbox}
 
 // User is a login account.
 type User struct {
@@ -127,7 +131,8 @@ type Session struct {
 	// K8sAccess is what the pod may do in the cluster: K8sAccessOff (no
 	// identity), K8sAccessReadOnly (the chart's read-only runner
 	// ServiceAccount) or K8sAccessNamespace (an account of its own, read-only
-	// like the shared one plus write access in K8sNamespaces).
+	// like the shared one plus write access in K8sNamespaces) or
+	// K8sAccessSandbox (a vcluster of its own, see reconcile/sandbox.go).
 	K8sAccess     string
 	K8sNamespaces []string
 	Resources     config.Resources

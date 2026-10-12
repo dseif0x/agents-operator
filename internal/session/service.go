@@ -53,6 +53,13 @@ type Defaults struct {
 	// K8sNamespaceWrite is whether the "namespace" access mode (write
 	// access in chosen namespaces) is enabled on this hub.
 	K8sNamespaceWrite bool `json:"k8s_namespace_write"`
+	// K8sSandbox is whether the "sandbox" access mode (a vcluster per
+	// session) is enabled; SandboxDomain is where its Ingress hosts live
+	// (<session name>.<domain>), empty without Ingress sync.
+	K8sSandbox    bool   `json:"k8s_sandbox"`
+	SandboxDomain string `json:"sandbox_domain"`
+	// Sandbox mirrors the reconciler's naming of sandbox namespaces.
+	Sandbox reconcile.Config `json:"-"`
 	// Namespace is the hub's own, which no session may write to.
 	Namespace string `json:"-"`
 	// Egress is what sessions may open on the local network; EgressAllowed
@@ -141,6 +148,12 @@ func (s *Service) validateK8sAccess(req *CreateRequest) error {
 	case store.K8sAccessOff:
 		req.K8sNamespaces = nil
 		return nil
+	case store.K8sAccessSandbox:
+		if !s.Defaults.K8sSandbox {
+			return &ValidationError{"sandbox clusters are not enabled (chart value runner.sandbox.enabled)"}
+		}
+		req.K8sNamespaces = nil
+		return nil
 	case store.K8sAccessReadOnly, store.K8sAccessNamespace:
 		if s.Defaults.ServiceAccount == "" {
 			return &ValidationError{"no runner service account is configured (chart value runner.serviceAccount.enabled)"}
@@ -178,6 +191,26 @@ func (s *Service) validateK8sAccess(req *CreateRequest) error {
 		return &ValidationError{fmt.Sprintf("at most %d namespaces per session", MaxK8sNamespaces)}
 	}
 	req.K8sNamespaces = namespaces
+	return nil
+}
+
+// checkSandboxHost keeps sandbox Ingress hosts apart: a sandbox's hosts
+// live under <session name>.<domain>, so two sandbox sessions (of any
+// owner) cannot share a name that maps to the same DNS label.
+func (s *Service) checkSandboxHost(ctx context.Context, selfID string, req CreateRequest) error {
+	if req.K8sAccess != store.K8sAccessSandbox || s.Defaults.SandboxDomain == "" {
+		return nil
+	}
+	label := reconcile.Hostname(req.Name)
+	all, err := s.Store.Sessions().ListAll(ctx)
+	if err != nil {
+		return err
+	}
+	for _, other := range all {
+		if other.ID != selfID && other.K8sAccess == store.K8sAccessSandbox && reconcile.Hostname(other.Name) == label {
+			return &ValidationError{fmt.Sprintf("another sandbox session already uses %s.%s; pick a different name", label, s.Defaults.SandboxDomain)}
+		}
+	}
 	return nil
 }
 
@@ -248,6 +281,7 @@ var reservedEnv = map[string]bool{
 	runner.EnvWorkspace: true, runner.EnvListen: true, "HOME": true, "PATH": true,
 	runner.EnvGitSSHKey: true, runner.EnvGitHTTPSToken: true, runner.EnvGitHubToken: true,
 	runner.EnvK8sAccess: true, runner.EnvK8sNamespaces: true, runner.EnvEgress: true,
+	runner.EnvSandboxNamespace: true, runner.EnvSandboxHost: true, runner.EnvSandboxSecurity: true,
 }
 
 // MaxRepos caps the repositories per session.
@@ -395,6 +429,9 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 	if err != nil {
 		return nil, err
 	}
+	if err := s.checkSandboxHost(ctx, "", req); err != nil {
+		return nil, err
+	}
 	autonomous := s.Defaults.Autonomous
 	if req.Autonomous != nil {
 		autonomous = *req.Autonomous
@@ -434,6 +471,9 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 	req.Agent, req.PVCSize, req.StorageClass = sess.Agent, sess.PVCSize, sess.StorageClass
 	repos, err := s.validate(&req)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.checkSandboxHost(ctx, sess.ID, req); err != nil {
 		return nil, err
 	}
 	next := *sess
@@ -855,12 +895,17 @@ type View struct {
 	Egress         []string            `json:"egress"`
 	K8sAccess      string              `json:"k8s_access"`
 	K8sNamespaces  []string            `json:"k8s_namespaces"`
-	State          string              `json:"state"`
-	StateReason    string              `json:"state_reason"`
-	CreatedAt      time.Time           `json:"created_at"`
-	UpdatedAt      time.Time           `json:"updated_at"`
-	LastAttachedAt *time.Time          `json:"last_attached_at"`
-	LastOutputAt   *time.Time          `json:"last_output_at"`
+	// SandboxNamespace and SandboxHost describe the session's sandbox
+	// cluster (sandbox mode only): its host namespace and the DNS name its
+	// Ingress hosts go under.
+	SandboxNamespace string     `json:"sandbox_namespace,omitempty"`
+	SandboxHost      string     `json:"sandbox_host,omitempty"`
+	State            string     `json:"state"`
+	StateReason      string     `json:"state_reason"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	LastAttachedAt   *time.Time `json:"last_attached_at"`
+	LastOutputAt     *time.Time `json:"last_output_at"`
 	// Live fields come from the runner and are absent when it is unreachable.
 	AgentRunning   *bool  `json:"agent_running,omitempty"`
 	ExitCode       *int   `json:"exit_code,omitempty"`
@@ -883,6 +928,10 @@ func (s *Service) View(sess *store.Session) View {
 		GitCredentials: !sess.NoGitCredentials, Egress: sess.Egress, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
 		State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
+	}
+	if v.K8sAccess == store.K8sAccessSandbox && s.Defaults.K8sSandbox {
+		v.SandboxNamespace = reconcile.SandboxNamespace(sess.ID, s.Defaults.Sandbox)
+		v.SandboxHost = reconcile.SandboxHost(sess, s.Defaults.Sandbox)
 	}
 	if v.Repos == nil {
 		v.Repos = []store.Repo{}

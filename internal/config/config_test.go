@@ -133,3 +133,56 @@ func TestEgressPolicy(t *testing.T) {
 		t.Fatalf("bad CIDR: %v", err)
 	}
 }
+
+func TestLoadSandbox(t *testing.T) {
+	base := map[string]string{
+		"AGENTS_OPERATOR_DATABASE_URL":  "postgres://x",
+		"AGENTS_OPERATOR_PUBLIC_URL":    "https://agents-operator.example.com",
+		"AGENTS_OPERATOR_COOKIE_SECRET": strings.Repeat("ab", 32),
+	}
+	with := func(extra map[string]string) map[string]string {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	ok := map[string]string{
+		"AGENTS_OPERATOR_SANDBOX_ENABLED":        "true",
+		"AGENTS_OPERATOR_SANDBOX_DOMAIN":         "Sandbox.Example.com.",
+		"AGENTS_OPERATOR_HUB_SERVICE_ACCOUNT":    "agents-operator",
+		"AGENTS_OPERATOR_SANDBOX_HUB_ROLE":       "hub",
+		"AGENTS_OPERATOR_SANDBOX_INSTALLER_ROLE": "installer",
+		"AGENTS_OPERATOR_SANDBOX_VALUES":         `{"controlPlane":{"statefulSet":{"scheduling":{"nodeSelector":{"kubernetes.io/arch":"amd64"}}}}}`,
+		"AGENTS_OPERATOR_SANDBOX_INGRESS_FROM":   `[{"namespaceSelector":{}}]`,
+	}
+	c, err := load(env(with(ok)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := c.Sandbox
+	if !s.Enabled || s.Domain != "sandbox.example.com" || s.NamespacePrefix != "sandbox-" || s.PodSecurity != "baseline" ||
+		s.ChartName != "vcluster" || s.ChartVersion == "" || s.InstallerImage == "" || len(s.IngressFrom) == 0 || s.Values["controlPlane"] == nil {
+		t.Fatalf("sandbox = %+v", s)
+	}
+	for key, bad := range map[string]string{
+		"AGENTS_OPERATOR_HUB_SERVICE_ACCOUNT":      "",
+		"AGENTS_OPERATOR_SANDBOX_POD_SECURITY":     "privileged",
+		"AGENTS_OPERATOR_SANDBOX_NAMESPACE_PREFIX": "Way-Too-Long-Prefix-",
+		"AGENTS_OPERATOR_SANDBOX_DOMAIN":           "bad_domain",
+		"AGENTS_OPERATOR_SANDBOX_INGRESS_FROM":     "[",
+	} {
+		m := with(ok)
+		m[key] = bad
+		if _, err := load(env(m)); err == nil {
+			t.Errorf("%s=%q accepted", key, bad)
+		}
+	}
+	// Off: nothing is checked.
+	if _, err := load(env(base)); err != nil {
+		t.Fatal(err)
+	}
+}

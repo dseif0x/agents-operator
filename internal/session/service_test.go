@@ -24,6 +24,7 @@ import (
 	"github.com/dseif0x/agents-operator/internal/config"
 	"github.com/dseif0x/agents-operator/internal/egress"
 	"github.com/dseif0x/agents-operator/internal/github"
+	"github.com/dseif0x/agents-operator/internal/reconcile"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/store"
 	"github.com/dseif0x/agents-operator/internal/term"
@@ -600,5 +601,45 @@ func TestEgressValidation(t *testing.T) {
 	}
 	if v := svc.View(up); v.Egress == nil {
 		t.Fatal("view renders egress as null")
+	}
+}
+
+func TestSandboxAccessValidation(t *testing.T) {
+	svc, _, u := newService(t)
+	ctx := context.Background()
+	req := CreateRequest{Name: "Cluster A", Agent: "claude", K8sAccess: store.K8sAccessSandbox, K8sNamespaces: []string{"ignored"}}
+	if _, err := svc.Create(ctx, u, req); err == nil {
+		t.Fatal("sandbox accepted on a hub without the mode")
+	}
+	svc.Defaults.K8sSandbox = true
+	svc.Defaults.SandboxDomain = "sandbox.example.com"
+	svc.Defaults.Sandbox = reconcile.Config{Sandbox: config.Sandbox{Enabled: true, Domain: "sandbox.example.com"}}.Defaults()
+	sess, err := svc.Create(ctx, u, req)
+	if err != nil || sess.K8sAccess != store.K8sAccessSandbox || len(sess.K8sNamespaces) != 0 {
+		t.Fatalf("sandbox session = %+v, %v", sess, err)
+	}
+	v := svc.View(sess)
+	if v.SandboxNamespace != "sandbox-"+sess.ID || v.SandboxHost != "cluster-a.sandbox.example.com" {
+		t.Fatalf("view = %q %q", v.SandboxNamespace, v.SandboxHost)
+	}
+	// Another sandbox (of anyone) cannot take the same host label.
+	other := &store.User{Username: "bob", PasswordHash: "x"}
+	_ = svc.Store.Users().Create(ctx, other)
+	if _, err := svc.Create(ctx, other, CreateRequest{Name: "cluster-a", Agent: "claude", K8sAccess: store.K8sAccessSandbox}); err == nil {
+		t.Fatal("duplicate sandbox host accepted")
+	}
+	// The same name is fine outside sandbox mode, and a session keeps its own label on edit.
+	if _, err := svc.Create(ctx, other, CreateRequest{Name: "cluster-a", Agent: "claude"}); err != nil {
+		t.Fatalf("non-sandbox session with the same name: %v", err)
+	}
+	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateStopped, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "Cluster A", K8sAccess: store.K8sAccessSandbox}); err != nil {
+		t.Fatalf("edit keeping the name: %v", err)
+	}
+	// The sandbox's env names are reserved.
+	if _, err := svc.Create(ctx, u, CreateRequest{Name: "x", Agent: "claude", Env: map[string]string{"SANDBOX_NAMESPACE": "kube-system"}}); err == nil {
+		t.Fatal("reserved sandbox env accepted")
 	}
 }

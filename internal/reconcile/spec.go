@@ -55,6 +55,11 @@ type Config struct {
 	WriteClusterRole string
 	ClusterWideRead  bool
 	ExtraEnv         map[string]string
+	// Sandbox enables the "sandbox" access mode (sandbox.go): a vcluster per
+	// session. HubServiceAccount is the hub's own account, bound in each
+	// sandbox namespace.
+	Sandbox           config.Sandbox
+	HubServiceAccount string
 	// NetworkPolicy says the chart's default-deny NetworkPolicy covers
 	// session pods, so a session's own egress policy widens it (egress.go).
 	NetworkPolicy bool
@@ -95,6 +100,12 @@ func (c Config) Defaults() Config {
 	}
 	if c.WriteClusterRole == "" {
 		c.WriteClusterRole = "edit"
+	}
+	if c.Sandbox.NamespacePrefix == "" {
+		c.Sandbox.NamespacePrefix = "sandbox-"
+	}
+	if c.Sandbox.PodSecurity == "" {
+		c.Sandbox.PodSecurity = "baseline"
 	}
 	return c
 }
@@ -336,10 +347,25 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 		{Name: runner.EnvEgress, Value: egressEnv(s, cfg)},
 		{Name: "HOME", Value: WorkspacePath + "/home"},
 	}
+	sandbox := access == store.K8sAccessSandbox
+	if sandbox {
+		env = append(env,
+			corev1.EnvVar{Name: "KUBECONFIG", Value: SandboxKubeconfigDir + "/config"},
+			corev1.EnvVar{Name: runner.EnvSandboxNamespace, Value: SandboxNamespace(s.ID, cfg)},
+			corev1.EnvVar{Name: runner.EnvSandboxHost, Value: SandboxHost(s, cfg)},
+			corev1.EnvVar{Name: runner.EnvSandboxSecurity, Value: cfg.Sandbox.PodSecurity},
+		)
+	}
 	for _, k := range sortedKeys(cfg.ExtraEnv) {
+		if sandbox && k == "KUBECONFIG" {
+			continue
+		}
 		env = append(env, corev1.EnvVar{Name: k, Value: cfg.ExtraEnv[k]})
 	}
 	for _, k := range sortedKeys(s.Env) {
+		if sandbox && k == "KUBECONFIG" {
+			continue
+		}
 		env = append(env, corev1.EnvVar{Name: k, Value: s.Env[k]})
 	}
 
@@ -422,6 +448,13 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 	case store.K8sAccessNamespace:
 		pod.Spec.ServiceAccountName = SessionAccountName(s.ID)
 		pod.Spec.AutomountServiceAccountToken = ptr.To(true)
+	case store.K8sAccessSandbox:
+		// Only the vcluster's kubeconfig; no host identity at all.
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{Name: "sandbox-kubeconfig", VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: SandboxKubeconfigName(s.ID), DefaultMode: ptr.To[int32](0o440)},
+		}})
+		c := &pod.Spec.Containers[0]
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: "sandbox-kubeconfig", MountPath: SandboxKubeconfigDir, ReadOnly: true})
 	}
 	if cfg.TmpInit {
 		pod.Spec.InitContainers = []corev1.Container{{
@@ -459,6 +492,10 @@ func effectiveAccess(s *store.Session, cfg Config) (string, []string) {
 	case store.K8sAccessNamespace:
 		if cfg.NamespaceWrite && len(s.K8sNamespaces) > 0 {
 			return store.K8sAccessNamespace, s.K8sNamespaces
+		}
+	case store.K8sAccessSandbox:
+		if cfg.Sandbox.Enabled {
+			return store.K8sAccessSandbox, nil
 		}
 	}
 	return store.K8sAccessOff, nil

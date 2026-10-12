@@ -45,9 +45,13 @@ export interface Session {
   git_credentials: boolean;
   /** Local network destinations the agent may reach: `192.168.1.10`, `192.168.1.0/24`, `192.168.1.10:8080`. */
   egress: string[];
-  /** What kubectl in the pod may do: nothing, read the cluster, or also write in k8s_namespaces. */
+  /** What kubectl in the pod may do: nothing, read the cluster, also write in k8s_namespaces, or own a sandbox cluster. */
   k8s_access: K8sAccess;
   k8s_namespaces: string[];
+  /** Sandbox mode: the host namespace of the session's vcluster. */
+  sandbox_namespace?: string;
+  /** Sandbox mode: the DNS name the sandbox's Ingress hosts live under (absent without a sandbox domain). */
+  sandbox_host?: string;
   state: SessionState;
   state_reason: string;
   created_at: string;
@@ -72,7 +76,7 @@ export interface Activity {
   since: string;
 }
 
-export type K8sAccess = "off" | "readonly" | "namespace";
+export type K8sAccess = "off" | "readonly" | "namespace" | "sandbox";
 
 export type SessionState = "creating" | "running" | "stopping" | "stopped" | "failed" | "deleting";
 
@@ -96,6 +100,10 @@ export interface SessionDefaults {
   service_account: string;
   /** Whether sessions may ask for write access in namespaces of their choosing. */
   k8s_namespace_write: boolean;
+  /** Whether sessions may get a sandbox cluster (a vcluster of their own). */
+  k8s_sandbox: boolean;
+  /** Domain the sandbox Ingress hosts live under (<session name>.<domain>); empty without Ingress sync. */
+  sandbox_domain: string;
   /** Ranges a session may open on the local network; empty when the hub allows none. */
   egress_allowed: string[];
 }
