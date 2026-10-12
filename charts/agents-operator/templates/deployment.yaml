@@ -106,6 +106,36 @@ spec:
               value: {{ .Values.runner.networkPolicy.sessionEgress.allowedCIDRs | toJson | quote }}
             - name: AGENTS_OPERATOR_RUNNER_EGRESS_DENIED
               value: {{ .Values.runner.networkPolicy.sessionEgress.deniedCIDRs | toJson | quote }}
+            {{- with .Values.runner.sandbox }}
+            - name: AGENTS_OPERATOR_SANDBOX_ENABLED
+              value: {{ .enabled | quote }}
+            {{- if .enabled }}
+            - name: AGENTS_OPERATOR_HUB_SERVICE_ACCOUNT
+              value: {{ include "agents-operator.serviceAccountName" $ | quote }}
+            - name: AGENTS_OPERATOR_SANDBOX_HUB_ROLE
+              value: {{ include "agents-operator.sandboxRole" (dict "root" $ "role" "hub") | quote }}
+            - name: AGENTS_OPERATOR_SANDBOX_INSTALLER_ROLE
+              value: {{ include "agents-operator.sandboxRole" (dict "root" $ "role" "installer") | quote }}
+            - name: AGENTS_OPERATOR_SANDBOX_DOMAIN
+              value: {{ .domain | quote }}
+            - name: AGENTS_OPERATOR_SANDBOX_NAMESPACE_PREFIX
+              value: {{ .namespacePrefix | quote }}
+            - name: AGENTS_OPERATOR_SANDBOX_POD_SECURITY
+              value: {{ .podSecurity | quote }}
+            - name: AGENTS_OPERATOR_SANDBOX_CHART_REPO
+              value: {{ .chart.repo | quote }}
+            - name: AGENTS_OPERATOR_SANDBOX_CHART_NAME
+              value: {{ .chart.name | quote }}
+            - name: AGENTS_OPERATOR_SANDBOX_CHART_VERSION
+              value: {{ .chart.version | quote }}
+            - name: AGENTS_OPERATOR_SANDBOX_INSTALLER_IMAGE
+              value: {{ .installerImage | quote }}
+            - name: AGENTS_OPERATOR_SANDBOX_INGRESS_FROM
+              value: {{ .ingressFrom | toJson | quote }}
+            - name: AGENTS_OPERATOR_SANDBOX_VALUES
+              value: {{ .values | toJson | quote }}
+            {{- end }}
+            {{- end }}
             - name: AGENTS_OPERATOR_RUNNER_EXTRA_ENV
               value: {{ .Values.runner.extraEnv | toJson | quote }}
             - name: AGENTS_OPERATOR_IDLE_STOP_AFTER

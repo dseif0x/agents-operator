@@ -1,0 +1,138 @@
+suite: sandbox
+templates:
+  - sandbox.yaml
+release:
+  name: ao
+  namespace: agents-operator
+tests:
+  - it: renders nothing while the sandbox mode is off
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: grants the hub namespaces, RoleBindings and binding of exactly the two sandbox roles
+    set:
+      runner.sandbox.enabled: true
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - equal:
+          path: metadata.name
+          value: ao-agents-operator-agents-operator-sandbox
+      - lengthEqual:
+          path: rules
+          count: 3
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["namespaces"]
+            verbs: ["get", "list", "create", "update", "delete"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["rbac.authorization.k8s.io"]
+            resources: ["clusterroles"]
+            resourceNames: ["ao-agents-operator-agents-operator-sandbox-hub", "ao-agents-operator-agents-operator-sandbox-installer"]
+            verbs: ["bind"]
+
+  - it: binds that ClusterRole to the hub's ServiceAccount
+    set:
+      runner.sandbox.enabled: true
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ClusterRoleBinding
+      - equal:
+          path: subjects[0]
+          value:
+            kind: ServiceAccount
+            name: ao-agents-operator
+            namespace: agents-operator
+
+  - it: gives the hub only what it needs inside a sandbox namespace
+    set:
+      runner.sandbox.enabled: true
+    documentIndex: 2
+    asserts:
+      - equal:
+          path: metadata.name
+          value: ao-agents-operator-agents-operator-sandbox-hub
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            resourceNames: ["vc-vcluster"]
+            verbs: ["get"]
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["*"]
+            resources: ["*"]
+            verbs: ["*"]
+
+  - it: gives the installer everything, for RoleBindings in sandbox namespaces only
+    set:
+      runner.sandbox.enabled: true
+    documentIndex: 3
+    asserts:
+      - equal:
+          path: metadata.name
+          value: ao-agents-operator-agents-operator-sandbox-installer
+      - equal:
+          path: rules
+          value:
+            - apiGroups: ["*"]
+              resources: ["*"]
+              verbs: ["*"]
+
+  - it: limits the hub to sandbox namespaces with the configured prefix and Pod Security level
+    set:
+      runner.sandbox.enabled: true
+      runner.sandbox.namespacePrefix: sb-
+      runner.sandbox.podSecurity: restricted
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: ValidatingAdmissionPolicy
+      - equal:
+          path: spec.matchConditions[0].expression
+          value: request.userInfo.username == "system:serviceaccount:agents-operator:ao-agents-operator"
+      - matchRegex:
+          path: spec.validations[0].expression
+          pattern: "== \"restricted\""
+      - matchRegex:
+          path: spec.validations[0].expression
+          pattern: startsWith\("sb-"\)
+      - equal:
+          path: spec.failurePolicy
+          value: Fail
+
+  - it: binds both admission policies with Deny
+    set:
+      runner.sandbox.enabled: true
+    documentIndex: 7
+    asserts:
+      - isKind:
+          of: ValidatingAdmissionPolicyBinding
+      - equal:
+          path: spec.validationActions
+          value: ["Deny"]
+      - equal:
+          path: spec.policyName
+          value: ao-agents-operator-agents-operator-sandbox-ingress-hosts
+
+  - it: checks Ingress hosts in sandbox namespaces only
+    set:
+      runner.sandbox.enabled: true
+    documentIndex: 6
+    asserts:
+      - equal:
+          path: spec.matchConstraints.namespaceSelector.matchLabels
+          value:
+            agents-operator.io/sandbox: "true"
+      - equal:
+          path: spec.variables[0].name
+          value: host

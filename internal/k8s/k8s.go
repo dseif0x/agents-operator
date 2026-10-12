@@ -31,6 +31,16 @@ const (
 	ManagedBy      = "agents-operator"
 
 	AnnotationGeneration = "agents-operator.io/generation"
+
+	// LabelSandbox marks a namespace the hub created for a session's
+	// sandbox cluster; the chart's admission policies key on it.
+	LabelSandbox = "agents-operator.io/sandbox"
+	// AnnotationSandboxHost is the DNS name a sandbox's Ingress hosts must
+	// equal or end in (one level below the hub's sandbox domain).
+	AnnotationSandboxHost = "agents-operator.io/sandbox-host"
+	// AnnotationSandboxConfig is the hash of the vcluster chart and values
+	// last installed successfully in a sandbox namespace.
+	AnnotationSandboxConfig = "agents-operator.io/sandbox-config"
 )
 
 // NewClientset returns an in-cluster client, falling back to kubeconfig

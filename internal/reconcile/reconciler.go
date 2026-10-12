@@ -161,6 +161,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) {
 	for _, id := range r.egressSessionIDs(ctx) {
 		ids[id] = struct{}{}
 	}
+	for _, id := range r.sandboxSessionIDs(ctx) {
+		ids[id] = struct{}{}
+	}
 	delete(ids, "")
 	for id := range ids {
 		r.queue.Add(id)
@@ -249,6 +252,9 @@ func (r *Reconciler) reconcileOrphan(ctx context.Context, id string, o observed)
 	if err := r.orphanEgress(ctx, id, old); err != nil {
 		return err
 	}
+	if err := r.orphanSandbox(ctx, id, old); err != nil {
+		return err
+	}
 	if r.cfg.NamespaceWrite {
 		// The account and its bindings: gone once the account is old enough,
 		// or right away when bindings outlived their account.
@@ -332,6 +338,9 @@ func (r *Reconciler) reconcileCreating(ctx context.Context, sess *store.Session,
 		// references them; avoids a spurious "not found" on slow caches.
 		r.requeueSoon(sess.ID)
 		return nil
+	}
+	if done, err := r.ensureSandboxMode(ctx, sess); err != nil || !done {
+		return err
 	}
 	if err := r.ensureAccess(ctx, sess); err != nil {
 		var ae *accessError
@@ -427,12 +436,48 @@ func (r *Reconciler) reconcileDeleting(ctx context.Context, sess *store.Session,
 	if err := r.removeEgress(ctx, sess.ID); err != nil {
 		return err
 	}
+	if err := r.removeSandbox(ctx, sess, sess.ID); err != nil {
+		return err
+	}
 	if err := r.store.Sessions().Delete(ctx, sess.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
 	r.log.Info("session deleted", "session", sess.ID)
 	r.notifier.SessionDeleted(ctx, sess.ID, sess.OwnerID)
 	return nil
+}
+
+// ensureSandboxMode converges the session's sandbox before its pod is
+// built: in sandbox mode it waits for the vcluster and writes the
+// kubeconfig Secret the pod mounts; in any other mode it removes a sandbox
+// left from before. It reports whether the pod may be created now.
+func (r *Reconciler) ensureSandboxMode(ctx context.Context, sess *store.Session) (bool, error) {
+	if sess.K8sAccess != store.K8sAccessSandbox {
+		return true, r.removeSandbox(ctx, sess, sess.ID)
+	}
+	kubeconfig, wait, err := r.ensureSandbox(ctx, sess)
+	var ae *accessError
+	switch {
+	case errors.As(err, &ae):
+		return false, r.fail(ctx, sess, "kubernetes access: "+ae.msg)
+	case err != nil:
+		if msg, ok := isSandboxRetry(err); ok {
+			if serr := r.setState(ctx, sess, store.StateCreating, "sandbox: "+msg); serr != nil {
+				return false, serr
+			}
+		}
+		return false, err
+	case kubeconfig == nil:
+		if err := r.setState(ctx, sess, store.StateCreating, wait); err != nil {
+			return false, err
+		}
+		r.queue.AddAfter(sess.ID, 5*time.Second)
+		return false, nil
+	}
+	if err := r.ensureSandboxKubeconfig(ctx, sess, kubeconfig); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (r *Reconciler) deletePod(ctx context.Context, id string) error {

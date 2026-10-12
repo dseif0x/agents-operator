@@ -203,3 +203,42 @@ tests:
           content:
             name: AGENTS_OPERATOR_RUNNER_NETWORK_POLICY
             value: "false"
+
+  - it: passes the sandbox configuration to the hub when enabled
+    set:
+      runner.sandbox.enabled: true
+      runner.sandbox.domain: sandbox.example.com
+      runner.sandbox.values:
+        policies:
+          resourceQuota:
+            quota:
+              requests.cpu: "4"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_SANDBOX_DOMAIN
+            value: sandbox.example.com
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_SANDBOX_HUB_ROLE
+            value: RELEASE-NAME-agents-operator-NAMESPACE-sandbox-hub
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_SANDBOX_VALUES
+            value: '{"policies":{"resourceQuota":{"quota":{"requests.cpu":"4"}}}}'
+
+  - it: only says the sandbox mode is off when disabled
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_SANDBOX_ENABLED
+            value: "false"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: AGENTS_OPERATOR_SANDBOX_DOMAIN
+            value: ""

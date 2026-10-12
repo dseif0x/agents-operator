@@ -130,13 +130,14 @@ The root filesystem is read-only in the pod; `/tmp` is an emptyDir and everythin
 
 ## Kubernetes access for sessions
 
-Session pods carry no Kubernetes identity unless you turn on the runner ServiceAccount and the session asks for it. "Kubernetes access" on the session form is a dropdown with three modes, and a stopped session can be edited to another one:
+Session pods carry no Kubernetes identity unless you turn on the runner ServiceAccount (or sandbox clusters) and the session asks for it. "Kubernetes access" on the session form is a dropdown with up to four modes, and a stopped session can be edited to another one:
 
 | Mode | What the pod gets | Needs |
 | --- | --- | --- |
 | Off (default) | nothing | |
 | Read-only | the shared runner ServiceAccount, bound to `clusterRole` | `runner.serviceAccount.enabled` |
 | Read-only + write in namespaces | a ServiceAccount of its own: the same read access, plus `writeClusterRole` in the namespaces the owner lists | `runner.serviceAccount.namespaceWrite` as well |
+| Sandbox cluster (vcluster) | the kubeconfig of a virtual cluster of its own, where the agent is cluster-admin; no host identity | `runner.sandbox.enabled` (see [Sandbox clusters](#sandbox-clusters)) |
 
 ```yaml
 runner:
@@ -156,6 +157,39 @@ Namespace mode: the hub creates `agents-operator-<id>` (a ServiceAccount in the 
 
 The session NetworkPolicy blocks the cluster ranges, so the API server has to be opened explicitly. With the account enabled the chart adds egress rules for the API server endpoints. It reads them from the cluster's `kubernetes` Endpoints and Service at install or upgrade time (`helm lookup`), which `helm template` and `ct` cannot do; set `runner.networkPolicy.apiServerCIDRs` (control-plane node IPs and the `kubernetes` ClusterIP, as /32s) to spell them out, and `apiServerPort` if the API server does not listen on 6443. Most CNIs evaluate egress after kube-proxy's DNAT, which is why the node IPs matter and not only the service IP.
 
+## Sandbox clusters
+
+The sandbox mode gives a session a Kubernetes cluster of its own: a [vcluster](https://www.vcluster.com) whose control plane and workloads run in one host namespace made for the session. The agent is cluster-admin there (namespaces, CRDs, operators, Helm, Argo CD) and has no access to the host cluster. Typical use: let an agent bootstrap and test several deployment variants side by side, each on its own subdomain, and keep them up for a demo.
+
+```yaml
+runner:
+  sandbox:
+    enabled: true
+    domain: sandbox.example.com   # Ingress hosts: <session name>.sandbox.example.com and below; "" = no Ingress sync
+    namespacePrefix: sandbox-
+    podSecurity: baseline         # or restricted
+    chart: {repo: https://charts.loft.sh, name: vcluster, version: 0.37.3}
+    installerImage: alpine/helm:3.22.0
+    ingressFrom: [...]            # peers that may reach sandbox workloads: Traefik in kube-system by default
+    values: {}                    # extra vcluster values (quota, scheduling, storage)
+```
+
+What happens on start: the hub creates the namespace `<namespacePrefix><session id>` (labelled `agents-operator.io/sandbox=true`, enforcing `podSecurity`, annotated with the session's Ingress host), binds itself the chart's `sandbox-hub` role there, adds a NetworkPolicy that lets `ingressFrom` reach the workloads, and runs a Job with the Helm CLI (`helm upgrade --install vcluster`, under an account bound to the chart's `sandbox-installer` role, which is removed again once the install succeeded). The session shows `creating` with the progress meanwhile. When vcluster is up the hub copies its kubeconfig (`vc-vcluster`, pointed at `https://vcluster.<namespace>.svc`) into a Secret the session pod mounts, sets `KUBECONFIG`, and opens the session's egress to the vcluster API. The generated AGENTS.md tells the agent what it has and what the host enforces. A change of chart, installer image or values installs again on the next start (`helm upgrade`); a failed install fails the session with the Job's name (`kubectl logs -n <namespace> job/<name>`), and starting again retries.
+
+The sandbox keeps running while the session is stopped, so whatever it serves stays up; it is deleted with the session (the namespace, and with it everything that ran in it), or on the next start after the session was switched to another mode. Orphaned sandbox namespaces are removed after two minutes like other orphans (`kubectl get ns -l agents-operator.io/sandbox=true`).
+
+Isolation, on the host:
+
+- The workloads run as plain pods in the sandbox namespace under the `podSecurity` standard: no privileged pods, host paths, host network or added capabilities. vcluster's control plane runs as root (without privilege escalation), which `baseline` admits; `restricted` needs `values` that run it as non-root.
+- vcluster's ResourceQuota and LimitRange apply (adjust through `values.policies`); the hub always sets `services.loadbalancers` and `services.nodeports` to 0.
+- vcluster's NetworkPolicies let workloads reach DNS and the internet but no private range (the LAN, the cluster's other pods and services); the hub's policy admits only `ingressFrom`.
+- vcluster gets no ClusterRole (`rbac.clusterRole.enabled=false`, enforced), so it cannot read host nodes, storage classes or anything else cluster-wide.
+- Two ValidatingAdmissionPolicies (Kubernetes 1.30+): the hub may only create, change or delete namespaces labelled as sandboxes, with the prefix and Pod Security level of the chart; and an Ingress in a sandbox namespace must have only hosts equal to or below the sandbox's host (`<session name>.<domain>`) and no default backend, so a sandbox cannot take over another app's host on the shared ingress controller. Sandbox session names must map to distinct DNS labels.
+
+Ingress: an agent publishes a service with an Ingress whose host lies below its sandbox host; the Ingress is synced to the host namespace and served by your ingress controller. With external-dns and cert-manager watching Ingresses, DNS records and certificates (annotation `cert-manager.io/cluster-issuer`) work as for any app; otherwise point a wildcard record `*.sandbox.example.com` at the ingress controller.
+
+Turning the mode on grants the hub a ClusterRole with `namespaces` (get, list, create, update, delete; narrowed by the admission policy), `rolebindings` (get, list, create, delete) and `bind` on the two sandbox roles. `sandbox-hub` holds the installer's ServiceAccount, values ConfigMap and Job, the ingress NetworkPolicy and `get` on the `vc-vcluster` Secret; `sandbox-installer` is `*` on `*`, but only ever bound inside one sandbox namespace for the install.
+
 ## Security checklist
 
 - Session pods: non-root 1000, read-only root, no capabilities, seccomp RuntimeDefault, no SA token unless the session opted into Kubernetes access (above), no host namespaces or paths. Not configurable, with one exception: a `tmp-sticky` init container runs `chmod 1777 /tmp` as root (read-only root, every capability dropped, no privilege escalation) so the `/tmp` emptyDir gets the sticky bit Claude Code demands for its socket directory; without it the CLI warns on every start that cross-session messaging is off. Namespaces enforcing the "restricted" Pod Security Standard reject a root init container; set `runner.tmpInit=false` there and live with the warning.
@@ -165,7 +199,7 @@ The session NetworkPolicy blocks the cluster ranges, so the API server has to be
 - Credentials in a session: only the model credentials its agent uses, plus git credentials. The runner token, SSH key and login seeds are runner-only: `agent-runner init` keeps them out of PID 1's environment and the runner is non-dumpable. Check from a session: `tr '\0' '\n' < /proc/1/environ | grep RUNNER_TOKEN` finds nothing, `cat /proc/$PPID/environ` (the runner) is denied.
 - Hub: distroless, non-root, read-only root. Cookies `HttpOnly; Secure; SameSite=Lax`, rotated on login. CSRF header on every non-GET API call. WebSocket `Origin` checked against the public host. Host header allowlist (`allowedHosts` + the public host). Login lockout after 10 failures per IP for 15 minutes. argon2id passwords.
 - Runner tokens: 32 random bytes per session, rotated on every start, never logged.
-- The Role is namespace-scoped with exactly: pods (get, list, watch, create, delete), pods/log (get), persistentvolumeclaims (get, list, watch, create, delete), secrets (get, list, watch, create, update, delete), events (create), and with the session NetworkPolicy (the default) networkpolicies (get, list, create, update, delete) for sessions' local network access. Only `runner.serviceAccount.namespaceWrite` adds anything beyond that (serviceaccounts here, rolebindings anywhere, `bind` on the two ClusterRoles; see above). Check with `kubectl auth can-i --list --as=system:serviceaccount:<ns>:<release>-agents-operator`.
+- The Role is namespace-scoped with exactly: pods (get, list, watch, create, delete), pods/log (get), persistentvolumeclaims (get, list, watch, create, delete), secrets (get, list, watch, create, update, delete), events (create), and with the session NetworkPolicy (the default) networkpolicies (get, list, create, update, delete) for sessions' local network access. Only `runner.serviceAccount.namespaceWrite` (serviceaccounts here, rolebindings anywhere, `bind` on the two ClusterRoles) and `runner.sandbox.enabled` (sandbox namespaces, rolebindings, `bind` on the two sandbox roles; see [Sandbox clusters](#sandbox-clusters)) add anything beyond that. Check with `kubectl auth can-i --list --as=system:serviceaccount:<ns>:<release>-agents-operator`.
 
 ## Metrics
 

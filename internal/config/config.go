@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -140,6 +141,11 @@ type Config struct {
 	// Empty RunnerEgressAllowed turns per-session egress off.
 	RunnerEgressAllowed []string
 	RunnerEgressDenied  []string
+	// Sandbox configures the "sandbox" access mode: a vcluster per session.
+	Sandbox Sandbox
+	// HubServiceAccount is the hub's own ServiceAccount, which the sandbox
+	// mode binds in each sandbox namespace.
+	HubServiceAccount string
 	// RunnerExtraEnv is injected into every session pod (non-secret).
 	RunnerExtraEnv map[string]string
 	// RunnerTmpInit adds the root init container that gives /tmp the sticky
@@ -168,6 +174,30 @@ type Config struct {
 	ShutdownDelay time.Duration
 	// HubPodLabels lets the reconciler find itself for NetworkPolicy docs;
 	// unused by code today, kept for the chart's sake.
+}
+
+// Sandbox is the "sandbox" access mode's configuration (chart values
+// runner.sandbox.*): every such session gets a namespace named
+// NamespacePrefix+<session id> with a vcluster installed by a Helm Job.
+type Sandbox struct {
+	Enabled         bool
+	Domain          string // Ingress hosts go under <session>.<Domain>; empty turns Ingress sync off
+	NamespacePrefix string
+	PodSecurity     string // Pod Security Standard enforced in the namespace: baseline or restricted
+	ChartRepo       string
+	ChartName       string
+	ChartVersion    string
+	InstallerImage  string
+	// HubRole and InstallerRole are the chart's two ClusterRoles bound in
+	// each sandbox namespace: the hub's rights there, and the installer
+	// Job's (removed again once the install succeeded).
+	HubRole       string
+	InstallerRole string
+	// IngressFrom are NetworkPolicy peers (raw JSON) allowed to reach the
+	// sandbox's workloads: the ingress controller.
+	IngressFrom json.RawMessage
+	// Values are extra vcluster chart values merged over the hub's.
+	Values map[string]any
 }
 
 // EgressPolicy is what sessions may open on the local network. It is empty
@@ -277,16 +307,29 @@ func load(get lookup) (*Config, error) {
 		RunnerClusterWideRead:  boolean("RUNNER_CLUSTER_WIDE_READ", false),
 		RunnerTmpInit:          boolean("RUNNER_TMP_INIT", true),
 		RunnerNetworkPolicy:    boolean("RUNNER_NETWORK_POLICY", false),
-		AdminUsername:          str("ADMIN_USERNAME", "admin"),
-		AdminPasswordHash:      str("ADMIN_PASSWORD_HASH", ""),
-		AdminPassword:          str("ADMIN_PASSWORD", ""),
-		IdleStopAfter:          dur("IDLE_STOP_AFTER", 0),
-		LogLevel:               str("LOG_LEVEL", "info"),
-		ReconcileInterval:      dur("RECONCILE_INTERVAL", 30*time.Second),
-		LeaderLease:            str("LEADER_LEASE", ""),
-		PodName:                str("POD_NAME", hostname()),
-		ShutdownDelay:          dur("SHUTDOWN_DELAY", 2*time.Second),
-		StatusPollEvery:        dur("STATUS_POLL_INTERVAL", 10*time.Second),
+		HubServiceAccount:      str("HUB_SERVICE_ACCOUNT", ""),
+		Sandbox: Sandbox{
+			Enabled:         boolean("SANDBOX_ENABLED", false),
+			Domain:          strings.ToLower(strings.Trim(str("SANDBOX_DOMAIN", ""), ". ")),
+			NamespacePrefix: str("SANDBOX_NAMESPACE_PREFIX", "sandbox-"),
+			PodSecurity:     str("SANDBOX_POD_SECURITY", "baseline"),
+			ChartRepo:       str("SANDBOX_CHART_REPO", "https://charts.loft.sh"),
+			ChartName:       str("SANDBOX_CHART_NAME", "vcluster"),
+			ChartVersion:    str("SANDBOX_CHART_VERSION", "0.37.3"),
+			InstallerImage:  str("SANDBOX_INSTALLER_IMAGE", "alpine/helm:3.22.0"),
+			HubRole:         str("SANDBOX_HUB_ROLE", ""),
+			InstallerRole:   str("SANDBOX_INSTALLER_ROLE", ""),
+		},
+		AdminUsername:     str("ADMIN_USERNAME", "admin"),
+		AdminPasswordHash: str("ADMIN_PASSWORD_HASH", ""),
+		AdminPassword:     str("ADMIN_PASSWORD", ""),
+		IdleStopAfter:     dur("IDLE_STOP_AFTER", 0),
+		LogLevel:          str("LOG_LEVEL", "info"),
+		ReconcileInterval: dur("RECONCILE_INTERVAL", 30*time.Second),
+		LeaderLease:       str("LEADER_LEASE", ""),
+		PodName:           str("POD_NAME", hostname()),
+		ShutdownDelay:     dur("SHUTDOWN_DELAY", 2*time.Second),
+		StatusPollEvery:   dur("STATUS_POLL_INTERVAL", 10*time.Second),
 		DefaultResources: Resources{
 			Requests: ResourceList{CPU: str("DEFAULT_CPU_REQUEST", "250m"), Memory: str("DEFAULT_MEMORY_REQUEST", "512Mi")},
 			Limits:   ResourceList{CPU: str("DEFAULT_CPU_LIMIT", "2"), Memory: str("DEFAULT_MEMORY_LIMIT", "4Gi")},
@@ -299,6 +342,19 @@ func load(get lookup) (*Config, error) {
 	jsonInto("RUNNER_EXTRA_ENV", &c.RunnerExtraEnv)
 	jsonInto("RUNNER_EGRESS_ALLOWED", &c.RunnerEgressAllowed)
 	jsonInto("RUNNER_EGRESS_DENIED", &c.RunnerEgressDenied)
+	jsonInto("SANDBOX_VALUES", &c.Sandbox.Values)
+	if v := str("SANDBOX_INGRESS_FROM", ""); v != "" {
+		if !json.Valid([]byte(v)) {
+			errs = append(errs, fmt.Errorf("%sSANDBOX_INGRESS_FROM: invalid JSON", Prefix))
+		} else {
+			c.Sandbox.IngressFrom = json.RawMessage(v)
+		}
+	}
+	if c.Sandbox.Enabled {
+		if err := c.Sandbox.validate(c.HubServiceAccount); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	if _, err := c.EgressPolicy(); err != nil {
 		errs = append(errs, err)
 	}
@@ -371,4 +427,31 @@ func splitAddr(addr string) (string, int, error) {
 		return "", 0, fmt.Errorf("bad port: %w", err)
 	}
 	return addr[:i], port, nil
+}
+
+var (
+	sandboxPrefixRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,14}[a-z0-9-])?$`)
+	sandboxDomainRE = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+)
+
+// validate checks what the sandbox mode needs from the chart.
+func (s Sandbox) validate(hubServiceAccount string) error {
+	switch {
+	case hubServiceAccount == "":
+		return fmt.Errorf("%sSANDBOX_ENABLED needs %sHUB_SERVICE_ACCOUNT", Prefix, Prefix)
+	case s.HubRole == "" || s.InstallerRole == "":
+		return fmt.Errorf("%sSANDBOX_ENABLED needs %sSANDBOX_HUB_ROLE and %sSANDBOX_INSTALLER_ROLE", Prefix, Prefix, Prefix)
+	case !sandboxPrefixRE.MatchString(s.NamespacePrefix):
+		// A session id is 36 characters; prefix plus id must stay a DNS label.
+		return fmt.Errorf("%sSANDBOX_NAMESPACE_PREFIX must be at most 16 lowercase letters, digits or dashes", Prefix)
+	case s.PodSecurity != "baseline" && s.PodSecurity != "restricted":
+		return fmt.Errorf("%sSANDBOX_POD_SECURITY must be baseline or restricted", Prefix)
+	case s.Domain != "" && (len(s.Domain) > 200 || !sandboxDomainRE.MatchString(s.Domain)):
+		return fmt.Errorf("%sSANDBOX_DOMAIN must be a DNS name", Prefix)
+	case s.ChartRepo == "" && !strings.HasPrefix(s.ChartName, "oci://"):
+		return fmt.Errorf("%sSANDBOX_CHART_REPO is empty and %sSANDBOX_CHART_NAME is not an oci:// reference", Prefix, Prefix)
+	case s.ChartName == "" || s.ChartVersion == "" || s.InstallerImage == "":
+		return fmt.Errorf("%sSANDBOX_CHART_NAME, _CHART_VERSION and _INSTALLER_IMAGE must be set", Prefix)
+	}
+	return nil
 }

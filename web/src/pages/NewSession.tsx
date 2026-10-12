@@ -355,14 +355,15 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
             </div>
           </div>
         )}
-        {defaults?.service_account && (
+        {(defaults?.service_account || defaults?.k8s_sandbox) && (
           <div class="form-grid">
             <div>
               <label for="k8s">Kubernetes access</label>
               <select id="k8s" value={k8sAccess} onChange={(e) => setK8sAccess((e.target as HTMLSelectElement).value as K8sAccess)}>
                 <option value="off">Off</option>
-                <option value="readonly">Read-only</option>
-                {defaults.k8s_namespace_write && <option value="namespace">Read-only + write in namespaces</option>}
+                {defaults.service_account && <option value="readonly">Read-only</option>}
+                {defaults.service_account && defaults.k8s_namespace_write && <option value="namespace">Read-only + write in namespaces</option>}
+                {defaults.k8s_sandbox && <option value="sandbox">Sandbox cluster (vcluster)</option>}
               </select>
               <div class="muted" style="font-size:12px;margin-top:3px">
                 {k8sAccess === "off" && "No cluster credentials in the pod."}
@@ -373,6 +374,19 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
                   </>
                 )}
                 {k8sAccess === "namespace" && "The session gets a ServiceAccount of its own: read-only everywhere the shared one may read, plus the edit role in the namespaces below."}
+                {k8sAccess === "sandbox" && (
+                  <>
+                    A virtual cluster of its own where the agent is cluster-admin, and no access to the real cluster. It keeps running while the session is stopped and
+                    is deleted with it.{" "}
+                    {defaults.sandbox_domain ? (
+                      <>
+                        Ingresses are published under <code>*.{dnsLabel(name)}.{defaults.sandbox_domain}</code>.
+                      </>
+                    ) : (
+                      "Ingresses are not published on this hub."
+                    )}
+                  </>
+                )}
               </div>
             </div>
             {k8sAccess === "namespace" && (
@@ -473,3 +487,11 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
     </div>
   );
 }
+
+/** The DNS label the hub derives from a session name (reconcile.Hostname). */
+function dnsLabel(name: string): string {
+  let h = name.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (h.length > 63) h = h.slice(0, 63).replace(/^-+|-+$/g, "");
+  return h || "session";
+}
+

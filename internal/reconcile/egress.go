@@ -30,12 +30,25 @@ import (
 // delete) and is found again by its session label.
 
 // BuildEgressPolicy returns the session's NetworkPolicy, or nil when it
-// lists no destinations.
+// lists no destinations and has no sandbox cluster to reach.
 func BuildEgressPolicy(s *store.Session, cfg Config) (*networkingv1.NetworkPolicy, error) {
-	if len(s.Egress) == 0 {
+	access, _ := effectiveAccess(s, cfg.Defaults())
+	sandbox := access == store.K8sAccessSandbox
+	if len(s.Egress) == 0 && !sandbox {
 		return nil, nil
 	}
-	rules := make([]networkingv1.NetworkPolicyEgressRule, 0, len(s.Egress))
+	rules := make([]networkingv1.NetworkPolicyEgressRule, 0, len(s.Egress)+1)
+	if sandbox {
+		// The vcluster API server, behind its service's 443.
+		port := intstr.FromInt32(8443)
+		rules = append(rules, networkingv1.NetworkPolicyEgressRule{
+			To: []networkingv1.NetworkPolicyPeer{{
+				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": SandboxNamespace(s.ID, cfg.Defaults())}},
+				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"app": SandboxRelease, "release": SandboxRelease}},
+			}},
+			Ports: []networkingv1.NetworkPolicyPort{{Protocol: ptr.To(corev1.ProtocolTCP), Port: &port}},
+		})
+	}
 	for _, e := range s.Egress {
 		r, err := egress.Parse(e)
 		if err != nil {
@@ -90,7 +103,7 @@ func (r *Reconciler) ensureEgress(ctx context.Context, sess *store.Session) erro
 		if _, err := api.Create(ctx, want, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 			return wrapEgress("create network policy", err)
 		}
-		r.event(ctx, sess, "network", fmt.Sprintf("local network access: %d destination(s)", len(sess.Egress)))
+		r.event(ctx, sess, "network", egressSummary(sess))
 	case err != nil:
 		return wrapEgress("read network policy", err)
 	case !reflect.DeepEqual(have.Spec, want.Spec) || !reflect.DeepEqual(have.Labels, want.Labels):
@@ -98,9 +111,17 @@ func (r *Reconciler) ensureEgress(ctx context.Context, sess *store.Session) erro
 		if _, err := api.Update(ctx, have, metav1.UpdateOptions{}); err != nil {
 			return wrapEgress("update network policy", err)
 		}
-		r.event(ctx, sess, "network", fmt.Sprintf("local network access: %d destination(s)", len(sess.Egress)))
+		r.event(ctx, sess, "network", egressSummary(sess))
 	}
 	return nil
+}
+
+func egressSummary(sess *store.Session) string {
+	msg := fmt.Sprintf("local network access: %d destination(s)", len(sess.Egress))
+	if sess.K8sAccess == store.K8sAccessSandbox {
+		msg += " plus the sandbox cluster's API"
+	}
+	return msg
 }
 
 // removeEgress deletes the session's NetworkPolicy, if any.

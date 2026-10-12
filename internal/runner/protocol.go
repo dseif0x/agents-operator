@@ -249,6 +249,9 @@ const (
 	EnvHookListen       = "RUNNER_HOOK_LISTEN"      // defaults to 127.0.0.1:7682
 	EnvHookURL          = "RUNNER_HOOK_URL"         // where `agent-runner hook` posts; defaults to HookURL
 	EnvSessionName      = "AGENTS_OPERATOR_SESSION" // human name, used for the prompt/hostname
-	EnvK8sAccess        = "K8S_ACCESS"              // off, readonly or namespace: what the mounted ServiceAccount may do
+	EnvK8sAccess        = "K8S_ACCESS"              // off, readonly, namespace or sandbox: what kubectl in the pod may do
 	EnvK8sNamespaces    = "K8S_NAMESPACES"          // comma-separated namespaces with write access (namespace mode)
+	EnvSandboxNamespace = "SANDBOX_NAMESPACE"       // host namespace of the session's vcluster (sandbox mode)
+	EnvSandboxHost      = "SANDBOX_HOST"            // DNS name the sandbox's Ingress hosts live under (sandbox mode, may be empty)
+	EnvSandboxSecurity  = "SANDBOX_POD_SECURITY"    // Pod Security Standard enforced in the sandbox's host namespace
 )

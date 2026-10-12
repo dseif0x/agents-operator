@@ -103,7 +103,8 @@ All of these are injected by the hub; see `internal/runner/protocol.go`.
 | `AGENT_GIT_CREDENTIALS` | pod spec | `false` keeps `GIT_SSH_KEY`, `GIT_HTTPS_TOKEN` and `GH_TOKEN` runner-only: used for the first-boot clones, never given to the agent; absent means `true` |
 | `REPOS` | pod spec | JSON list of `{url, branch, path}`; each is cloned into `/workspace/<path>` on first boot; the agent starts in `/workspace` |
 | `AGENTS_OPERATOR_SESSION` | pod spec | session name |
-| `K8S_ACCESS`, `K8S_NAMESPACES` | pod spec | what the mounted ServiceAccount may do (`off`, `readonly`, `namespace`) and, in namespace mode, the comma-separated namespaces with write access; only used for the generated AGENTS.md |
+| `K8S_ACCESS`, `K8S_NAMESPACES` | pod spec | what kubectl in the pod may do (`off`, `readonly`, `namespace`, `sandbox`) and, in namespace mode, the comma-separated namespaces with write access; only used for the generated AGENTS.md |
+| `SANDBOX_NAMESPACE`, `SANDBOX_HOST`, `SANDBOX_POD_SECURITY` | pod spec | sandbox mode: the vcluster's host namespace, the DNS name its Ingress hosts live under (empty without a sandbox domain) and the Pod Security level enforced there; only used for the generated AGENTS.md. `KUBECONFIG` points at the mounted kubeconfig |
 | `EGRESS` | pod spec | comma-separated local network destinations the session's NetworkPolicy opens; only used for the generated AGENTS.md |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `UNJAILED_API_KEY`, `ANTHROPIC_BASE_URL` | per-session Secret (from the user Secret) | model credentials, only those the session's agent uses |
 | `CLAUDE_CODE_OAUTH_TOKEN` | per-session Secret | long-lived Claude subscription token from `claude setup-token`; read by Claude Code itself |
