@@ -99,6 +99,9 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
   const [autonomous, setAutonomous] = useState(true);
   const [gitCredentials, setGitCredentials] = useState(true);
   const [egress, setEgress] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [systemPromptReplace, setSystemPromptReplace] = useState(false);
+  const [agentDefinition, setAgentDefinition] = useState("");
   const [editable, setEditable] = useState<boolean | null>(editing ? null : true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -150,6 +153,9 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         setAutonomous(s.autonomous);
         setGitCredentials(s.git_credentials ?? true);
         setEgress((s.egress || []).join("\n"));
+        setSystemPrompt(s.system_prompt || "");
+        setSystemPromptReplace(!!s.system_prompt_replace);
+        setAgentDefinition(s.agent_definition || "");
         setEditable(s.state === "stopped" || s.state === "failed");
       })
       .catch((e) => setError((e as Error).message));
@@ -203,6 +209,11 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         setBusy(false);
         return;
       }
+    }
+    if (agent === "openclaude") {
+      req.system_prompt = systemPrompt;
+      req.system_prompt_replace = systemPromptReplace && !agentDefinition.trim();
+      req.agent_definition = agentDefinition;
     }
     req.egress = egress
       .split(/[\s,]+/)
@@ -339,6 +350,45 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
             commit, not push or use <code>gh</code>
           </label>
         </div>
+        {agent === "openclaude" && (
+          <div>
+            <label for="sysprompt">System prompt</label>
+            <textarea
+              id="sysprompt"
+              value={systemPrompt}
+              onInput={(e) => setSystemPrompt((e.target as HTMLTextAreaElement).value)}
+              placeholder="Extra instructions for every conversation in this session"
+              rows={4}
+            />
+            <div class="checkbox">
+              <input
+                id="spreplace"
+                type="checkbox"
+                checked={systemPromptReplace && !agentDefinition.trim()}
+                disabled={!!agentDefinition.trim()}
+                onChange={(e) => setSystemPromptReplace((e.target as HTMLInputElement).checked)}
+              />
+              <label for="spreplace" style="margin:0;color:inherit">
+                Replace OpenClaude's built-in prompt instead of adding to it (the built-in one teaches the model its tools; without it the agent
+                may code worse)
+              </label>
+            </div>
+            <label for="agentdef">Agent definition</label>
+            <textarea
+              id="agentdef"
+              value={agentDefinition}
+              onInput={(e) => setAgentDefinition((e.target as HTMLTextAreaElement).value)}
+              placeholder={"---\nname: my-agent\ndescription: What this agent is for\ntools: Read, Edit, Write, Bash, Grep, Glob\n---\nYou are …"}
+              rows={6}
+              spellcheck={false}
+            />
+            <div class="muted" style="font-size:12px;margin-top:3px">
+              Optional. An agent file as for Claude Code: front matter with <code>name</code> and <code>description</code> (optionally{" "}
+              <code>tools</code>, <code>model</code>), then the agent's prompt. OpenClaude starts as that agent (<code>--agent</code>); its prompt
+              replaces the built-in one, and the system prompt above is added after it. Both apply from the next start.
+            </div>
+          </div>
+        )}
         {!!(defaults?.egress_allowed?.length || egress) && (
           <div>
             <label for="egress">Local network access</label>

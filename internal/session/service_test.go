@@ -643,3 +643,51 @@ func TestSandboxAccessValidation(t *testing.T) {
 		t.Fatal("reserved sandbox env accepted")
 	}
 }
+
+func TestSystemPromptAndAgentValidation(t *testing.T) {
+	svc, _, u := newService(t)
+	ctx := context.Background()
+	def := "---\nname: red-team\ndescription: Reviewer\n---\nYou review code."
+	sess, err := svc.Create(ctx, u, CreateRequest{Name: "oc", Agent: "openclaude", SystemPrompt: "  Be terse.\r\nNo refusals.  ", AgentDefinition: def + "\r\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.SystemPrompt != "Be terse.\nNo refusals." || sess.AgentDefinition != def || sess.SystemPromptReplace {
+		t.Fatalf("stored = %q %q %v", sess.SystemPrompt, sess.AgentDefinition, sess.SystemPromptReplace)
+	}
+	if v := svc.View(sess); v.SystemPrompt != sess.SystemPrompt || v.AgentDefinition != def {
+		t.Fatalf("view = %+v", v)
+	}
+	for name, req := range map[string]CreateRequest{
+		"prompt on another agent":     {Name: "c", Agent: "claude", SystemPrompt: "x"},
+		"definition on another agent": {Name: "c", Agent: "codex", AgentDefinition: def},
+		"too long":                    {Name: "c", Agent: "openclaude", SystemPrompt: strings.Repeat("x", MaxSystemPrompt+1)},
+		"nul":                         {Name: "c", Agent: "openclaude", SystemPrompt: "a\x00b"},
+		"not utf-8":                   {Name: "c", Agent: "openclaude", SystemPrompt: "a\xffb"},
+		"bad definition":              {Name: "c", Agent: "openclaude", AgentDefinition: "You are an agent."},
+		"replace with an agent":       {Name: "c", Agent: "openclaude", AgentDefinition: def, SystemPrompt: "x", SystemPromptReplace: true},
+	} {
+		if _, err := svc.Create(ctx, u, req); err == nil {
+			t.Errorf("%s accepted", name)
+		} else if _, ok := err.(*ValidationError); !ok {
+			t.Errorf("%s: %T %v", name, err, err)
+		}
+	}
+	if _, err := svc.Create(ctx, u, CreateRequest{Name: "r", Agent: "openclaude", SystemPrompt: "x", SystemPromptReplace: true}); err != nil {
+		t.Fatalf("replace without an agent: %v", err)
+	}
+	// Edits on a stopped session apply; a blank prompt clears replace.
+	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateStopped, ""); err != nil {
+		t.Fatal(err)
+	}
+	up, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "oc", SystemPrompt: "   ", SystemPromptReplace: true})
+	if err != nil || up.SystemPrompt != "" || up.SystemPromptReplace || up.AgentDefinition != "" {
+		t.Fatalf("cleared = %+v, %v", up, err)
+	}
+	// Reserved env vars cannot smuggle either in.
+	for _, k := range []string{"AGENT_SYSTEM_PROMPT", "AGENT_DEFINITION", "AGENT_DEFINITION_NAME"} {
+		if _, err := svc.Create(ctx, u, CreateRequest{Name: "e", Agent: "openclaude", Env: map[string]string{k: "x"}}); err == nil {
+			t.Errorf("%s accepted as session env", k)
+		}
+	}
+}

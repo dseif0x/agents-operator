@@ -228,14 +228,24 @@ const (
 	EnvAgentGitCredentials = "AGENT_GIT_CREDENTIALS"
 	// EnvEgress lists, comma-separated, the local network destinations the
 	// session's NetworkPolicy opens; only used for the generated AGENTS.md.
-	EnvEgress        = "EGRESS"
-	EnvRepos         = "REPOS"    // JSON list of {url, branch, path}; cloned under WORKSPACE
-	EnvGitHubToken   = "GH_TOKEN" // GitHub token for gh and https clones of github.com
-	EnvGitUserName   = "GIT_USER_NAME"
-	EnvGitUserEmail  = "GIT_USER_EMAIL"
-	EnvGitSSHKey     = "GIT_SSH_KEY"            // private key contents
-	EnvGitHTTPSToken = "GIT_HTTPS_TOKEN"        // token for https clones
-	EnvSeedPrefix    = "AGENTS_OPERATOR_LOGIN_" // + upper(kind): base64 credential file to seed
+	EnvEgress = "EGRESS"
+	// EnvSystemPrompt is an OpenClaude session's custom system prompt;
+	// EnvSystemPromptMode says whether it is appended to the CLI's own
+	// ("append", the default) or replaces it ("replace").
+	EnvSystemPrompt     = "AGENT_SYSTEM_PROMPT"
+	EnvSystemPromptMode = "AGENT_SYSTEM_PROMPT_MODE"
+	// EnvAgentDefinition is an OpenClaude session's agent definition and
+	// EnvAgentDefinitionName its name: the runner writes it to
+	// ~/.openclaude/agents/<name>.md and starts the CLI with --agent <name>.
+	EnvAgentDefinition     = "AGENT_DEFINITION"
+	EnvAgentDefinitionName = "AGENT_DEFINITION_NAME"
+	EnvRepos               = "REPOS"    // JSON list of {url, branch, path}; cloned under WORKSPACE
+	EnvGitHubToken         = "GH_TOKEN" // GitHub token for gh and https clones of github.com
+	EnvGitUserName         = "GIT_USER_NAME"
+	EnvGitUserEmail        = "GIT_USER_EMAIL"
+	EnvGitSSHKey           = "GIT_SSH_KEY"            // private key contents
+	EnvGitHTTPSToken       = "GIT_HTTPS_TOKEN"        // token for https clones
+	EnvSeedPrefix          = "AGENTS_OPERATOR_LOGIN_" // + upper(kind): base64 credential file to seed
 	// EnvPrivateFile is set by `agent-runner init`: the file holding the
 	// runner-only variables above (RUNNER_TOKEN, GIT_SSH_KEY, the login
 	// seeds), moved out of the environment so PID 1 does not carry them.

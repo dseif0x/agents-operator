@@ -405,3 +405,34 @@ func TestBuildPodK8sAccess(t *testing.T) {
 		t.Fatalf("namespace mode without namespaceWrite: %+v", pod.Spec)
 	}
 }
+
+func TestSystemPromptAndAgentEnv(t *testing.T) {
+	s := testSession()
+	s.Agent = runner.AgentOpenClaude
+	envOf := func() map[string]string {
+		m := map[string]string{}
+		for _, e := range BuildPod(s, testCfg()).Spec.Containers[0].Env {
+			m[e.Name] = e.Value
+		}
+		return m
+	}
+	if env := envOf(); env[runner.EnvSystemPrompt] != "" || env[runner.EnvAgentDefinition] != "" {
+		t.Fatalf("env without either: %v", env)
+	}
+	s.SystemPrompt = "Be terse."
+	s.AgentDefinition = "---\nname: red-team\ndescription: Reviewer\n---\nYou review code."
+	env := envOf()
+	if env[runner.EnvSystemPrompt] != "Be terse." || env[runner.EnvSystemPromptMode] != "append" ||
+		env[runner.EnvAgentDefinition] != s.AgentDefinition || env[runner.EnvAgentDefinitionName] != "red-team" {
+		t.Fatalf("env = %v", env)
+	}
+	s.SystemPromptReplace = true
+	if env := envOf(); env[runner.EnvSystemPromptMode] != "replace" {
+		t.Fatalf("replace env = %v", env)
+	}
+	// A definition that no longer parses is left out.
+	s.AgentDefinition = "not a definition"
+	if env := envOf(); env[runner.EnvAgentDefinition] != "" || env[runner.EnvAgentDefinitionName] != "" {
+		t.Fatalf("bad definition passed: %v", env)
+	}
+}
