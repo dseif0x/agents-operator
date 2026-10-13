@@ -369,8 +369,8 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
                 onChange={(e) => setSystemPromptReplace((e.target as HTMLInputElement).checked)}
               />
               <label for="spreplace" style="margin:0;color:inherit">
-                Replace OpenClaude's built-in prompt instead of adding to it (the built-in one teaches the model its tools; without it the agent
-                may code worse)
+                Replace the built-in prompt instead of adding to it (it tells the model how to use its tools and work; without it the agent may
+                code worse)
               </label>
             </div>
             <label for="agentdef">Agent definition</label>
@@ -384,8 +384,9 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
             />
             <div class="muted" style="font-size:12px;margin-top:3px">
               Optional. An agent file as for Claude Code: front matter with <code>name</code> and <code>description</code> (optionally{" "}
-              <code>tools</code>, <code>model</code>), then the agent's prompt. OpenClaude starts as that agent (<code>--agent</code>); its prompt
-              replaces the built-in one, and the system prompt above is added after it. Both apply from the next start.
+              <code>tools</code>, <code>model</code>), then the agent's prompt. OpenClaude starts as that agent (<code>--agent</code>) and the system
+              prompt above is added after it. Empty: the built-in agent, the Unjailed CLI's behaviour ported to OpenClaude's tools; a system
+              prompt set to replace turns it off. Both apply from the next start.
             </div>
           </div>
         )}
