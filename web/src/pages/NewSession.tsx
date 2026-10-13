@@ -80,7 +80,7 @@ const keyValueLines = (m: Record<string, string | undefined> | undefined, skip: 
 // volume (agent, PVC size, storage class) locked.
 export function NewSession(props: { user: User; onLogout: () => void; edit?: string }) {
   const editing = !!props.edit;
-  const [agents, setAgents] = useState<string[]>(["claude", "opencode", "codex", "openclaude", "shell"]);
+  const [agents, setAgents] = useState<string[]>(["claude", "opencode", "codex", "shell"]);
   const [name, setName] = useState("");
   const [agent, setAgent] = useState("claude");
   const [repos, setRepos] = useState("");
@@ -210,7 +210,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         return;
       }
     }
-    if (agent === "openclaude") {
+    if (agent === "opencode") {
       req.system_prompt = systemPrompt;
       req.system_prompt_replace = systemPromptReplace && !agentDefinition.trim();
       req.agent_definition = agentDefinition;
@@ -350,7 +350,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
             commit, not push or use <code>gh</code>
           </label>
         </div>
-        {agent === "openclaude" && (
+        {agent === "opencode" && (
           <div>
             <label for="sysprompt">System prompt</label>
             <textarea
@@ -378,15 +378,15 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
               id="agentdef"
               value={agentDefinition}
               onInput={(e) => setAgentDefinition((e.target as HTMLTextAreaElement).value)}
-              placeholder={"---\nname: my-agent\ndescription: What this agent is for\ntools: Read, Edit, Write, Bash, Grep, Glob\n---\nYou are …"}
+              placeholder={"---\nname: my-agent\ndescription: What this agent is for\nmodel: unjailed/glm-5.3-uncensored\n---\nYou are …"}
               rows={6}
               spellcheck={false}
             />
             <div class="muted" style="font-size:12px;margin-top:3px">
-              Optional. An agent file as for Claude Code: front matter with <code>name</code> and <code>description</code> (optionally{" "}
-              <code>tools</code>, <code>model</code>), then the agent's prompt. OpenClaude starts as that agent (<code>--agent</code>) and the system
-              prompt above is added after it. Empty: the built-in agent, the Unjailed CLI's behaviour ported to OpenClaude's tools; a system
-              prompt set to replace turns it off. Both apply from the next start.
+              Optional. An OpenCode agent: front matter with <code>name</code> and <code>description</code> (optionally OpenCode agent settings
+              such as <code>model</code>, <code>temperature</code> or <code>permission</code>), then the agent's prompt. OpenCode starts as that
+              agent (<code>--agent</code>), whose prompt replaces the built-in one; the system prompt above is added after it. Both apply from the
+              next start.
             </div>
           </div>
         )}

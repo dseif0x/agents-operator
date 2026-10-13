@@ -446,8 +446,8 @@ func validateSystemPrompt(req *CreateRequest) error {
 	if req.SystemPrompt == "" && req.AgentDefinition == "" {
 		return nil
 	}
-	if req.Agent != runner.AgentOpenClaude {
-		return &ValidationError{"a custom system prompt or agent definition is only supported for " + runner.AgentOpenClaude + " sessions"}
+	if req.Agent != runner.AgentOpenCode {
+		return &ValidationError{"a custom system prompt or agent definition is only supported for " + runner.AgentOpenCode + " sessions"}
 	}
 	for _, t := range []string{req.SystemPrompt, req.AgentDefinition} {
 		if !utf8.ValidString(t) || strings.ContainsRune(t, 0) {

@@ -124,9 +124,7 @@ The chart is then available at `https://dseif0x.github.io/agents-operator/`.
 
 ## Runner image contents
 
-`debian:bookworm-slim` + Node 22 + `@anthropic-ai/claude-code`, `opencode-ai`, `@openai/codex` (versions are build args: `CLAUDE_CODE_VERSION`, `OPENCODE_VERSION`, `CODEX_VERSION`; pin them in CI when you want reproducible images), OpenClaude (`@twigpine/openclaude`, pinned by `OPENCLAUDE_VERSION`), git, `gh`, openssh-client, ripgrep, tmux, curl, jq, tini. User `agent` UID 1000, HOME `/workspace/home`, repositories under `/workspace/<name>`.
-
-**OpenClaude's license.** OpenClaude is derived from Anthropic's Claude Code, and its own LICENSE states that Claude Code is proprietary and that the project does not have Anthropic's authorization to distribute it; only its contributors' changes are MIT. The runner image installs it, so an image built and published from this repository redistributes that code. Whoever builds or publishes the image takes on that risk; drop the `OPENCLAUDE_VERSION` install step from `docker/runner.Dockerfile` to build without it (the `openclaude` agent then fails to start).
+`debian:bookworm-slim` + Node 22 + `@anthropic-ai/claude-code`, `opencode-ai`, `@openai/codex` (versions are build args: `CLAUDE_CODE_VERSION`, `OPENCODE_VERSION`, `CODEX_VERSION`; pin them in CI when you want reproducible images), git, `gh`, openssh-client, ripgrep, tmux, curl, jq, tini. User `agent` UID 1000, HOME `/workspace/home`, repositories under `/workspace/<name>`.
 
 The root filesystem is read-only in the pod; `/tmp` is an emptyDir and everything the agent writes goes to the PVC.
 

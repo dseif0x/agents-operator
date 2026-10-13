@@ -15,14 +15,14 @@ const FIELDS: { kind: string; label: string; help: string; multiline?: boolean; 
   { kind: "openai_api_key", label: "OpenAI API key", help: "OPENAI_API_KEY for Codex.", secret: true },
   {
     kind: "unjailed_api_key",
-    label: "OpenClaude API key",
-    help: "Key for OpenClaude's OpenAI-compatible endpoint: for unjailedai.com, from unjailedai.com/dashboard/api.",
+    label: "Unjailed API key",
+    help: "Key for unjailedai.com (from unjailedai.com/dashboard/api) or the OpenAI-compatible endpoint below. OpenCode sessions get its models as the \"unjailed\" provider; pick one with /models.",
     secret: true,
   },
   {
     kind: "openclaude_base_url",
-    label: "OpenClaude base URL",
-    help: "OpenAI-compatible endpoint for OpenClaude sessions. Empty: https://unjailedai.com/v1.",
+    label: "Unjailed base URL",
+    help: "OpenAI-compatible endpoint behind the \"unjailed\" provider in OpenCode sessions. Empty: https://unjailedai.com/v1.",
     secret: false,
   },
   { kind: "git_user_name", label: "Git user.name", help: "Seeded into ~/.gitconfig on first boot.", secret: false },

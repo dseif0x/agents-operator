@@ -78,18 +78,6 @@ RUN npm install -g --no-audit --no-fund \
  && npm cache clean --force \
  && claude --version && opencode --version && codex --version
 
-# OpenClaude (github.com/Twigpine/openclaude), pinned: its npm scope moved
-# recently, so bump the version on purpose, after a look at the release. Its
-# LICENSE says it is derived from Anthropic's proprietary Claude Code and
-# distributed without Anthropic's authorization; building it into this image
-# redistributes that code (docs/OPERATIONS.md). The package has no install
-# scripts. Telemetry, the self-updater and other outbound calls are turned
-# off by the runner when it starts the CLI.
-ARG OPENCLAUDE_VERSION=0.32.0
-RUN npm install -g --no-audit --no-fund "@twigpine/openclaude@${OPENCLAUDE_VERSION}" \
- && npm cache clean --force \
- && openclaude --version
-
 COPY --from=build /out/agent-runner /usr/local/bin/agent-runner
 
 WORKDIR /workspace

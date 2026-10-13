@@ -45,10 +45,10 @@ export interface Session {
   git_credentials: boolean;
   /** Local network destinations the agent may reach: `192.168.1.10`, `192.168.1.0/24`, `192.168.1.10:8080`. */
   egress: string[];
-  /** OpenClaude only: custom system prompt, appended to its own unless system_prompt_replace. */
+  /** OpenCode only: custom system prompt, appended to its own unless system_prompt_replace. */
   system_prompt: string;
   system_prompt_replace: boolean;
-  /** OpenClaude only: agent definition (Markdown with front matter) started with --agent. */
+  /** OpenCode only: agent definition (Markdown with front matter) started with --agent. */
   agent_definition: string;
   /** What kubectl in the pod may do: nothing, read the cluster, also write in k8s_namespaces, or own a sandbox cluster. */
   k8s_access: K8sAccess;

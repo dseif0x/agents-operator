@@ -169,17 +169,17 @@ func BuildPVC(s *store.Session, cfg Config) *corev1.PersistentVolumeClaim {
 
 // credentialEnv maps user credential kinds to the env var the runner reads.
 var credentialEnv = map[string]string{
-	store.CredAnthropicAPIKey:   "ANTHROPIC_API_KEY",
-	store.CredAnthropicBaseURL:  "ANTHROPIC_BASE_URL",
-	store.CredClaudeOAuthToken:  runner.EnvClaudeOAuthToken,
-	store.CredOpenAIAPIKey:      "OPENAI_API_KEY",
-	store.CredOpenClaudeAPIKey:  runner.EnvOpenClaudeAPIKey,
-	store.CredOpenClaudeBaseURL: runner.EnvOpenClaudeBaseURL,
-	store.CredGitSSHKey:         runner.EnvGitSSHKey,
-	store.CredGitHTTPSToken:     runner.EnvGitHTTPSToken,
-	store.CredGitHubToken:       runner.EnvGitHubToken,
-	store.CredGitUserName:       runner.EnvGitUserName,
-	store.CredGitUserEmail:      runner.EnvGitUserEmail,
+	store.CredAnthropicAPIKey:  "ANTHROPIC_API_KEY",
+	store.CredAnthropicBaseURL: "ANTHROPIC_BASE_URL",
+	store.CredClaudeOAuthToken: runner.EnvClaudeOAuthToken,
+	store.CredOpenAIAPIKey:     "OPENAI_API_KEY",
+	store.CredUnjailedAPIKey:   runner.EnvUnjailedAPIKey,
+	store.CredUnjailedBaseURL:  runner.EnvUnjailedBaseURL,
+	store.CredGitSSHKey:        runner.EnvGitSSHKey,
+	store.CredGitHTTPSToken:    runner.EnvGitHTTPSToken,
+	store.CredGitHubToken:      runner.EnvGitHubToken,
+	store.CredGitUserName:      runner.EnvGitUserName,
+	store.CredGitUserEmail:     runner.EnvGitUserEmail,
 }
 
 // modelCredentials are the credential kinds that sign in to a model
@@ -188,7 +188,7 @@ var credentialEnv = map[string]string{
 var modelCredentials = map[string]bool{
 	store.CredAnthropicAPIKey: true, store.CredAnthropicBaseURL: true, store.CredClaudeOAuthToken: true,
 	store.CredOpenAIAPIKey: true, store.CredClaudeLogin: true, store.CredCodexLogin: true,
-	store.CredOpenClaudeAPIKey: true, store.CredOpenClaudeBaseURL: true,
+	store.CredUnjailedAPIKey: true, store.CredUnjailedBaseURL: true,
 }
 
 // agentCredentials lists the model credentials each agent's CLI reads, so a
@@ -196,10 +196,9 @@ var modelCredentials = map[string]bool{
 // to. The shell has no model behind it and gets all of them, for running
 // any CLI by hand. An agent missing here gets none.
 var agentCredentials = map[string][]string{
-	runner.AgentClaude:     {store.CredAnthropicAPIKey, store.CredAnthropicBaseURL, store.CredClaudeOAuthToken, store.CredClaudeLogin},
-	runner.AgentOpenCode:   {store.CredAnthropicAPIKey, store.CredAnthropicBaseURL, store.CredOpenAIAPIKey},
-	runner.AgentCodex:      {store.CredOpenAIAPIKey, store.CredCodexLogin},
-	runner.AgentOpenClaude: {store.CredOpenClaudeAPIKey, store.CredOpenClaudeBaseURL},
+	runner.AgentClaude:   {store.CredAnthropicAPIKey, store.CredAnthropicBaseURL, store.CredClaudeOAuthToken, store.CredClaudeLogin},
+	runner.AgentOpenCode: {store.CredAnthropicAPIKey, store.CredAnthropicBaseURL, store.CredOpenAIAPIKey, store.CredUnjailedAPIKey, store.CredUnjailedBaseURL},
+	runner.AgentCodex:    {store.CredOpenAIAPIKey, store.CredCodexLogin},
 }
 
 // credentialFor reports whether a session running agent gets credential kind.
