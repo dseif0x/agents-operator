@@ -25,12 +25,6 @@ const FIELDS: { kind: string; label: string; help: string; multiline?: boolean; 
     help: "OpenAI-compatible endpoint for OpenClaude sessions. Empty: https://unjailedai.com/v1.",
     secret: false,
   },
-  {
-    kind: "openclaude_model",
-    label: "OpenClaude model",
-    help: "Model OpenClaude starts with, e.g. glm-5.3-uncensored or deepseek-v4-pro-uncensored. Empty: glm-5.3. Switch inside a session with /model, or set OPENAI_MODEL in a session's environment.",
-    secret: false,
-  },
   { kind: "git_user_name", label: "Git user.name", help: "Seeded into ~/.gitconfig on first boot.", secret: false },
   { kind: "git_user_email", label: "Git user.email", help: "Seeded into ~/.gitconfig on first boot.", secret: false },
   { kind: "git_ssh_key", label: "Git SSH private key", help: "Installed as ~/.ssh/id_ed25519 (0600) in every session.", multiline: true, secret: true },

@@ -174,7 +174,6 @@ var credentialEnv = map[string]string{
 	store.CredOpenAIAPIKey:      "OPENAI_API_KEY",
 	store.CredOpenClaudeAPIKey:  runner.EnvOpenClaudeAPIKey,
 	store.CredOpenClaudeBaseURL: runner.EnvOpenClaudeBaseURL,
-	store.CredOpenClaudeModel:   runner.EnvOpenClaudeModel,
 	store.CredGitSSHKey:         runner.EnvGitSSHKey,
 	store.CredGitHTTPSToken:     runner.EnvGitHTTPSToken,
 	store.CredGitHubToken:       runner.EnvGitHubToken,
@@ -188,7 +187,7 @@ var credentialEnv = map[string]string{
 var modelCredentials = map[string]bool{
 	store.CredAnthropicAPIKey: true, store.CredAnthropicBaseURL: true, store.CredClaudeOAuthToken: true,
 	store.CredOpenAIAPIKey: true, store.CredClaudeLogin: true, store.CredCodexLogin: true,
-	store.CredOpenClaudeAPIKey: true, store.CredOpenClaudeBaseURL: true, store.CredOpenClaudeModel: true,
+	store.CredOpenClaudeAPIKey: true, store.CredOpenClaudeBaseURL: true,
 }
 
 // agentCredentials lists the model credentials each agent's CLI reads, so a
@@ -199,7 +198,7 @@ var agentCredentials = map[string][]string{
 	runner.AgentClaude:     {store.CredAnthropicAPIKey, store.CredAnthropicBaseURL, store.CredClaudeOAuthToken, store.CredClaudeLogin},
 	runner.AgentOpenCode:   {store.CredAnthropicAPIKey, store.CredAnthropicBaseURL, store.CredOpenAIAPIKey},
 	runner.AgentCodex:      {store.CredOpenAIAPIKey, store.CredCodexLogin},
-	runner.AgentOpenClaude: {store.CredOpenClaudeAPIKey, store.CredOpenClaudeBaseURL, store.CredOpenClaudeModel},
+	runner.AgentOpenClaude: {store.CredOpenClaudeAPIKey, store.CredOpenClaudeBaseURL},
 }
 
 // credentialFor reports whether a session running agent gets credential kind.

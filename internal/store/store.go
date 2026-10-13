@@ -62,10 +62,10 @@ const (
 	CredAnthropicBaseURL = "anthropic_base_url"
 	CredOpenAIAPIKey     = "openai_api_key"
 	// OpenClaude's OpenAI-compatible endpoint: its key (stored under the
-	// name it had when the Unjailed CLI used it), base URL and default model.
+	// name it had when the Unjailed CLI used it) and base URL. The model is
+	// chosen per session with /model.
 	CredOpenClaudeAPIKey  = "unjailed_api_key"
 	CredOpenClaudeBaseURL = "openclaude_base_url"
-	CredOpenClaudeModel   = "openclaude_model"
 	CredGitSSHKey         = "git_ssh_key"
 	CredGitHTTPSToken     = "git_https_token"
 	CredGitHubToken       = "github_token"
@@ -82,7 +82,7 @@ const (
 // CredentialKinds lists every accepted kind.
 var CredentialKinds = []string{
 	CredAnthropicAPIKey, CredAnthropicBaseURL, CredClaudeOAuthToken, CredOpenAIAPIKey,
-	CredOpenClaudeAPIKey, CredOpenClaudeBaseURL, CredOpenClaudeModel,
+	CredOpenClaudeAPIKey, CredOpenClaudeBaseURL,
 	CredGitSSHKey, CredGitHTTPSToken, CredGitHubToken, CredGitUserName, CredGitUserEmail,
 	CredClaudeLogin, CredCodexLogin,
 }

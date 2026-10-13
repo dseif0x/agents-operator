@@ -246,10 +246,9 @@ const (
 	EnvClaudeOAuthToken = "CLAUDE_CODE_OAUTH_TOKEN"
 	EnvAnthropicAPIKey  = "ANTHROPIC_API_KEY"
 	// OpenClaude's endpoint, from the owner's account; the runner hands
-	// them to the CLI as OPENAI_API_KEY, OPENAI_BASE_URL and OPENAI_MODEL.
+	// them to the CLI as OPENAI_API_KEY and OPENAI_BASE_URL.
 	EnvOpenClaudeAPIKey  = "OPENCLAUDE_API_KEY"
 	EnvOpenClaudeBaseURL = "OPENCLAUDE_BASE_URL"
-	EnvOpenClaudeModel   = "OPENCLAUDE_MODEL"
 	EnvWorkspace         = "WORKSPACE"               // defaults to /workspace
 	EnvListen            = "RUNNER_LISTEN"           // defaults to :7681
 	EnvHookListen        = "RUNNER_HOOK_LISTEN"      // defaults to 127.0.0.1:7682

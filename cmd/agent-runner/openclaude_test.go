@@ -16,10 +16,10 @@ func TestOpenClaudeEnv(t *testing.T) {
 	// Account settings only: they become the OPENAI_* names OpenClaude reads.
 	env := envMap(openClaudeEnv([]string{
 		"PATH=/bin", "SENTRY_DSN=https://x@sentry.example/1",
-		"OPENCLAUDE_API_KEY=sk-uj", "OPENCLAUDE_BASE_URL=https://llm.example/v1", "OPENCLAUDE_MODEL=glm-5.3-uncensored",
+		"OPENCLAUDE_API_KEY=sk-uj", "OPENCLAUDE_BASE_URL=https://llm.example/v1",
 	}))
 	for k, want := range map[string]string{
-		"CLAUDE_CODE_USE_OPENAI": "1", "OPENAI_API_KEY": "sk-uj", "OPENAI_BASE_URL": "https://llm.example/v1", "OPENAI_MODEL": "glm-5.3-uncensored",
+		"CLAUDE_CODE_USE_OPENAI": "1", "OPENAI_API_KEY": "sk-uj", "OPENAI_BASE_URL": "https://llm.example/v1", "OPENAI_MODEL": openClaudeDefaultModel,
 		"DISABLE_TELEMETRY": "1", "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 		"CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1", "PATH": "/bin",
 	} {
@@ -41,8 +41,8 @@ func TestOpenClaudeEnv(t *testing.T) {
 		t.Fatal("OPENAI_API_KEY set without a key")
 	}
 
-	// The session's own OPENAI_MODEL / OPENAI_BASE_URL win over the account.
-	env = envMap(openClaudeEnv([]string{"OPENCLAUDE_MODEL=glm-5.3", "OPENAI_MODEL=deepseek-v4-pro-uncensored", "OPENAI_BASE_URL=http://10.1.2.3:8000/v1"}))
+	// The session's own OPENAI_MODEL / OPENAI_BASE_URL win.
+	env = envMap(openClaudeEnv([]string{"OPENCLAUDE_BASE_URL=https://llm.example/v1", "OPENAI_MODEL=deepseek-v4-pro-uncensored", "OPENAI_BASE_URL=http://10.1.2.3:8000/v1"}))
 	if env["OPENAI_MODEL"] != "deepseek-v4-pro-uncensored" || env["OPENAI_BASE_URL"] != "http://10.1.2.3:8000/v1" {
 		t.Fatalf("session overrides = %q %q", env["OPENAI_MODEL"], env["OPENAI_BASE_URL"])
 	}
@@ -51,6 +51,72 @@ func TestOpenClaudeEnv(t *testing.T) {
 	c := AgentCommand(runner.AgentOpenClaude, false, "/w", []string{"OPENCLAUDE_API_KEY=k"})
 	if envMap(c.Env)["OPENAI_API_KEY"] != "k" || envMap(c.Env)["CLAUDE_CODE_USE_OPENAI"] != "1" {
 		t.Fatalf("command env = %v", c.Env)
+	}
+}
+
+func TestOpenClaudeContextWindows(t *testing.T) {
+	windows := func(env ...string) map[string]int {
+		t.Helper()
+		v, ok := envMap(openClaudeEnv(env))["CLAUDE_CODE_OPENAI_CONTEXT_WINDOWS"]
+		if !ok {
+			return nil
+		}
+		var m map[string]int
+		if err := json.Unmarshal([]byte(v), &m); err != nil {
+			t.Fatalf("not JSON: %q", v)
+		}
+		return m
+	}
+	// unjailedai.com (the default): its published sizes.
+	m := windows()
+	if m["glm-5.3-uncensored"] != 1_000_000 || m["glm-5.3-flash-abliterated"] != 128_000 || len(m) != len(unjailedContextWindows) {
+		t.Fatalf("unjailed windows = %v", m)
+	}
+	// Another endpoint: nothing, those sizes are unjailedai.com's.
+	if m := windows("OPENCLAUDE_BASE_URL=http://10.1.2.3:8000/v1"); m != nil {
+		t.Fatalf("other endpoint got %v", m)
+	}
+	// The session's own setting wins.
+	if m := windows(`CLAUDE_CODE_OPENAI_CONTEXT_WINDOWS={"glm-5.3":200000}`); len(m) != 1 || m["glm-5.3"] != 200000 {
+		t.Fatalf("session override = %v", m)
+	}
+}
+
+func TestOpenClaudeModelFromSlashModel(t *testing.T) {
+	home := t.TempDir()
+	settings := filepath.Join(home, ".openclaude", "settings.json")
+	write := func(content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(settings, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	model := func(extra ...string) string {
+		return envMap(openClaudeEnv(append([]string{"HOME=" + home}, extra...)))["OPENAI_MODEL"]
+	}
+
+	// Nothing picked yet: the default.
+	if m := model(); m != openClaudeDefaultModel {
+		t.Fatalf("no settings: %q", m)
+	}
+	// /model saved a choice (next to our hooks): it carries over.
+	write(`{"hooks":{},"model":"glm-5.3-uncensored","skipDangerousModePermissionPrompt":true}`)
+	if m := model(); m != "glm-5.3-uncensored" {
+		t.Fatalf("saved model: %q", m)
+	}
+	// The session's own OPENAI_MODEL still wins.
+	if m := model("OPENAI_MODEL=deepseek-v4-pro-uncensored"); m != "deepseek-v4-pro-uncensored" {
+		t.Fatalf("session env: %q", m)
+	}
+	// Anything odd is ignored, not passed on.
+	for _, bad := range []string{`{"model":""}`, `{"model":{"id":"x"}}`, `{"model":"a\nb"}`, `not json`} {
+		write(bad)
+		if m := model(); m != openClaudeDefaultModel {
+			t.Errorf("%s: %q", bad, m)
+		}
 	}
 }
 
