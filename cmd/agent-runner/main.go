@@ -191,7 +191,7 @@ func AgentCommand(agent string, autonomous bool, dir string, env []string) serve
 		if autonomous {
 			args = append(args, "--dangerously-skip-permissions")
 		}
-		args = append(args, agentDefinitionArgs(env)...)
+		args = append(args, agentDefinitionArgs(env, dir, autonomous, time.Now())...)
 		args = append(args, systemPromptArgs(env)...)
 		return server.Command{Path: "openclaude", Args: args, Dir: dir, Env: openClaudeEnv(env)}
 	default:
@@ -286,28 +286,37 @@ func systemPromptArgs(env []string) []string {
 // to ~/.openclaude/agents/<name>.md and returns --agent <name>. Rewritten on
 // every start, so the file always matches the session's settings whatever
 // the agent did to it.
-func agentDefinitionArgs(env []string) []string {
-	var def, name, home string
+//
+// A session without one starts as the built-in default agent
+// (defaultOpenClaudeAgent), unless its system prompt replaces OpenClaude's:
+// an agent's prompt would win over that one.
+func agentDefinitionArgs(env []string, dir string, autonomous bool, now time.Time) []string {
+	var def, name, home, mode string
 	for _, kv := range env {
 		switch k, v, _ := strings.Cut(kv, "="); k {
 		case runner.EnvAgentDefinition:
 			def = v
 		case runner.EnvAgentDefinitionName:
 			name = v
+		case runner.EnvSystemPromptMode:
+			mode = v
 		case "HOME":
 			home = v
 		}
+	}
+	if def == "" && mode != "replace" {
+		def, name = defaultOpenClaudeAgent(dir, autonomous, now), defaultAgentName
 	}
 	// The hub validated both; check the name again, it becomes a path.
 	if def == "" || home == "" || !agentNameRE.MatchString(name) {
 		return nil
 	}
-	dir := filepath.Join(home, ".openclaude", "agents")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	agents := filepath.Join(home, ".openclaude", "agents")
+	if err := os.MkdirAll(agents, 0o700); err != nil {
 		slog.Warn("cannot write the agent definition; starting without it", "err", err)
 		return nil
 	}
-	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(strings.TrimRight(def, "\n")+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(agents, name+".md"), []byte(strings.TrimRight(def, "\n")+"\n"), 0o600); err != nil {
 		slog.Warn("cannot write the agent definition; starting without it", "err", err)
 		return nil
 	}

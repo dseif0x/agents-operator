@@ -6,8 +6,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/dseif0x/agents-operator/internal/agentdef"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/store"
 )
@@ -234,5 +237,51 @@ func TestOpenClaudeSystemPromptAndAgent(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "evil.md")); err == nil {
 		t.Fatal("file written outside the agents directory")
+	}
+}
+
+func TestOpenClaudeDefaultAgent(t *testing.T) {
+	home := t.TempDir()
+	file := filepath.Join(home, ".openclaude", "agents", defaultAgentName+".md")
+	now := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)
+
+	// No definition of its own: the built-in one, written fresh and selected.
+	args := agentDefinitionArgs([]string{"HOME=" + home}, "/workspace", true, now)
+	if len(args) != 2 || args[0] != "--agent" || args[1] != defaultAgentName {
+		t.Fatalf("args = %q", args)
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := string(b)
+	if name, err := agentdef.Parse(def); err != nil || name != defaultAgentName {
+		t.Fatalf("default definition does not parse: %q, %v", name, err)
+	}
+	for _, want := range []string{"You are Unjailed", "- Working directory: /workspace", "- Today: 2026-10-14", "- OS: Linux", "run automatically without a confirmation prompt", "Use Edit for targeted changes"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("default definition lacks %q", want)
+		}
+	}
+	// Supervised sessions are told their actions are confirmed.
+	agentDefinitionArgs([]string{"HOME=" + home}, "/workspace", false, now)
+	if b, _ := os.ReadFile(file); !strings.Contains(string(b), "shown to the user to approve") || strings.Contains(string(b), "run automatically") {
+		t.Fatalf("supervised definition:\n%s", b)
+	}
+
+	// The session's own definition wins.
+	own := []string{"HOME=" + home, runner.EnvAgentDefinition + "=---\nname: mine\ndescription: d\n---\nbody", runner.EnvAgentDefinitionName + "=mine"}
+	if args := agentDefinitionArgs(own, "/workspace", true, now); len(args) != 2 || args[1] != "mine" {
+		t.Fatalf("own definition args = %q", args)
+	}
+	// A system prompt that replaces OpenClaude's means no agent: its prompt would win.
+	replace := []string{"HOME=" + home, runner.EnvSystemPrompt + "=x", runner.EnvSystemPromptMode + "=replace"}
+	if args := agentDefinitionArgs(replace, "/workspace", true, now); len(args) != 0 {
+		t.Fatalf("replace args = %q", args)
+	}
+	// Through AgentCommand, with an appended prompt after the agent.
+	c := AgentCommand(runner.AgentOpenClaude, true, "/workspace", []string{"HOME=" + home, runner.EnvSystemPrompt + "=Be terse."})
+	if len(c.Args) != 5 || c.Args[1] != "--agent" || c.Args[2] != defaultAgentName || c.Args[3] != "--append-system-prompt" {
+		t.Fatalf("command args = %q", c.Args)
 	}
 }
