@@ -14,10 +14,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/api/resource"
 
+	"github.com/dseif0x/agents-operator/internal/agentdef"
 	"github.com/dseif0x/agents-operator/internal/config"
 	"github.com/dseif0x/agents-operator/internal/egress"
 	"github.com/dseif0x/agents-operator/internal/github"
@@ -125,6 +127,17 @@ type CreateRequest struct {
 	// the chart's NetworkPolicy: `192.168.1.10`, `192.168.1.0/24`,
 	// `192.168.1.10:8080`. Each must lie in Defaults.Egress's allowed ranges.
 	Egress []string `json:"egress"`
+	// SystemPrompt is a custom system prompt for OpenClaude sessions,
+	// appended to the CLI's own, or used instead of it with
+	// SystemPromptReplace. Other agents refuse it.
+	SystemPrompt        string `json:"system_prompt"`
+	SystemPromptReplace bool   `json:"system_prompt_replace"`
+	// AgentDefinition is an OpenClaude agent definition (Markdown with
+	// front matter: name, description, optionally tools and model; the
+	// body is the agent's prompt) the session starts with --agent. Its
+	// prompt replaces OpenClaude's own, so SystemPrompt can only be
+	// appended alongside it.
+	AgentDefinition string `json:"agent_definition"`
 	// K8sAccess is what kubectl in the pod may do: "off" (default), "readonly"
 	// (the chart's read-only runner ServiceAccount) or "namespace" (read-only
 	// plus write access in K8sNamespaces). Refused when the hub is not set
@@ -282,6 +295,7 @@ var reservedEnv = map[string]bool{
 	runner.EnvGitSSHKey: true, runner.EnvGitHTTPSToken: true, runner.EnvGitHubToken: true,
 	runner.EnvK8sAccess: true, runner.EnvK8sNamespaces: true, runner.EnvEgress: true,
 	runner.EnvSandboxNamespace: true, runner.EnvSandboxHost: true, runner.EnvSandboxSecurity: true,
+	runner.EnvSystemPrompt: true, runner.EnvSystemPromptMode: true, runner.EnvAgentDefinition: true, runner.EnvAgentDefinitionName: true,
 }
 
 // MaxRepos caps the repositories per session.
@@ -411,7 +425,47 @@ func (s *Service) validate(req *CreateRequest) ([]store.Repo, error) {
 		return nil, &ValidationError{"egress: " + err.Error()}
 	}
 	req.Egress = egress
+	if err := validateSystemPrompt(req); err != nil {
+		return nil, err
+	}
 	return repos, nil
+}
+
+// MaxSystemPrompt caps a session's custom system prompt.
+const MaxSystemPrompt = 32 << 10
+
+// validateSystemPrompt checks the session's custom system prompt and agent
+// definition: only OpenClaude takes them, they go on its command line and
+// into a file, so they are plain text of bounded size.
+func validateSystemPrompt(req *CreateRequest) error {
+	clean := func(s string) string { return strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n")) }
+	req.SystemPrompt, req.AgentDefinition = clean(req.SystemPrompt), clean(req.AgentDefinition)
+	if req.SystemPrompt == "" {
+		req.SystemPromptReplace = false
+	}
+	if req.SystemPrompt == "" && req.AgentDefinition == "" {
+		return nil
+	}
+	if req.Agent != runner.AgentOpenClaude {
+		return &ValidationError{"a custom system prompt or agent definition is only supported for " + runner.AgentOpenClaude + " sessions"}
+	}
+	for _, t := range []string{req.SystemPrompt, req.AgentDefinition} {
+		if !utf8.ValidString(t) || strings.ContainsRune(t, 0) {
+			return &ValidationError{"the system prompt and agent definition must be plain UTF-8 text"}
+		}
+	}
+	if len(req.SystemPrompt) > MaxSystemPrompt {
+		return &ValidationError{fmt.Sprintf("the system prompt is limited to %d KiB", MaxSystemPrompt>>10)}
+	}
+	if req.AgentDefinition != "" {
+		if _, err := agentdef.Parse(req.AgentDefinition + "\n"); err != nil {
+			return &ValidationError{err.Error()}
+		}
+		if req.SystemPromptReplace {
+			return &ValidationError{"with an agent definition the agent's prompt replaces OpenClaude's own; the system prompt can only be appended"}
+		}
+	}
+	return nil
 }
 
 // Create validates the request, inserts the row and asks for convergence.
@@ -441,7 +495,7 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 		OwnerID: owner.ID, Name: req.Name, Agent: req.Agent, Repos: repos,
 		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, RuntimeClass: req.RuntimeClass, Resources: req.Resources,
 		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
-		NoGitCredentials: noGit, Egress: req.Egress, K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
+		NoGitCredentials: noGit, Egress: req.Egress, SystemPrompt: req.SystemPrompt, SystemPromptReplace: req.SystemPromptReplace, AgentDefinition: req.AgentDefinition, K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
 		State: store.StateCreating,
 	}
 	if err := s.Store.Sessions().Create(ctx, sess); err != nil {
@@ -480,6 +534,7 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 	next.Name, next.Repos, next.ImageTag, next.RuntimeClass = req.Name, repos, req.ImageTag, req.RuntimeClass
 	next.K8sAccess, next.K8sNamespaces = req.K8sAccess, req.K8sNamespaces
 	next.Egress = req.Egress
+	next.SystemPrompt, next.SystemPromptReplace, next.AgentDefinition = req.SystemPrompt, req.SystemPromptReplace, req.AgentDefinition
 	next.Resources, next.NodeSelector, next.Tolerations, next.Env = req.Resources, req.NodeSelector, req.Tolerations, req.Env
 	if req.Autonomous != nil {
 		next.Autonomous = *req.Autonomous
@@ -893,8 +948,12 @@ type View struct {
 	Autonomous     bool                `json:"autonomous"`
 	GitCredentials bool                `json:"git_credentials"`
 	Egress         []string            `json:"egress"`
-	K8sAccess      string              `json:"k8s_access"`
-	K8sNamespaces  []string            `json:"k8s_namespaces"`
+	SystemPrompt   string              `json:"system_prompt"`
+	// SystemPromptReplace: the prompt replaces OpenClaude's own.
+	SystemPromptReplace bool     `json:"system_prompt_replace"`
+	AgentDefinition     string   `json:"agent_definition"`
+	K8sAccess           string   `json:"k8s_access"`
+	K8sNamespaces       []string `json:"k8s_namespaces"`
 	// SandboxNamespace and SandboxHost describe the session's sandbox
 	// cluster (sandbox mode only): its host namespace and the DNS name its
 	// Ingress hosts go under.
@@ -925,7 +984,7 @@ func (s *Service) View(sess *store.Session) View {
 		ID: sess.ID, Name: sess.Name, Agent: sess.Agent, Repos: sess.Repos,
 		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, RuntimeClass: sess.RuntimeClass, Resources: sess.Resources,
 		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
-		GitCredentials: !sess.NoGitCredentials, Egress: sess.Egress, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
+		GitCredentials: !sess.NoGitCredentials, Egress: sess.Egress, SystemPrompt: sess.SystemPrompt, SystemPromptReplace: sess.SystemPromptReplace, AgentDefinition: sess.AgentDefinition, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
 		State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
 	}

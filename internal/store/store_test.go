@@ -104,11 +104,12 @@ func exercise(t *testing.T, st Store) {
 	edited.Name, edited.ImageTag, edited.K8sAccess, edited.K8sNamespaces, edited.Autonomous = "renamed", "1.2.3", K8sAccessReadOnly, nil, false
 	edited.NoGitCredentials = true
 	edited.Egress = []string{"192.168.1.10:8080"}
+	edited.SystemPrompt, edited.SystemPromptReplace, edited.AgentDefinition = "Be terse.", true, "---\nname: a\n---\nb"
 	edited.Repos = append(edited.Repos, Repo{URL: "https://example.com/two.git", Path: "two"})
 	edited.Env = map[string]string{"A": "b"}
 	edited.State = StateRunning // ignored
 	ed, err := st.Sessions().Update(ctx, &edited)
-	if err != nil || ed.Name != "renamed" || ed.ImageTag != "1.2.3" || ed.K8sAccess != K8sAccessReadOnly || len(ed.K8sNamespaces) != 0 || ed.K8sNamespaces == nil || ed.Autonomous || !ed.NoGitCredentials || len(ed.Egress) != 1 || ed.Egress[0] != "192.168.1.10:8080" || len(ed.Repos) != 2 || ed.Env["A"] != "b" || ed.State != StateCreating || ed.Generation != 1 {
+	if err != nil || ed.Name != "renamed" || ed.ImageTag != "1.2.3" || ed.K8sAccess != K8sAccessReadOnly || len(ed.K8sNamespaces) != 0 || ed.K8sNamespaces == nil || ed.Autonomous || !ed.NoGitCredentials || len(ed.Egress) != 1 || ed.SystemPrompt != "Be terse." || !ed.SystemPromptReplace || ed.AgentDefinition == "" || ed.Egress[0] != "192.168.1.10:8080" || len(ed.Repos) != 2 || ed.Env["A"] != "b" || ed.State != StateCreating || ed.Generation != 1 {
 		t.Fatalf("Update = %+v, %v", ed, err)
 	}
 	if _, err := st.Sessions().Update(ctx, &Session{ID: NewID()}); err != ErrNotFound {

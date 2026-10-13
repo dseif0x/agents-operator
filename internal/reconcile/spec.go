@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
+	"github.com/dseif0x/agents-operator/internal/agentdef"
 	"github.com/dseif0x/agents-operator/internal/config"
 	"github.com/dseif0x/agents-operator/internal/k8s"
 	"github.com/dseif0x/agents-operator/internal/runner"
@@ -357,6 +358,22 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 			corev1.EnvVar{Name: runner.EnvSandboxHost, Value: SandboxHost(s, cfg)},
 			corev1.EnvVar{Name: runner.EnvSandboxSecurity, Value: cfg.Sandbox.PodSecurity},
 		)
+	}
+	if s.SystemPrompt != "" {
+		mode := "append"
+		if s.SystemPromptReplace {
+			mode = "replace"
+		}
+		env = append(env, corev1.EnvVar{Name: runner.EnvSystemPrompt, Value: s.SystemPrompt},
+			corev1.EnvVar{Name: runner.EnvSystemPromptMode, Value: mode})
+	}
+	// The service checked the definition; one that no longer parses (a row
+	// edited by hand) is left out rather than started under a bad name.
+	if s.AgentDefinition != "" {
+		if name, err := agentdef.Parse(s.AgentDefinition + "\n"); err == nil {
+			env = append(env, corev1.EnvVar{Name: runner.EnvAgentDefinition, Value: s.AgentDefinition},
+				corev1.EnvVar{Name: runner.EnvAgentDefinitionName, Value: name})
+		}
 	}
 	for _, k := range sortedKeys(cfg.ExtraEnv) {
 		if sandbox && k == "KUBECONFIG" {

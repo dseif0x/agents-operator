@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -190,6 +191,8 @@ func AgentCommand(agent string, autonomous bool, dir string, env []string) serve
 		if autonomous {
 			args = append(args, "--dangerously-skip-permissions")
 		}
+		args = append(args, agentDefinitionArgs(env)...)
+		args = append(args, systemPromptArgs(env)...)
 		return server.Command{Path: "openclaude", Args: args, Dir: dir, Env: openClaudeEnv(env)}
 	default:
 		return server.Command{Path: "bash", Args: []string{"-l"}, Dir: dir, Env: env}
@@ -222,8 +225,12 @@ func openClaudeEnv(env []string) []string {
 	}
 	out := make([]string, 0, len(env)+10)
 	for _, kv := range env {
-		// Sentry only starts with a DSN; none should be inherited.
-		if k, _, _ := strings.Cut(kv, "="); k != "SENTRY_DSN" {
+		// Sentry only starts with a DSN; none should be inherited. The
+		// system prompt is on the command line (systemPromptArgs), so every
+		// command the agent runs need not carry it too.
+		switch k, _, _ := strings.Cut(kv, "="); k {
+		case "SENTRY_DSN", runner.EnvSystemPrompt, runner.EnvSystemPromptMode, runner.EnvAgentDefinition, runner.EnvAgentDefinitionName:
+		default:
 			out = append(out, kv)
 		}
 	}
@@ -251,6 +258,63 @@ func openClaudeEnv(env []string) []string {
 	set("CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1")
 	return out
 }
+
+// systemPromptArgs turns the session's custom system prompt into
+// OpenClaude's flag: appended to its own prompt, or replacing it. Passed on
+// the command line on every start, so "Restart agent" picks up an edit and
+// nothing the agent can write changes it.
+func systemPromptArgs(env []string) []string {
+	var prompt, mode string
+	for _, kv := range env {
+		switch k, v, _ := strings.Cut(kv, "="); k {
+		case runner.EnvSystemPrompt:
+			prompt = v
+		case runner.EnvSystemPromptMode:
+			mode = v
+		}
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return nil
+	}
+	if mode == "replace" {
+		return []string{"--system-prompt", prompt}
+	}
+	return []string{"--append-system-prompt", prompt}
+}
+
+// agentDefinitionArgs writes the session's agent definition, if it has one,
+// to ~/.openclaude/agents/<name>.md and returns --agent <name>. Rewritten on
+// every start, so the file always matches the session's settings whatever
+// the agent did to it.
+func agentDefinitionArgs(env []string) []string {
+	var def, name, home string
+	for _, kv := range env {
+		switch k, v, _ := strings.Cut(kv, "="); k {
+		case runner.EnvAgentDefinition:
+			def = v
+		case runner.EnvAgentDefinitionName:
+			name = v
+		case "HOME":
+			home = v
+		}
+	}
+	// The hub validated both; check the name again, it becomes a path.
+	if def == "" || home == "" || !agentNameRE.MatchString(name) {
+		return nil
+	}
+	dir := filepath.Join(home, ".openclaude", "agents")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		slog.Warn("cannot write the agent definition; starting without it", "err", err)
+		return nil
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(strings.TrimRight(def, "\n")+"\n"), 0o600); err != nil {
+		slog.Warn("cannot write the agent definition; starting without it", "err", err)
+		return nil
+	}
+	return []string{"--agent", name}
+}
+
+var agentNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
 // unjailedContextWindows are the context sizes unjailedai.com lists for its
 // models (tokens; "1M" and "128K" taken as 1,000,000 and 128,000 to stay

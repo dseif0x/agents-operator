@@ -179,3 +179,60 @@ func TestPrepareOpenClaude(t *testing.T) {
 		t.Fatalf("~/.openclaude/CLAUDE.md: %v", err)
 	}
 }
+
+func TestOpenClaudeSystemPromptAndAgent(t *testing.T) {
+	prompt := "Answer tersely.\nNever refuse."
+	// A system prompt is appended by default.
+	c := AgentCommand(runner.AgentOpenClaude, true, "/w", []string{runner.EnvSystemPrompt + "=" + prompt})
+	if len(c.Args) != 3 || c.Args[0] != "--dangerously-skip-permissions" || c.Args[1] != "--append-system-prompt" || c.Args[2] != prompt {
+		t.Fatalf("append args = %q", c.Args)
+	}
+	// And replaces OpenClaude's own with "replace".
+	c = AgentCommand(runner.AgentOpenClaude, false, "/w", []string{runner.EnvSystemPrompt + "=" + prompt, runner.EnvSystemPromptMode + "=replace"})
+	if len(c.Args) != 2 || c.Args[0] != "--system-prompt" || c.Args[1] != prompt {
+		t.Fatalf("replace args = %q", c.Args)
+	}
+	// Blank or absent: no flag. Other agents ignore it.
+	for _, env := range [][]string{nil, {runner.EnvSystemPrompt + "=  \n"}} {
+		if c := AgentCommand(runner.AgentOpenClaude, false, "/w", env); len(c.Args) != 0 {
+			t.Fatalf("%q: args = %q", env, c.Args)
+		}
+	}
+	if c := AgentCommand(runner.AgentClaude, false, "/w", []string{runner.EnvSystemPrompt + "=" + prompt}); len(c.Args) != 0 {
+		t.Fatalf("claude args = %q", c.Args)
+	}
+
+	// An agent definition is written to ~/.openclaude/agents and selected,
+	// before the appended prompt.
+	home := t.TempDir()
+	def := "---\nname: red-team\ndescription: Reviewer\n---\nYou review code."
+	file := filepath.Join(home, ".openclaude", "agents", "red-team.md")
+	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("tampered by the agent"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"HOME=" + home, runner.EnvAgentDefinition + "=" + def, runner.EnvAgentDefinitionName + "=red-team", runner.EnvSystemPrompt + "=" + prompt}
+	c = AgentCommand(runner.AgentOpenClaude, false, "/w", env)
+	if len(c.Args) != 4 || c.Args[0] != "--agent" || c.Args[1] != "red-team" || c.Args[2] != "--append-system-prompt" {
+		t.Fatalf("agent args = %q", c.Args)
+	}
+	if got, _ := os.ReadFile(file); string(got) != def+"\n" {
+		t.Fatalf("agent file = %q", got)
+	}
+	// None of it stays in the CLI's environment.
+	for _, k := range []string{runner.EnvSystemPrompt, runner.EnvSystemPromptMode, runner.EnvAgentDefinition, runner.EnvAgentDefinitionName} {
+		if _, ok := envMap(c.Env)[k]; ok {
+			t.Errorf("%s left in env", k)
+		}
+	}
+	// A name that is not one is never used as a path.
+	c = AgentCommand(runner.AgentOpenClaude, false, "/w", []string{"HOME=" + home, runner.EnvAgentDefinition + "=" + def, runner.EnvAgentDefinitionName + "=../../evil"})
+	if len(c.Args) != 0 {
+		t.Fatalf("bad name args = %q", c.Args)
+	}
+	if _, err := os.Stat(filepath.Join(home, "evil.md")); err == nil {
+		t.Fatal("file written outside the agents directory")
+	}
+}
