@@ -250,11 +250,11 @@ func TestAgentCommand(t *testing.T) {
 	if c := AgentCommand(runner.AgentShell, true, "/w", nil); c.Path != "bash" {
 		t.Fatalf("shell = %+v", c)
 	}
-	if c := AgentCommand(runner.AgentOpenClaude, true, "/w", nil); c.Path != "openclaude" || len(c.Args) != 1 || c.Args[0] != "--dangerously-skip-permissions" {
-		t.Fatalf("openclaude autonomous = %+v", c)
+	if c := AgentCommand(runner.AgentOpenCode, true, "/w", nil); c.Path != "opencode" || len(c.Args) != 1 || c.Args[0] != "--auto" {
+		t.Fatalf("opencode autonomous = %+v", c)
 	}
-	if c := AgentCommand(runner.AgentOpenClaude, false, "/w", nil); len(c.Args) != 0 {
-		t.Fatalf("openclaude supervised = %+v", c)
+	if c := AgentCommand(runner.AgentOpenCode, false, "/w", nil); len(c.Args) != 0 {
+		t.Fatalf("opencode supervised = %+v", c)
 	}
 }
 

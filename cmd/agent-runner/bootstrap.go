@@ -28,8 +28,6 @@ import (
 //   - seed saved CLI logins (AGENTS_OPERATOR_LOGIN_<KIND>) when the file is absent
 //   - answer Claude Code's first-run prompts in ~/.claude.json when credentials exist,
 //     and its bypass-permissions consent in ~/.claude/settings.json when autonomous
-//   - the same first-run answers and hooks for OpenClaude in ~/.openclaude.json
-//     and ~/.openclaude/settings.json
 //   - clone every entry of REPOS into /workspace/<path> when that directory is empty
 func (w *Workspace) Bootstrap(ctx context.Context) error {
 	home := w.HomeDir()
@@ -344,7 +342,6 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 		filepath.Join(w.Root, "CLAUDE.md"),
 		filepath.Join(home, ".claude", "CLAUDE.md"),
 		filepath.Join(home, ".codex", "AGENTS.md"),
-		filepath.Join(home, ".openclaude", "CLAUDE.md"),
 		filepath.Join(home, ".config", "opencode", "AGENTS.md"),
 	} {
 		if old, err := os.ReadFile(p); err == nil && !strings.HasPrefix(string(old), agentsMarker) {
@@ -480,18 +477,12 @@ const claudeAPIKeySuffix = 20
 // there is something to sign in with (a seeded login, CLAUDE_CODE_OAUTH_TOKEN
 // or ANTHROPIC_API_KEY). Without credentials the CLI's own login flow is the
 // right first screen.
-//
-// OpenClaude, a Claude Code derivative, keeps the same file as
-// ~/.openclaude.json. Its provider comes from the environment the runner
-// sets (openClaudeEnv), so onboarding is always done there.
 func (w *Workspace) prepareClaudeConfig(repos []store.Repo) {
 	switch w.Agent {
 	case runner.AgentClaude:
 		_, statErr := os.Stat(filepath.Join(w.HomeDir(), runner.LoginFile[runner.LoginClaude]))
 		haveAuth := statErr == nil || os.Getenv(runner.EnvClaudeOAuthToken) != "" || os.Getenv(runner.EnvAnthropicAPIKey) != ""
 		w.prepareCLIConfig(".claude.json", "Claude Code", haveAuth, os.Getenv(runner.EnvAnthropicAPIKey), repos)
-	case runner.AgentOpenClaude:
-		w.prepareCLIConfig(".openclaude.json", "OpenClaude", true, "", repos)
 	}
 }
 
@@ -593,16 +584,11 @@ const claudeHookCommand = "agent-runner hook"
 //   - the consent behind --dangerously-skip-permissions (autonomous
 //     sessions): the CLI records it as skipDangerousModePermissionPrompt;
 //     the user gave it by ticking "autonomous" when creating the session.
-//
-// OpenClaude reads the same settings, hooks included, from
-// ~/.openclaude/settings.json.
 func (w *Workspace) prepareClaudeSettings() {
 	var path string
 	switch w.Agent {
 	case runner.AgentClaude:
 		path = filepath.Join(w.HomeDir(), ".claude", "settings.json")
-	case runner.AgentOpenClaude:
-		path = filepath.Join(w.HomeDir(), ".openclaude", "settings.json")
 	default:
 		return
 	}

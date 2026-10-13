@@ -1,6 +1,6 @@
 # agents-operator
 
-Self-hosted mission control for AI coding agents on Kubernetes. Every session is its own pod with its own PersistentVolumeClaim, and the agent's real terminal (Claude Code, OpenCode, Codex, OpenClaude) is streamed to the browser with full colour and keyboard. Close the tab, nothing dies; reopen it from your phone and the TUI is exactly where you left it.
+Self-hosted mission control for AI coding agents on Kubernetes. Every session is its own pod with its own PersistentVolumeClaim, and the agent's real terminal (Claude Code, OpenCode, Codex) is streamed to the browser with full colour and keyboard. Close the tab, nothing dies; reopen it from your phone and the TUI is exactly where you left it.
 
 One Go binary serves the API, the WebSocket terminal proxy, the Kubernetes orchestration and the embedded web UI. It ships as a Helm chart with Postgres as a chart dependency and runs on a plain k3s cluster with NFS storage, Traefik and cert-manager.
 

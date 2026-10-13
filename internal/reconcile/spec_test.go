@@ -64,7 +64,7 @@ func TestBuildSecret(t *testing.T) {
 		store.CredGitHubToken:      []byte("ghp_x"),
 		store.CredClaudeOAuthToken: []byte("sk-ant-oat01-x"),
 		store.CredClaudeLogin:      []byte(`{"a":1}`),
-		store.CredOpenClaudeAPIKey: []byte("sk-uj"),
+		store.CredUnjailedAPIKey:   []byte("sk-uj"),
 		"unknown":                  []byte("x"),
 	})
 	if string(sec.Data["RUNNER_TOKEN"]) != "tok" || string(sec.Data["ANTHROPIC_API_KEY"]) != "sk-ant" || string(sec.Data["GIT_SSH_KEY"]) != "-----BEGIN" || string(sec.Data["GH_TOKEN"]) != "ghp_x" || string(sec.Data["CLAUDE_CODE_OAUTH_TOKEN"]) != "sk-ant-oat01-x" {
@@ -73,7 +73,7 @@ func TestBuildSecret(t *testing.T) {
 	if string(sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"]) != "eyJhIjoxfQ==" {
 		t.Fatalf("login seed = %q", sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"])
 	}
-	if _, ok := sec.Data["OPENCLAUDE_API_KEY"]; ok {
+	if _, ok := sec.Data["UNJAILED_API_KEY"]; ok {
 		t.Fatal("OpenClaude key projected into a claude session")
 	}
 	if _, ok := sec.Data["unknown"]; ok {
@@ -91,26 +91,25 @@ func TestBuildSecret(t *testing.T) {
 
 func TestBuildSecretScopesModelCredentials(t *testing.T) {
 	user := map[string][]byte{
-		store.CredAnthropicAPIKey:   []byte("sk-ant"),
-		store.CredAnthropicBaseURL:  []byte("https://proxy"),
-		store.CredClaudeOAuthToken:  []byte("sk-ant-oat01-x"),
-		store.CredOpenAIAPIKey:      []byte("sk-oai"),
-		store.CredClaudeLogin:       []byte(`{"a":1}`),
-		store.CredCodexLogin:        []byte(`{"c":1}`),
-		store.CredOpenClaudeAPIKey:  []byte("sk-uj"),
-		store.CredOpenClaudeBaseURL: []byte("https://unjailedai.com/v1"),
-		store.CredGitHubToken:       []byte("ghp_x"),
-		store.CredGitSSHKey:         []byte("-----BEGIN"),
-		store.CredGitUserEmail:      []byte("a@b.c"),
+		store.CredAnthropicAPIKey:  []byte("sk-ant"),
+		store.CredAnthropicBaseURL: []byte("https://proxy"),
+		store.CredClaudeOAuthToken: []byte("sk-ant-oat01-x"),
+		store.CredOpenAIAPIKey:     []byte("sk-oai"),
+		store.CredClaudeLogin:      []byte(`{"a":1}`),
+		store.CredCodexLogin:       []byte(`{"c":1}`),
+		store.CredUnjailedAPIKey:   []byte("sk-uj"),
+		store.CredUnjailedBaseURL:  []byte("https://unjailedai.com/v1"),
+		store.CredGitHubToken:      []byte("ghp_x"),
+		store.CredGitSSHKey:        []byte("-----BEGIN"),
+		store.CredGitUserEmail:     []byte("a@b.c"),
 	}
 	git := []string{"GH_TOKEN", "GIT_SSH_KEY", "GIT_USER_EMAIL"}
 	for agent, want := range map[string][]string{
-		runner.AgentClaude:     {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"},
-		runner.AgentOpenCode:   {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY"},
-		runner.AgentCodex:      {"OPENAI_API_KEY", "AGENTS_OPERATOR_LOGIN_CODEX_LOGIN"},
-		runner.AgentOpenClaude: {"OPENCLAUDE_API_KEY", "OPENCLAUDE_BASE_URL"},
+		runner.AgentClaude:   {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"},
+		runner.AgentOpenCode: {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "UNJAILED_API_KEY", "UNJAILED_BASE_URL"},
+		runner.AgentCodex:    {"OPENAI_API_KEY", "AGENTS_OPERATOR_LOGIN_CODEX_LOGIN"},
 		runner.AgentShell: {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY",
-			"OPENCLAUDE_API_KEY", "OPENCLAUDE_BASE_URL",
+			"UNJAILED_API_KEY", "UNJAILED_BASE_URL",
 			"AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN", "AGENTS_OPERATOR_LOGIN_CODEX_LOGIN"},
 		"some-future-agent": nil,
 	} {
@@ -408,7 +407,7 @@ func TestBuildPodK8sAccess(t *testing.T) {
 
 func TestSystemPromptAndAgentEnv(t *testing.T) {
 	s := testSession()
-	s.Agent = runner.AgentOpenClaude
+	s.Agent = runner.AgentOpenCode
 	envOf := func() map[string]string {
 		m := map[string]string{}
 		for _, e := range BuildPod(s, testCfg()).Spec.Containers[0].Env {

@@ -134,17 +134,13 @@ const (
 	AgentClaude   = "claude"
 	AgentOpenCode = "opencode"
 	AgentCodex    = "codex"
-	// AgentOpenClaude is OpenClaude (github.com/Twigpine/openclaude), a
-	// Claude Code derivative, talking to an OpenAI-compatible endpoint
-	// (unjailedai.com unless the owner sets another).
-	AgentOpenClaude = "openclaude"
 	// AgentShell is a plain bash shell. It is not an AI agent but is handy
 	// for debugging a pod and for tests.
 	AgentShell = "shell"
 )
 
 // Agents lists every agent the runner image understands.
-var Agents = []string{AgentClaude, AgentOpenCode, AgentCodex, AgentOpenClaude, AgentShell}
+var Agents = []string{AgentClaude, AgentOpenCode, AgentCodex, AgentShell}
 
 // ValidAgent reports whether name is one of Agents.
 func ValidAgent(name string) bool {
@@ -255,18 +251,18 @@ const (
 	// runner only looks at them to skip the CLI's onboarding prompts.
 	EnvClaudeOAuthToken = "CLAUDE_CODE_OAUTH_TOKEN"
 	EnvAnthropicAPIKey  = "ANTHROPIC_API_KEY"
-	// OpenClaude's endpoint, from the owner's account; the runner hands
-	// them to the CLI as OPENAI_API_KEY and OPENAI_BASE_URL.
-	EnvOpenClaudeAPIKey  = "OPENCLAUDE_API_KEY"
-	EnvOpenClaudeBaseURL = "OPENCLAUDE_BASE_URL"
-	EnvWorkspace         = "WORKSPACE"               // defaults to /workspace
-	EnvListen            = "RUNNER_LISTEN"           // defaults to :7681
-	EnvHookListen        = "RUNNER_HOOK_LISTEN"      // defaults to 127.0.0.1:7682
-	EnvHookURL           = "RUNNER_HOOK_URL"         // where `agent-runner hook` posts; defaults to HookURL
-	EnvSessionName       = "AGENTS_OPERATOR_SESSION" // human name, used for the prompt/hostname
-	EnvK8sAccess         = "K8S_ACCESS"              // off, readonly, namespace or sandbox: what kubectl in the pod may do
-	EnvK8sNamespaces     = "K8S_NAMESPACES"          // comma-separated namespaces with write access (namespace mode)
-	EnvSandboxNamespace  = "SANDBOX_NAMESPACE"       // host namespace of the session's vcluster (sandbox mode)
-	EnvSandboxHost       = "SANDBOX_HOST"            // DNS name the sandbox's Ingress hosts live under (sandbox mode, may be empty)
-	EnvSandboxSecurity   = "SANDBOX_POD_SECURITY"    // Pod Security Standard enforced in the sandbox's host namespace
+	// The account's Unjailed (OpenAI-compatible) endpoint, which OpenCode
+	// sessions get as an "unjailed" provider (cmd/agent-runner/opencode.go).
+	EnvUnjailedAPIKey   = "UNJAILED_API_KEY"
+	EnvUnjailedBaseURL  = "UNJAILED_BASE_URL"
+	EnvWorkspace        = "WORKSPACE"               // defaults to /workspace
+	EnvListen           = "RUNNER_LISTEN"           // defaults to :7681
+	EnvHookListen       = "RUNNER_HOOK_LISTEN"      // defaults to 127.0.0.1:7682
+	EnvHookURL          = "RUNNER_HOOK_URL"         // where `agent-runner hook` posts; defaults to HookURL
+	EnvSessionName      = "AGENTS_OPERATOR_SESSION" // human name, used for the prompt/hostname
+	EnvK8sAccess        = "K8S_ACCESS"              // off, readonly, namespace or sandbox: what kubectl in the pod may do
+	EnvK8sNamespaces    = "K8S_NAMESPACES"          // comma-separated namespaces with write access (namespace mode)
+	EnvSandboxNamespace = "SANDBOX_NAMESPACE"       // host namespace of the session's vcluster (sandbox mode)
+	EnvSandboxHost      = "SANDBOX_HOST"            // DNS name the sandbox's Ingress hosts live under (sandbox mode, may be empty)
+	EnvSandboxSecurity  = "SANDBOX_POD_SECURITY"    // Pod Security Standard enforced in the sandbox's host namespace
 )
