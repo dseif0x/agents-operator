@@ -36,7 +36,9 @@ The hub forwards binary frames untouched in both directions. From the browser it
 ## Attach sequence
 
 1. Client connects. Server sends `hello`. `scrollback` is true when a replay follows.
-2. Server sends the whole ring buffer (up to 2 MiB) as one binary frame. xterm.js replays it and the TUI redraws correctly because the bytes are the original escape sequences.
+2. Server sends the whole ring buffer (up to 2 MiB) as one binary frame. xterm.js replays it and the TUI redraws correctly because the bytes are the original escape sequences. When the agent is on the alternate screen and the switch to it is no longer in the buffer, the frame starts with `ESC[?1049h`.
+   Then, when the agent has changed any of them, a second binary frame sets the terminal modes it is in now (mouse reporting and encoding, bracketed paste, cursor visibility, cursor keys, focus events): full-screen TUIs set these once at startup, long out of the buffer, and a fresh xterm.js would otherwise not report clicks.
+   A full-screen TUI (one on the alternate screen) that draws only what changed does not repaint the rest for a new client. When a client's first `resize` keeps the PTY's size, the runner makes the PTY one row shorter for 250 ms and then restores it, so the TUI repaints the whole screen. A resize that changes the size makes it repaint anyway.
 3. If the agent has already exited, the server sends `exit` immediately.
 4. Live output follows as binary frames. Input from every attached client is written to the PTY; all clients receive all output.
 5. Slow clients miss chunks rather than stalling the PTY; a reconnect gets a fresh replay.

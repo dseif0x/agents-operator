@@ -129,6 +129,11 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if len(sub.Modes) > 0 {
+		if err := c.Write(ctx, websocket.MessageBinary, sub.Modes); err != nil {
+			return
+		}
+	}
 	// If the agent already exited, tell the new client at once.
 	if sub.Exited != nil {
 		_ = writeControl(ctx, c, runner.Control{T: runner.MsgExit, Code: sub.Exited})
@@ -184,6 +189,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Input pump: client -> PTY and control messages.
+	sized := false
 	go func() {
 		for {
 			typ, data, err := c.Read(ctx)
@@ -197,7 +203,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 					s.Log.Debug("write to pty failed", "err", err)
 				}
 			case websocket.MessageText:
-				s.handleControl(ctx, c, data)
+				s.handleControl(ctx, c, data, &sized)
 			}
 		}
 	}()
@@ -208,7 +214,9 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleControl(ctx context.Context, c *websocket.Conn, data []byte) {
+// handleControl handles one control message. sized tracks whether the
+// client has sent its size yet.
+func (s *Server) handleControl(ctx context.Context, c *websocket.Conn, data []byte, sized *bool) {
 	var msg runner.Control
 	if err := json.Unmarshal(data, &msg); err != nil {
 		_ = writeControl(ctx, c, runner.Control{T: runner.MsgError, Message: "bad control message"})
@@ -216,8 +224,18 @@ func (s *Server) handleControl(ctx context.Context, c *websocket.Conn, data []by
 	}
 	switch msg.T {
 	case runner.MsgResize:
+		cols, rows := s.Proc.Size()
 		if err := s.Proc.Resize(msg.Cols, msg.Rows); err != nil {
 			_ = writeControl(ctx, c, runner.Control{T: runner.MsgError, Message: err.Error()})
+			return
+		}
+		// A client that just attached has only the tail of the output. A
+		// full-screen TUI repaints on a real resize; at the same size it
+		// has to be asked to (Redraw).
+		first := !*sized
+		*sized = true
+		if first && cols == msg.Cols && rows == msg.Rows && s.Proc.AltScreen() {
+			s.Proc.Redraw()
 		}
 	case runner.MsgRestart:
 		s.Log.Info("restart requested")

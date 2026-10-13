@@ -371,7 +371,10 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       s.onopen = () => {
         backoff = 1000;
         setStatus("open");
-        term.clear();
+        // The replay that follows is the whole state: start from a reset
+        // terminal, not just a cleared screen, so modes left over from
+        // before (the alternate screen, mouse reporting) do not apply to it.
+        term.reset();
         fitAddon.fit();
         sendResize();
         // On a phone a focus outside a tap leaves the textarea focused with

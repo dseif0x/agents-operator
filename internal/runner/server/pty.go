@@ -42,6 +42,8 @@ type Process struct {
 	bytesSince int64
 	subs       map[*subscriber]struct{}
 	ring       *Ring
+	modes      *modeTracker
+	redrawing  bool
 	generation int
 	closed     bool
 	closeOnce  sync.Once
@@ -62,6 +64,7 @@ func NewProcess(cmdFn func() Command, log *slog.Logger) *Process {
 		rows:  runner.DefaultRows,
 		subs:  map[*subscriber]struct{}{},
 		ring:  NewRing(runner.ScrollbackSize),
+		modes: newModeTracker(),
 	}
 }
 
@@ -84,6 +87,7 @@ func (p *Process) Start() error {
 	}
 	p.pty = f
 	p.cmd = cmd
+	p.modes = newModeTracker() // a new process starts from a reset terminal
 	p.running = true
 	p.exitCode = nil
 	p.startedAt = time.Now()
@@ -145,6 +149,7 @@ func (p *Process) pump(f *os.File, cmd *exec.Cmd, gen int) {
 func (p *Process) broadcast(chunk []byte) {
 	p.mu.Lock()
 	_, _ = p.ring.Write(chunk)
+	p.modes.feed(chunk)
 	p.lastOutput = time.Now()
 	p.bytesSince += int64(len(chunk))
 	subs := make([]*subscriber, 0, len(p.subs))
@@ -164,8 +169,14 @@ func (p *Process) broadcast(chunk []byte) {
 
 // Subscription is one attached client's view of the process.
 type Subscription struct {
-	// Scrollback is the retained output at the time of attach.
+	// Scrollback is the retained output at the time of attach, starting
+	// with a switch to the alternate screen when the agent is drawing there
+	// and the switch it made is no longer in the buffer.
 	Scrollback []byte
+	// Modes puts the client's terminal into the modes the agent has set
+	// (mouse reporting, bracketed paste, cursor visibility…): written after
+	// the scrollback, it covers switches that were dropped from the buffer.
+	Modes []byte
 	// Out receives live output chunks. Slow readers miss chunks.
 	Out <-chan []byte
 	// Exit receives the exit code each time the agent process exits.
@@ -186,6 +197,10 @@ func (p *Process) Subscribe() *Subscription {
 	p.subs[sub] = struct{}{}
 	p.bytesSince = 0
 	sb := p.ring.Bytes()
+	if len(sb) > 0 && startsOnAltScreen(sb, p.modes.alt) {
+		sb = append([]byte("\x1b[?1049h"), sb...)
+	}
+	modes := p.modes.restore()
 	var exited *int
 	if !p.running && p.exitCode != nil {
 		c := *p.exitCode
@@ -194,6 +209,7 @@ func (p *Process) Subscribe() *Subscription {
 	p.mu.Unlock()
 	return &Subscription{
 		Scrollback: sb,
+		Modes:      modes,
 		Out:        sub.out,
 		Exit:       sub.exit,
 		Exited:     exited,
@@ -237,6 +253,50 @@ func (p *Process) Resize(cols, rows int) error {
 		return nil
 	}
 	return pty.Setsize(f, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+}
+
+// AltScreen reports whether the agent is drawing on the alternate screen,
+// as full-screen TUIs do.
+func (p *Process) AltScreen() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.running && p.modes.alt
+}
+
+// redrawNudge is how long the PTY stays one row short in Redraw. TUIs
+// debounce resizes and compare the size with the last one they drew at:
+// OpenCode ignores a nudge shorter than about 100ms (measured).
+var redrawNudge = 250 * time.Millisecond
+
+// Redraw makes a full-screen TUI paint its whole screen again: a client
+// that attaches gets only the tail of the output, and a TUI that draws only
+// the cells that changed never repaints the rest. A resize to the same size
+// does not count as one, so the PTY is made a row shorter for a moment and
+// then given its size back. Returns at once; the nudge runs on its own.
+func (p *Process) Redraw() {
+	p.mu.Lock()
+	f, running, rows := p.pty, p.running, p.rows
+	if !running || f == nil || p.redrawing {
+		p.mu.Unlock()
+		return
+	}
+	p.redrawing = true
+	nudged := rows - 1
+	if nudged < 1 {
+		nudged = rows + 1
+	}
+	_ = pty.Setsize(f, &pty.Winsize{Cols: uint16(p.cols), Rows: uint16(nudged)})
+	p.mu.Unlock()
+	time.AfterFunc(redrawNudge, func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.redrawing = false
+		// The size as it is now: a client may have resized in between. The
+		// PTY may also be a new one after a restart; it is sized either way.
+		if p.running && p.pty != nil {
+			_ = pty.Setsize(p.pty, &pty.Winsize{Cols: uint16(p.cols), Rows: uint16(p.rows)})
+		}
+	})
 }
 
 // Size returns the current PTY size.
