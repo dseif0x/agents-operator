@@ -38,7 +38,7 @@ func stubModels(t *testing.T, ids []string) *[]string {
 
 func TestOpenCodeUnjailedProvider(t *testing.T) {
 	home := t.TempDir()
-	calls := stubModels(t, []string{"glm-5.3", "glm-5.3-flash", "glm-5.3-uncensored", "deepseek-v4-pro-uncensored"})
+	calls := stubModels(t, []string{"glm-5.3", "glm-5.3-flash", "glm-5.3-uncensored", "deepseek-v4-pro-uncensored", "kimi-k3", "grok-4.7", "brand-new-model"})
 	args, cfg, vars := openCodeRun(t, true, "HOME="+home, "UNJAILED_API_KEY=sk-uj", "SENTRY_DSN=x")
 
 	if !slices.Equal(args, []string{"--auto"}) {
@@ -57,8 +57,19 @@ func TestOpenCodeUnjailedProvider(t *testing.T) {
 	}
 	models := prov["models"].(map[string]any)
 	limit := func(id string) map[string]any { return models[id].(map[string]any)["limit"].(map[string]any) }
-	if len(models) != 4 || limit("glm-5.3-uncensored")["context"] != float64(1_000_000) || limit("deepseek-v4-pro-uncensored")["context"] != float64(unjailedDefaultContext) ||
-		limit("glm-5.3-flash")["context"] != float64(128_000) || limit("glm-5.3")["output"] != float64(unjailedMaxOutput) {
+	for id, want := range map[string]int{
+		"glm-5.3-uncensored":         1_000_000,
+		"glm-5.3-flash":              128_000,
+		"deepseek-v4-pro-uncensored": 256_000,
+		"kimi-k3":                    1_000_000,
+		"grok-4.7":                   400_000,
+		"brand-new-model":            unjailedDefaultContext, // not on the site's list yet
+	} {
+		if got := limit(id)["context"]; got != float64(want) {
+			t.Errorf("%s context = %v, want %d", id, got, want)
+		}
+	}
+	if len(models) != 7 || limit("glm-5.3")["output"] != float64(unjailedMaxOutput) {
 		t.Fatalf("models = %v", models)
 	}
 	if cfg["model"] != "unjailed/glm-5.3" || cfg["small_model"] != "unjailed/glm-5.3-flash" || cfg["autoupdate"] != false || cfg["share"] != "disabled" {
@@ -142,5 +153,24 @@ func TestOpenCodeSystemPromptAndAgent(t *testing.T) {
 	// One that does not parse is left out rather than breaking the start.
 	if args, cfg, _ := openCodeRun(t, false, "HOME="+home, runner.EnvAgentDefinition+"=nonsense"); len(args) != 0 || cfg["agent"] != nil {
 		t.Fatalf("bad definition: %q %v", args, cfg["agent"])
+	}
+}
+
+func TestUnjailedModelSizes(t *testing.T) {
+	// The 32 models unjailedai.com lists, all with a size, and the fallback
+	// list covering them.
+	if len(unjailedContextWindows) != 32 || len(unjailedFallbackModels) != 32 {
+		t.Fatalf("%d sizes, %d fallback models", len(unjailedContextWindows), len(unjailedFallbackModels))
+	}
+	counts := map[int]int{}
+	for _, c := range unjailedContextWindows {
+		counts[c]++
+	}
+	// 1M: 4 GLM, 2 DeepSeek, Kimi; 128K: 3 GLM flash; 256K: 2 DeepSeek Pro; 400K: the other 20.
+	if counts[1_000_000] != 7 || counts[128_000] != 3 || counts[256_000] != 2 || counts[400_000] != 20 {
+		t.Fatalf("sizes = %v", counts)
+	}
+	if !slices.Contains(unjailedFallbackModels, unjailedDefaultModel) || !slices.Contains(unjailedFallbackModels, unjailedSmallModel) {
+		t.Fatal("the fallback list lacks the default or the title model")
 	}
 }

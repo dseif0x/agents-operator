@@ -44,9 +44,11 @@ const (
 )
 
 // unjailedContextWindows are the context sizes unjailedai.com lists for its
-// models (tokens; "1M" and "128K" taken as 1,000,000 and 128,000 to stay
-// below the real limit).
+// models ("the arsenal"; "1M", "400K", "256K" and "128K" taken as 1,000,000,
+// 400,000, 256,000 and 128,000 to stay below the real limit). A model the
+// endpoint lists that is missing here gets unjailedDefaultContext.
 var unjailedContextWindows = map[string]int{
+	// Z.ai
 	"glm-5.3":                   1_000_000,
 	"glm-5.3-uncensored":        1_000_000,
 	"glm-5.3-abliterated":       1_000_000,
@@ -54,17 +56,46 @@ var unjailedContextWindows = map[string]int{
 	"glm-5.3-flash":             128_000,
 	"glm-5.3-flash-uncensored":  128_000,
 	"glm-5.3-flash-abliterated": 128_000,
+	// DeepSeek
+	"deepseek-v4.1-flash":        1_000_000,
+	"deepseek-v4-flash-0731":     1_000_000,
+	"deepseek-v4-pro-0813":       256_000,
+	"deepseek-v4-pro-uncensored": 256_000,
+	// Moonshot AI
+	"kimi-k3": 1_000_000,
+	// The rest of the site's models
+	"gpt-6-astra":       400_000,
+	"claude-fable-5":    400_000,
+	"claude-opus-5-5":   400_000,
+	"claude-opus-5":     400_000,
+	"claude-opus-4-8":   400_000,
+	"claude-opus-4-7":   400_000,
+	"claude-opus-4-6":   400_000,
+	"claude-sonnet-5-5": 400_000,
+	"claude-sonnet-5":   400_000,
+	"claude-haiku-5-5":  400_000,
+	"gpt-5.5":           400_000,
+	"gpt-5.6-sol":       400_000,
+	"gpt-6-sol":         400_000,
+	"gpt-6.1-sol":       400_000,
+	"gpt-5.6-terra":     400_000,
+	"gpt-5.6-luna":      400_000,
+	"gpt-6-luna":        400_000,
+	"grok-4.7":          400_000,
+	"grok-4.6":          400_000,
+	"grok-4.5":          400_000,
 }
 
 // unjailedFallbackModels is used when the endpoint's model list cannot be
-// fetched at start: the open-weight models unjailedai.com served when this
-// was written.
-var unjailedFallbackModels = []string{
-	"glm-5.3", "glm-5.3-uncensored", "glm-5.3-abliterated",
-	"glm-5.3-flash", "glm-5.3-flash-uncensored", "glm-5.3-flash-abliterated",
-	"glm-5.2", "deepseek-v4.1-flash", "deepseek-v4-flash-0731",
-	"deepseek-v4-pro-0813", "deepseek-v4-pro-uncensored", "kimi-k3",
-}
+// fetched at start: every model above.
+var unjailedFallbackModels = func() []string {
+	ids := make([]string, 0, len(unjailedContextWindows))
+	for id := range unjailedContextWindows {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}()
 
 // fetchModels lists the endpoint's models (GET <base>/models); nil when it
 // cannot. Swapped out in tests.
