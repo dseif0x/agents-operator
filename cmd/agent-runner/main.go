@@ -6,6 +6,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -205,9 +206,11 @@ const (
 
 // openClaudeEnv points OpenClaude at the owner's OpenAI-compatible endpoint
 // and turns off what it would otherwise send elsewhere. The hub projects the
-// account's settings as OPENCLAUDE_API_KEY, OPENCLAUDE_BASE_URL and
-// OPENCLAUDE_MODEL (not the OPENAI_* names Codex uses); OPENAI_BASE_URL or
-// OPENAI_MODEL set in the session's own environment win.
+// account's key and base URL as OPENCLAUDE_API_KEY and OPENCLAUDE_BASE_URL
+// (not the OPENAI_* names Codex uses); OPENAI_BASE_URL set in the session's
+// own environment wins. The model is the session's OPENAI_MODEL, else the
+// last one picked with /model in this session, else the default (see
+// openClaudeModel).
 func openClaudeEnv(env []string) []string {
 	get := func(k string) string {
 		for i := len(env) - 1; i >= 0; i-- {
@@ -226,8 +229,17 @@ func openClaudeEnv(env []string) []string {
 	}
 	set := func(k, v string) { out = append(out, k+"="+v) }
 	set("CLAUDE_CODE_USE_OPENAI", "1")
-	set("OPENAI_BASE_URL", cmp.Or(get("OPENAI_BASE_URL"), get(runner.EnvOpenClaudeBaseURL), openClaudeDefaultBaseURL))
-	set("OPENAI_MODEL", cmp.Or(get("OPENAI_MODEL"), get(runner.EnvOpenClaudeModel), openClaudeDefaultModel))
+	baseURL := cmp.Or(get("OPENAI_BASE_URL"), get(runner.EnvOpenClaudeBaseURL), openClaudeDefaultBaseURL)
+	set("OPENAI_BASE_URL", baseURL)
+	// OpenClaude does not know unjailedai.com's variants and would assume
+	// 128k for all of them; give it the sizes unjailedai.com publishes,
+	// unless the session sets its own.
+	if strings.HasPrefix(baseURL, "https://unjailedai.com/") && get("CLAUDE_CODE_OPENAI_CONTEXT_WINDOWS") == "" {
+		if b, err := json.Marshal(unjailedContextWindows); err == nil {
+			set("CLAUDE_CODE_OPENAI_CONTEXT_WINDOWS", string(b))
+		}
+	}
+	set("OPENAI_MODEL", cmp.Or(get("OPENAI_MODEL"), savedOpenClaudeModel(get("HOME")), openClaudeDefaultModel))
 	if key := get(runner.EnvOpenClaudeAPIKey); key != "" {
 		set("OPENAI_API_KEY", key)
 	}
@@ -238,6 +250,46 @@ func openClaudeEnv(env []string) []string {
 	set("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
 	set("CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1")
 	return out
+}
+
+// unjailedContextWindows are the context sizes unjailedai.com lists for its
+// models (tokens; "1M" and "128K" taken as 1,000,000 and 128,000 to stay
+// below the real limit). Models missing here keep OpenClaude's own default.
+var unjailedContextWindows = map[string]int{
+	"glm-5.3":                   1_000_000,
+	"glm-5.3-uncensored":        1_000_000,
+	"glm-5.3-abliterated":       1_000_000,
+	"glm-5.2":                   1_000_000,
+	"glm-5.3-flash":             128_000,
+	"glm-5.3-flash-uncensored":  128_000,
+	"glm-5.3-flash-abliterated": 128_000,
+}
+
+// savedOpenClaudeModel is the model last picked with /model in this
+// session: OpenClaude saves it as "model" in ~/.openclaude/settings.json but,
+// with its provider configured through the environment, starts from
+// OPENAI_MODEL rather than that setting. Handing it back as OPENAI_MODEL
+// keeps the choice across restarts. "" when there is none.
+func savedOpenClaudeModel(home string) string {
+	if home == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(home, ".openclaude", "settings.json"))
+	if err != nil {
+		return ""
+	}
+	var settings struct {
+		Model any `json:"model"`
+	}
+	if json.Unmarshal(raw, &settings) != nil {
+		return ""
+	}
+	model, _ := settings.Model.(string)
+	model = strings.TrimSpace(model)
+	if len(model) > 200 || strings.ContainsAny(model, "\x00\r\n") {
+		return ""
+	}
+	return model
 }
 
 func envOr(key, def string) string {
