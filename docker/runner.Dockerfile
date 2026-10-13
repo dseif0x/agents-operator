@@ -78,27 +78,17 @@ RUN npm install -g --no-audit --no-fund \
  && npm cache clean --force \
  && claude --version && opencode --version && codex --version
 
-# Unjailed CLI, built from its GitHub source at a pinned commit (not the npm
-# package): the commit hash pins the reviewed source and npm ci installs the
-# dependencies its lockfile pins by integrity hash, all from
-# registry.npmjs.org. Install scripts are off; the only build step is tsc
-# plus the repo's postbuild (shebang and chmod). Bump both args together
-# after reviewing the new commit; the CLI's /update cannot write to the
-# read-only /opt/agents in the pod.
-ARG UNJAILED_REPO=https://github.com/unjailedai/unjailedCLI.git
-ARG UNJAILED_COMMIT=99f840ec8742ee268c50d5c02b725c489d3e05e6
-RUN src=/tmp/unjailed dst=/opt/agents/lib/node_modules/unjailed \
- && git init -q "$src" && cd "$src" \
- && git fetch -q --depth 1 "${UNJAILED_REPO}" "${UNJAILED_COMMIT}" \
- && git checkout -q FETCH_HEAD \
- && test "$(git rev-parse HEAD)" = "${UNJAILED_COMMIT}" \
- && npm ci --ignore-scripts --no-audit --no-fund \
- && npm run build \
- && npm prune --omit=dev --ignore-scripts --no-audit --no-fund \
- && mkdir -p "$dst" && cp -r package.json LICENSE dist node_modules "$dst/" \
- && ln -s ../lib/node_modules/unjailed/dist/index.js /opt/agents/bin/unjailed \
- && cd / && rm -rf "$src" && npm cache clean --force \
- && unjailed --version
+# OpenClaude (github.com/Twigpine/openclaude), pinned: its npm scope moved
+# recently, so bump the version on purpose, after a look at the release. Its
+# LICENSE says it is derived from Anthropic's proprietary Claude Code and
+# distributed without Anthropic's authorization; building it into this image
+# redistributes that code (docs/OPERATIONS.md). The package has no install
+# scripts. Telemetry, the self-updater and other outbound calls are turned
+# off by the runner when it starts the CLI.
+ARG OPENCLAUDE_VERSION=0.32.0
+RUN npm install -g --no-audit --no-fund "@twigpine/openclaude@${OPENCLAUDE_VERSION}" \
+ && npm cache clean --force \
+ && openclaude --version
 
 COPY --from=build /out/agent-runner /usr/local/bin/agent-runner
 

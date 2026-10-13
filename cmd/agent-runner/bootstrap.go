@@ -28,7 +28,8 @@ import (
 //   - seed saved CLI logins (AGENTS_OPERATOR_LOGIN_<KIND>) when the file is absent
 //   - answer Claude Code's first-run prompts in ~/.claude.json when credentials exist,
 //     and its bypass-permissions consent in ~/.claude/settings.json when autonomous
-//   - turn on the Unjailed CLI's agent tools in ~/.unjailed/config.json
+//   - the same first-run answers and hooks for OpenClaude in ~/.openclaude.json
+//     and ~/.openclaude/settings.json
 //   - clone every entry of REPOS into /workspace/<path> when that directory is empty
 func (w *Workspace) Bootstrap(ctx context.Context) error {
 	home := w.HomeDir()
@@ -59,7 +60,6 @@ func (w *Workspace) Bootstrap(ctx context.Context) error {
 	}
 	w.prepareClaudeConfig(repos)
 	w.prepareClaudeSettings()
-	w.prepareUnjailedConfig()
 	if err := w.writeAgentsFile(repos); err != nil {
 		w.Log.Warn("cannot write AGENTS.md", "err", err)
 	}
@@ -344,6 +344,7 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 		filepath.Join(w.Root, "CLAUDE.md"),
 		filepath.Join(home, ".claude", "CLAUDE.md"),
 		filepath.Join(home, ".codex", "AGENTS.md"),
+		filepath.Join(home, ".openclaude", "CLAUDE.md"),
 		filepath.Join(home, ".config", "opencode", "AGENTS.md"),
 	} {
 		if old, err := os.ReadFile(p); err == nil && !strings.HasPrefix(string(old), agentsMarker) {
@@ -479,11 +480,25 @@ const claudeAPIKeySuffix = 20
 // there is something to sign in with (a seeded login, CLAUDE_CODE_OAUTH_TOKEN
 // or ANTHROPIC_API_KEY). Without credentials the CLI's own login flow is the
 // right first screen.
+//
+// OpenClaude, a Claude Code derivative, keeps the same file as
+// ~/.openclaude.json. Its provider comes from the environment the runner
+// sets (openClaudeEnv), so onboarding is always done there.
 func (w *Workspace) prepareClaudeConfig(repos []store.Repo) {
-	if w.Agent != runner.AgentClaude {
-		return
+	switch w.Agent {
+	case runner.AgentClaude:
+		_, statErr := os.Stat(filepath.Join(w.HomeDir(), runner.LoginFile[runner.LoginClaude]))
+		haveAuth := statErr == nil || os.Getenv(runner.EnvClaudeOAuthToken) != "" || os.Getenv(runner.EnvAnthropicAPIKey) != ""
+		w.prepareCLIConfig(".claude.json", "Claude Code", haveAuth, os.Getenv(runner.EnvAnthropicAPIKey), repos)
+	case runner.AgentOpenClaude:
+		w.prepareCLIConfig(".openclaude.json", "OpenClaude", true, "", repos)
 	}
-	path := filepath.Join(w.HomeDir(), ".claude.json")
+}
+
+// prepareCLIConfig answers the first-run questions in a Claude Code style
+// global config file (see prepareClaudeConfig).
+func (w *Workspace) prepareCLIConfig(name, cli string, haveAuth bool, apiKey string, repos []store.Repo) {
+	path := filepath.Join(w.HomeDir(), name)
 	cfg := map[string]any{}
 	raw, err := os.ReadFile(path)
 	switch {
@@ -491,13 +506,13 @@ func (w *Workspace) prepareClaudeConfig(repos []store.Repo) {
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.UseNumber() // keep timestamps and counters exactly as they were
 		if err := dec.Decode(&cfg); err != nil || cfg == nil {
-			w.Log.Warn("~/.claude.json is not a JSON object, leaving it alone", "err", err)
+			w.Log.Warn("~/"+name+" is not a JSON object, leaving it alone", "err", err)
 			return
 		}
 	case os.IsNotExist(err):
 		cfg["theme"] = "dark"
 	default:
-		w.Log.Warn("cannot read ~/.claude.json", "err", err)
+		w.Log.Warn("cannot read ~/"+name, "err", err)
 		return
 	}
 	changed := false
@@ -508,12 +523,10 @@ func (w *Workspace) prepareClaudeConfig(repos []store.Repo) {
 		}
 	}
 
-	_, statErr := os.Stat(filepath.Join(w.HomeDir(), runner.LoginFile[runner.LoginClaude]))
-	haveAuth := statErr == nil || os.Getenv(runner.EnvClaudeOAuthToken) != "" || os.Getenv(runner.EnvAnthropicAPIKey) != ""
 	if haveAuth {
 		setDefault(cfg, "hasCompletedOnboarding", true)
 	}
-	if key := os.Getenv(runner.EnvAnthropicAPIKey); len(key) >= claudeAPIKeySuffix {
+	if key := apiKey; len(key) >= claudeAPIKeySuffix {
 		resp, _ := cfg["customApiKeyResponses"].(map[string]any)
 		if resp == nil {
 			resp = map[string]any{"approved": []any{}, "rejected": []any{}}
@@ -548,14 +561,14 @@ func (w *Workspace) prepareClaudeConfig(repos []store.Repo) {
 	}
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		w.Log.Warn("cannot encode ~/.claude.json", "err", err)
+		w.Log.Warn("cannot encode ~/"+name, "err", err)
 		return
 	}
 	if err := os.WriteFile(path, out, 0o600); err != nil {
-		w.Log.Warn("cannot write ~/.claude.json", "err", err)
+		w.Log.Warn("cannot write ~/"+name, "err", err)
 		return
 	}
-	w.Log.Info("prepared Claude Code config", "onboarding_done", haveAuth, "trusted_dirs", len(dirs))
+	w.Log.Info("prepared "+cli+" config", "onboarding_done", haveAuth, "trusted_dirs", len(dirs))
 }
 
 // claudeHookEvents are the Claude Code lifecycle events the runner listens
@@ -580,11 +593,19 @@ const claudeHookCommand = "agent-runner hook"
 //   - the consent behind --dangerously-skip-permissions (autonomous
 //     sessions): the CLI records it as skipDangerousModePermissionPrompt;
 //     the user gave it by ticking "autonomous" when creating the session.
+//
+// OpenClaude reads the same settings, hooks included, from
+// ~/.openclaude/settings.json.
 func (w *Workspace) prepareClaudeSettings() {
-	if w.Agent != runner.AgentClaude {
+	var path string
+	switch w.Agent {
+	case runner.AgentClaude:
+		path = filepath.Join(w.HomeDir(), ".claude", "settings.json")
+	case runner.AgentOpenClaude:
+		path = filepath.Join(w.HomeDir(), ".openclaude", "settings.json")
+	default:
 		return
 	}
-	path := filepath.Join(w.HomeDir(), ".claude", "settings.json")
 	autonomous := autonomousEnv()
 	changed, err := updateJSONFile(path, func(obj map[string]any) bool {
 		changed := mergeClaudeHooks(obj)
@@ -597,11 +618,11 @@ func (w *Workspace) prepareClaudeSettings() {
 		return changed
 	})
 	if err != nil {
-		w.Log.Warn("cannot prepare Claude Code settings", "err", err)
+		w.Log.Warn("cannot prepare agent settings", "agent", w.Agent, "err", err)
 		return
 	}
 	if changed {
-		w.Log.Info("prepared Claude Code settings", "hooks", true, "bypass_consent", autonomous)
+		w.Log.Info("prepared agent settings", "agent", w.Agent, "hooks", true, "bypass_consent", autonomous)
 	}
 }
 
@@ -673,37 +694,6 @@ func updateJSONFile(path string, mutate func(obj map[string]any) bool) (bool, er
 		return false, err
 	}
 	return true, os.WriteFile(path, out, 0o600)
-}
-
-// prepareUnjailedConfig turns on the Unjailed CLI's agent tools in
-// ~/.unjailed/config.json. The CLI starts with tools off, as a plain chat;
-// a session here is for coding, so it gets "cmds" (files and commands, each
-// confirmed) or, autonomous, "yolo" (no confirmation). The CLI has no flag
-// for this, and the user can change it with /tools, which writes the same
-// key, so an existing value is left alone.
-func (w *Workspace) prepareUnjailedConfig() {
-	if w.Agent != runner.AgentUnjailed {
-		return
-	}
-	mode := "cmds"
-	if autonomousEnv() {
-		mode = "yolo"
-	}
-	path := filepath.Join(w.HomeDir(), ".unjailed", "config.json")
-	changed, err := updateJSONFile(path, func(obj map[string]any) bool {
-		if _, ok := obj["tools"]; ok {
-			return false
-		}
-		obj["tools"] = mode
-		return true
-	})
-	if err != nil {
-		w.Log.Warn("cannot prepare Unjailed config", "err", err)
-		return
-	}
-	if changed {
-		w.Log.Info("prepared Unjailed config", "tools", mode)
-	}
 }
 
 // autonomousEnv reports whether the hub asked for an autonomous session.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -140,7 +141,7 @@ func (c *Credentials) List(ctx context.Context, userID string) ([]Info, error) {
 // cleaned up before it is stored.
 var tokenKinds = map[string]bool{
 	store.CredAnthropicAPIKey: true, store.CredClaudeOAuthToken: true, store.CredOpenAIAPIKey: true,
-	store.CredUnjailedAPIKey: true, store.CredGitHubToken: true, store.CredGitHTTPSToken: true,
+	store.CredOpenClaudeAPIKey: true, store.CredGitHubToken: true, store.CredGitHTTPSToken: true,
 }
 
 // claudeOAuthTokenPrefix is what `claude setup-token` output starts with.
@@ -162,6 +163,12 @@ func normalise(kind string, v []byte) ([]byte, error) {
 		s := strings.Join(strings.Fields(string(v)), "")
 		if kind == store.CredClaudeOAuthToken && s != "" && !strings.HasPrefix(s, claudeOAuthTokenPrefix) {
 			return nil, &ValidationError{"a Claude Code OAuth token starts with " + claudeOAuthTokenPrefix + "…; paste the whole token printed by `claude setup-token`"}
+		}
+		return []byte(s), nil
+	case kind == store.CredOpenClaudeBaseURL:
+		s := strings.TrimRight(strings.TrimSpace(string(v)), "/")
+		if u, err := url.Parse(s); s != "" && (err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "") {
+			return nil, &ValidationError{"the OpenClaude base URL must be an http(s) URL such as https://unjailedai.com/v1"}
 		}
 		return []byte(s), nil
 	default:

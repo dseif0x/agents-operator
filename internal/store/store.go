@@ -61,12 +61,16 @@ const (
 	CredAnthropicAPIKey  = "anthropic_api_key"
 	CredAnthropicBaseURL = "anthropic_base_url"
 	CredOpenAIAPIKey     = "openai_api_key"
-	CredUnjailedAPIKey   = "unjailed_api_key"
-	CredGitSSHKey        = "git_ssh_key"
-	CredGitHTTPSToken    = "git_https_token"
-	CredGitHubToken      = "github_token"
-	CredGitUserName      = "git_user_name"
-	CredGitUserEmail     = "git_user_email"
+	// OpenClaude's OpenAI-compatible endpoint: its key (stored under the
+	// name it had when the Unjailed CLI used it), base URL and default model.
+	CredOpenClaudeAPIKey  = "unjailed_api_key"
+	CredOpenClaudeBaseURL = "openclaude_base_url"
+	CredOpenClaudeModel   = "openclaude_model"
+	CredGitSSHKey         = "git_ssh_key"
+	CredGitHTTPSToken     = "git_https_token"
+	CredGitHubToken       = "github_token"
+	CredGitUserName       = "git_user_name"
+	CredGitUserEmail      = "git_user_email"
 	// CredClaudeOAuthToken is a long-lived Claude Code token from
 	// `claude setup-token`, projected as CLAUDE_CODE_OAUTH_TOKEN. Unlike a
 	// saved login it never rotates, so any number of sessions can share it.
@@ -77,7 +81,8 @@ const (
 
 // CredentialKinds lists every accepted kind.
 var CredentialKinds = []string{
-	CredAnthropicAPIKey, CredAnthropicBaseURL, CredClaudeOAuthToken, CredOpenAIAPIKey, CredUnjailedAPIKey,
+	CredAnthropicAPIKey, CredAnthropicBaseURL, CredClaudeOAuthToken, CredOpenAIAPIKey,
+	CredOpenClaudeAPIKey, CredOpenClaudeBaseURL, CredOpenClaudeModel,
 	CredGitSSHKey, CredGitHTTPSToken, CredGitHubToken, CredGitUserName, CredGitUserEmail,
 	CredClaudeLogin, CredCodexLogin,
 }
@@ -85,7 +90,7 @@ var CredentialKinds = []string{
 // SecretKinds are the credential kinds whose values must never be echoed
 // back by the API. The others (base URL, git identity) are plain settings.
 var SecretKinds = map[string]bool{
-	CredAnthropicAPIKey: true, CredClaudeOAuthToken: true, CredOpenAIAPIKey: true, CredUnjailedAPIKey: true, CredGitSSHKey: true,
+	CredAnthropicAPIKey: true, CredClaudeOAuthToken: true, CredOpenAIAPIKey: true, CredOpenClaudeAPIKey: true, CredGitSSHKey: true,
 	CredGitHTTPSToken: true, CredGitHubToken: true, CredClaudeLogin: true, CredCodexLogin: true,
 }
 

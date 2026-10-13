@@ -167,7 +167,7 @@ export function SessionPage({ id }: { id: string }) {
             Restart agent
           </button>
         )}
-        {canAttach && s.agent !== "shell" && s.agent !== "opencode" && s.agent !== "unjailed" && (
+        {canAttach && s.agent !== "shell" && s.agent !== "opencode" && s.agent !== "openclaude" && (
           <button class="btn small" disabled={!!busy} onClick={saveLogin} title="Copy the CLI's login file to your account">
             Save login
           </button>
