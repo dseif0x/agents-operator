@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -183,13 +184,60 @@ func AgentCommand(agent string, autonomous bool, dir string, env []string) serve
 		return server.Command{Path: "opencode", Args: nil, Dir: dir, Env: env}
 	case runner.AgentCodex:
 		return server.Command{Path: "codex", Args: nil, Dir: dir, Env: env}
-	case runner.AgentUnjailed:
-		// No permission flag: the tools mode lives in ~/.unjailed/config.json
-		// (see prepareUnjailedConfig).
-		return server.Command{Path: "unjailed", Args: nil, Dir: dir, Env: env}
+	case runner.AgentOpenClaude:
+		args := []string{}
+		if autonomous {
+			args = append(args, "--dangerously-skip-permissions")
+		}
+		return server.Command{Path: "openclaude", Args: args, Dir: dir, Env: openClaudeEnv(env)}
 	default:
 		return server.Command{Path: "bash", Args: []string{"-l"}, Dir: dir, Env: env}
 	}
+}
+
+// OpenClaude defaults. Unset, it would fall back to its maintainer's own
+// gateway (opengateway.gitlawb.com) rather than fail, so the runner always
+// names the endpoint.
+const (
+	openClaudeDefaultBaseURL = "https://unjailedai.com/v1"
+	openClaudeDefaultModel   = "glm-5.3"
+)
+
+// openClaudeEnv points OpenClaude at the owner's OpenAI-compatible endpoint
+// and turns off what it would otherwise send elsewhere. The hub projects the
+// account's settings as OPENCLAUDE_API_KEY, OPENCLAUDE_BASE_URL and
+// OPENCLAUDE_MODEL (not the OPENAI_* names Codex uses); OPENAI_BASE_URL or
+// OPENAI_MODEL set in the session's own environment win.
+func openClaudeEnv(env []string) []string {
+	get := func(k string) string {
+		for i := len(env) - 1; i >= 0; i-- {
+			if key, v, _ := strings.Cut(env[i], "="); key == k {
+				return v
+			}
+		}
+		return ""
+	}
+	out := make([]string, 0, len(env)+10)
+	for _, kv := range env {
+		// Sentry only starts with a DSN; none should be inherited.
+		if k, _, _ := strings.Cut(kv, "="); k != "SENTRY_DSN" {
+			out = append(out, kv)
+		}
+	}
+	set := func(k, v string) { out = append(out, k+"="+v) }
+	set("CLAUDE_CODE_USE_OPENAI", "1")
+	set("OPENAI_BASE_URL", cmp.Or(get("OPENAI_BASE_URL"), get(runner.EnvOpenClaudeBaseURL), openClaudeDefaultBaseURL))
+	set("OPENAI_MODEL", cmp.Or(get("OPENAI_MODEL"), get(runner.EnvOpenClaudeModel), openClaudeDefaultModel))
+	if key := get(runner.EnvOpenClaudeAPIKey); key != "" {
+		set("OPENAI_API_KEY", key)
+	}
+	// No telemetry, no self-update (the image is read-only anyway), no
+	// marketplace download from Anthropic.
+	set("DISABLE_TELEMETRY", "1")
+	set("DISABLE_AUTOUPDATER", "1")
+	set("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+	set("CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1")
+	return out
 }
 
 func envOr(key, def string) string {
