@@ -106,7 +106,7 @@ git push origin v1.2.3
 
 That tag produces:
 
-1. `release-images.yml`: multi-arch images `ghcr.io/dseif0x/agents-operator:1.2.3` and `ghcr.io/dseif0x/agents-operator-runner:1.2.3` (plus `latest`, `1.2`, `sha-…`), SBOM and provenance attestations, keyless cosign signatures (non-blocking), and a GitHub Release listing the digests.
+1. `release-images.yml`: multi-arch images `ghcr.io/dseif0x/agents-operator:1.2.3` and `ghcr.io/dseif0x/agents-operator-runner:1.2.3` (plus `latest`, `1.2`, `sha-…`), SBOM and provenance attestations, keyless cosign signatures (non-blocking), and a GitHub Release listing the digests. Each platform builds on a runner of its own architecture (`ubuntu-24.04`, `ubuntu-24.04-arm`; no emulation) and is pushed by digest, then one job per image puts the tags on the multi-arch index. Layers are cached in the GitHub Actions cache per image and platform; the release version only reaches the last steps of each Dockerfile, so a release rebuilds the Go binaries and, when one of the agent CLIs has a new version (looked up with `npm view` at the start of the run), the npm layer.
 2. `release-chart.yml` (runs when the first succeeds): checks out the tag, rewrites `version` and `appVersion` in `Chart.yaml` to `1.2.3`, packages the chart, attaches `agents-operator-1.2.3.tgz` to the same `v1.2.3` GitHub release and regenerates `index.yaml` on the `gh-pages` branch with `cr index`. It never creates a tag or a second release, so it keeps working with immutable releases or tag rulesets enabled. The chart's default image tags follow `appVersion`, so chart `1.2.3` runs images `1.2.3`.
 
 If the chart step ever fails after the images are out, re-run it by hand: Actions → release-chart → Run workflow → tag `v1.2.3`.
@@ -124,7 +124,7 @@ The chart is then available at `https://dseif0x.github.io/agents-operator/`.
 
 ## Runner image contents
 
-`debian:bookworm-slim` + Node 22 + `@anthropic-ai/claude-code`, `opencode-ai`, `@openai/codex` (versions are build args: `CLAUDE_CODE_VERSION`, `OPENCODE_VERSION`, `CODEX_VERSION`; pin them in CI when you want reproducible images), git, `gh`, openssh-client, ripgrep, tmux, curl, jq, tini. User `agent` UID 1000, HOME `/workspace/home`, repositories under `/workspace/<name>`.
+`debian:bookworm-slim` + Node 22 + `@anthropic-ai/claude-code`, `opencode-ai`, `@openai/codex` (versions are build args: `CLAUDE_CODE_VERSION`, `OPENCODE_VERSION`, `CODEX_VERSION`; the release workflow passes the current version of each, so the npm layer is cached until one changes; `latest` in a local build), git, `gh`, openssh-client, ripgrep, tmux, curl, jq, tini. User `agent` UID 1000, HOME `/workspace/home`, repositories under `/workspace/<name>`.
 
 The root filesystem is read-only in the pod; `/tmp` is an emptyDir and everything the agent writes goes to the PVC.
 

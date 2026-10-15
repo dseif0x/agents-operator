@@ -6,29 +6,21 @@ FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:a688600ca24f8a4d3ca77
 WORKDIR /src
 ARG TARGETOS
 ARG TARGETARCH
-ARG VERSION=dev
 ENV CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOFLAGS=-trimpath
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
+# Declared where it is used: a build arg is part of the cache key of every
+# RUN after it, and VERSION changes with every release.
+ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     go build -ldflags="-s -w -X main.version=${VERSION}" -o /out/agent-runner ./cmd/agent-runner
 
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 ARG TARGETARCH
-ARG VERSION=dev
 # Pinned tool versions. Bump via build args or Dependabot-driven PRs.
 ARG NODE_VERSION=22.22.2
-ARG CLAUDE_CODE_VERSION=latest
-ARG OPENCODE_VERSION=latest
-ARG CODEX_VERSION=latest
-
-LABEL org.opencontainers.image.title="agents-operator-runner" \
-      org.opencontainers.image.description="Session pod image: agent CLIs under a PTY served over WebSocket" \
-      org.opencontainers.image.source="https://github.com/dseif0x/agents-operator" \
-      org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.licenses="MIT"
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
@@ -69,7 +61,12 @@ ENV PATH=/opt/agents/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin \
     HOME=/workspace/home \
     WORKSPACE=/workspace
 
-# Agent CLIs, installed as the agent user under /opt/agents.
+# Agent CLIs, installed as the agent user under /opt/agents. The release
+# workflow passes the current version of each, so this layer comes from the
+# cache until one of them has a new release; "latest" for local builds.
+ARG CLAUDE_CODE_VERSION=latest
+ARG OPENCODE_VERSION=latest
+ARG CODEX_VERSION=latest
 USER 1000:1000
 RUN npm install -g --no-audit --no-fund \
       "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
@@ -79,6 +76,14 @@ RUN npm install -g --no-audit --no-fund \
  && claude --version && opencode --version && codex --version
 
 COPY --from=build /out/agent-runner /usr/local/bin/agent-runner
+
+# Last, so a new version only changes this metadata.
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="agents-operator-runner" \
+      org.opencontainers.image.description="Session pod image: agent CLIs under a PTY served over WebSocket" \
+      org.opencontainers.image.source="https://github.com/dseif0x/agents-operator" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.licenses="MIT"
 
 WORKDIR /workspace
 EXPOSE 7681
