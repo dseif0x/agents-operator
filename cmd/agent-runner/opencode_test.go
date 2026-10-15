@@ -75,6 +75,13 @@ func TestOpenCodeUnjailedProvider(t *testing.T) {
 	if cfg["model"] != "unjailed/glm-5.3" || cfg["small_model"] != "unjailed/glm-5.3-flash" || cfg["autoupdate"] != false || cfg["share"] != "disabled" {
 		t.Fatalf("config = %v", cfg)
 	}
+	plugins, _ := cfg["plugin"].([]any)
+	if len(plugins) != 1 {
+		t.Fatalf("plugin = %v", cfg["plugin"])
+	}
+	if b, err := os.ReadFile(strings.TrimPrefix(plugins[0].(string), "file://")); err != nil || !strings.Contains(string(b), `"experimental.chat.messages.transform"`) || !strings.Contains(string(b), `"unjailed"`) {
+		t.Fatalf("plugin %v: %q %v", plugins[0], b, err)
+	}
 	for k, want := range map[string]string{"OPENCODE_DISABLE_AUTOUPDATE": "1", "OPENCODE_DISABLE_SHARE": "1", "OPENCODE_DISABLE_CLAUDE_CODE": "1", "UNJAILED_API_KEY": "sk-uj"} {
 		if vars[k] != want {
 			t.Errorf("%s = %q", k, vars[k])
@@ -108,7 +115,7 @@ func TestOpenCodeUnjailedProvider(t *testing.T) {
 	}
 
 	// No key: no provider, OpenCode as before with its own providers.
-	if _, cfg, _ := openCodeRun(t, false, "HOME="+home, "ANTHROPIC_API_KEY=sk-ant"); cfg["provider"] != nil || cfg["model"] != nil {
+	if _, cfg, _ := openCodeRun(t, false, "HOME="+home, "ANTHROPIC_API_KEY=sk-ant"); cfg["provider"] != nil || cfg["model"] != nil || cfg["plugin"] != nil {
 		t.Fatalf("config without a key = %v", cfg)
 	}
 }

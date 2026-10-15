@@ -27,7 +27,9 @@ import (
 //     prompt of its default "build" agent, or appended as an instructions
 //     file;
 //   - the session's agent definition as an OpenCode agent, selected with
-//     --agent.
+//     --agent;
+//   - with the Unjailed provider, a plugin that keeps earlier replies'
+//     reasoning out of requests to the GLM models (unjailedReasoningPlugin).
 //
 // Its Claude Code compatibility (reading ~/.claude/CLAUDE.md and Claude
 // skills), sharing and self-update are turned off in the environment.
@@ -96,6 +98,28 @@ var unjailedFallbackModels = func() []string {
 	slices.Sort(ids)
 	return ids
 }()
+
+// unjailedReasoningPlugin is an OpenCode plugin the runner writes next to
+// the session's other files. OpenCode sends every earlier reply's reasoning
+// back as reasoning_content, and Unjailed's GLM models refuse a request with
+// one over 30,000 characters ("retry with clear_thinking and without
+// historical reasoning"); GLM does not use past reasoning anyway. So when
+// the turn goes to an Unjailed GLM model, the reasoning parts are left out
+// of the request; the session keeps them. DeepSeek's thinking mode is the
+// other way round (it needs the reasoning back) and is left alone.
+const unjailedReasoningPlugin = `// Written by agents-operator on every start: edits are overwritten.
+export const AgentsOperatorUnjailedReasoning = async () => ({
+  "experimental.chat.messages.transform": async (_input, output) => {
+    const user = output.messages.findLast((m) => m.info.role === "user")
+    const model = user?.info.model
+    if (model?.providerID !== "` + unjailedProviderID + `" || !model.modelID.startsWith("glm")) return
+    // Copies in the request's list: OpenCode's own message objects stay as
+    // they are.
+    output.messages.forEach((m, i) => {
+      if (m.info.role === "assistant") output.messages[i] = { ...m, parts: m.parts.filter((p) => p.type !== "reasoning") }
+    })
+  },
+})`
 
 // fetchModels lists the endpoint's models (GET <base>/models); nil when it
 // cannot. Swapped out in tests.
@@ -178,6 +202,9 @@ func openCodeConfig(env []string) (map[string]any, []string) {
 		if slices.Contains(ids, unjailedSmallModel) {
 			cfg["small_model"] = unjailedProviderID + "/" + unjailedSmallModel
 		}
+		if file := writeSessionFile(home, "unjailed-reasoning.js", unjailedReasoningPlugin); file != "" {
+			cfg["plugin"] = []string{"file://" + file}
+		}
 	}
 
 	if prompt := strings.TrimSpace(get(runner.EnvSystemPrompt)); prompt != "" {
@@ -251,7 +278,8 @@ func openCodeHasRecentModel(home string) bool {
 }
 
 // writeSessionFile writes content to a file of the runner's under
-// ~/.config/opencode/agents-operator and returns its path ("" on failure).
+// ~/.config/opencode/agents-operator and returns its path ("" on failure):
+// instructions, and the runner's plugin.
 // Rewritten on every start, so it always matches the session's settings.
 func writeSessionFile(home, name, content string) string {
 	if home == "" {

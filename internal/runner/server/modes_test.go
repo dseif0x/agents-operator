@@ -59,13 +59,15 @@ func TestStartsOnAltScreen(t *testing.T) {
 // made to repaint.
 func TestAttachToFullScreenApp(t *testing.T) {
 	old := redrawNudge
-	redrawNudge = 50 * time.Millisecond
+	// Long against the script's polling below: bash runs a trap only between
+	// commands, and two signals within one sleep would run it once.
+	redrawNudge = 400 * time.Millisecond
 	t.Cleanup(func() { redrawNudge = old })
 	e := newTestEnv(t, `printf '\033[?1049h\033[?25l\033[?1000h\033[?1006h'
 head -c 3000000 /dev/zero | tr '\0' x
 trap 'echo "REDRAW $(stty size)"' WINCH
 echo READY
-while :; do sleep 0.05; done`)
+while :; do sleep 0.01; done`)
 	deadline := time.Now().Add(10 * time.Second)
 	for !strings.Contains(string(e.proc.Scrollback()), "READY") {
 		if time.Now().After(deadline) {

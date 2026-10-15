@@ -13,13 +13,15 @@ FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:a688600ca24f8a4d3ca77
 WORKDIR /src
 ARG TARGETOS
 ARG TARGETARCH
-ARG VERSION=dev
 ENV CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOFLAGS=-trimpath
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 COPY --from=web /src/internal/ui/dist internal/ui/dist
+# Declared where it is used: a build arg is part of the cache key of every
+# RUN after it, and VERSION changes with every release.
+ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     go build -tags ui -ldflags="-s -w -X main.version=${VERSION}" -o /out/agents-operator ./cmd/agents-operator
 
