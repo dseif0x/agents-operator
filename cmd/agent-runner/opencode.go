@@ -7,22 +7,27 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dseif0x/agents-operator/internal/agentdef"
 	"github.com/dseif0x/agents-operator/internal/runner"
+	"github.com/dseif0x/agents-operator/internal/store"
 )
 
 // OpenCode sessions get their settings through OPENCODE_CONFIG_CONTENT,
 // which OpenCode merges over its own config files, so nothing the user keeps
 // in ~/.config/opencode is rewritten:
 //
-//   - with an Unjailed key on the account, an "unjailed" provider for
-//     unjailedai.com (or the account's base URL) through OpenCode's
-//     OpenAI-compatible provider, with the endpoint's models and their
-//     context sizes;
+//   - a provider for each of the owner's AI accounts, under its name
+//     (openCodeProviders): OpenCode's own anthropic and openai providers for
+//     the first Anthropic and OpenAI key, the AI SDK packages for further
+//     ones, and OpenCode's OpenAI-compatible provider for OpenAI-compatible
+//     endpoints and Unjailed (with the endpoint's models and, for Unjailed,
+//     their context sizes);
 //   - the session's custom system prompt: replacing OpenCode's own as the
 //     prompt of its default "build" agent, or appended as an instructions
 //     file;
@@ -104,15 +109,19 @@ var unjailedFallbackModels = func() []string {
 // back as reasoning_content, and Unjailed's GLM models refuse a request with
 // one over 30,000 characters ("retry with clear_thinking and without
 // historical reasoning"); GLM does not use past reasoning anyway. So when
-// the turn goes to an Unjailed GLM model, the reasoning parts are left out
-// of the request; the session keeps them. DeepSeek's thinking mode is the
-// other way round (it needs the reasoning back) and is left alone.
-const unjailedReasoningPlugin = `// Written by agents-operator on every start: edits are overwritten.
+// the turn goes to a GLM model of an Unjailed provider (ids), the reasoning
+// parts are left out of the request; the session keeps them. DeepSeek's
+// thinking mode is the other way round (it needs the reasoning back) and is
+// left alone.
+func unjailedReasoningPlugin(ids []string) string {
+	list, _ := json.Marshal(ids)
+	return `// Written by agents-operator on every start: edits are overwritten.
+const providers = ` + string(list) + `
 export const AgentsOperatorUnjailedReasoning = async () => ({
   "experimental.chat.messages.transform": async (_input, output) => {
     const user = output.messages.findLast((m) => m.info.role === "user")
     const model = user?.info.model
-    if (model?.providerID !== "` + unjailedProviderID + `" || !model.modelID.startsWith("glm")) return
+    if (!providers.includes(model?.providerID) || !model.modelID.startsWith("glm")) return
     // Copies in the request's list: OpenCode's own message objects stay as
     // they are.
     output.messages.forEach((m, i) => {
@@ -120,18 +129,25 @@ export const AgentsOperatorUnjailedReasoning = async () => ({
     })
   },
 })`
+}
 
-// fetchModels lists the endpoint's models (GET <base>/models); nil when it
+// fetchModels lists an endpoint's models (GET <base>/models, with the
+// Anthropic headers for an Anthropic key, else a bearer token); nil when it
 // cannot. Swapped out in tests.
-var fetchModels = func(baseURL, key string) []string {
+var fetchModels = func(kind, baseURL, key string) []string {
 	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/models", nil)
 	if err != nil {
 		return nil
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
+	if kind == store.AcctAnthropicAPIKey {
+		req.Header.Set("x-api-key", key)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	} else {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
-		slog.Warn("cannot list the Unjailed models; using the built-in list", "err", err)
+		slog.Warn("cannot list an endpoint's models", "url", baseURL, "err", err)
 		return nil
 	}
 	defer resp.Body.Close()
@@ -141,7 +157,7 @@ var fetchModels = func(baseURL, key string) []string {
 		} `json:"data"`
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&list) != nil {
-		slog.Warn("cannot list the Unjailed models; using the built-in list", "status", resp.StatusCode)
+		slog.Warn("cannot list an endpoint's models", "url", baseURL, "status", resp.StatusCode)
 		return nil
 	}
 	var ids []string
@@ -151,6 +167,151 @@ var fetchModels = func(baseURL, key string) []string {
 		}
 	}
 	return ids
+}
+
+// Model lists used when an Anthropic or OpenAI account other than the
+// first cannot list its models (the first is OpenCode's own provider, which
+// knows them).
+var (
+	anthropicFallbackModels = []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}
+	openAIFallbackModels    = []string{"gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+)
+
+// orList is list, or fallback when list is empty.
+func orList(list, fallback []string) []string {
+	if len(list) > 0 {
+		return list
+	}
+	return fallback
+}
+
+// chatModel drops what an OpenAI model list has besides chat models
+// (embeddings, speech, images, moderation).
+func chatModel(id string) bool {
+	for _, skip := range []string{"embedding", "tts", "whisper", "dall-e", "image", "moderation", "transcribe", "audio", "realtime", "search"} {
+		if strings.Contains(id, skip) {
+			return false
+		}
+	}
+	return true
+}
+
+// providerModels is a provider's model map for OpenCode with the limits it
+// needs: known context sizes for Unjailed, a safe default otherwise.
+func providerModels(ids []string, known map[string]int) map[string]any {
+	models := map[string]any{}
+	for _, id := range ids {
+		ctx := unjailedDefaultContext
+		if c, ok := known[id]; ok {
+			ctx = c
+		}
+		models[id] = map[string]any{"name": id, "limit": map[string]any{"context": ctx, "output": unjailedMaxOutput}}
+	}
+	return models
+}
+
+var providerIDChars = regexp.MustCompile(`[^a-z0-9]+`)
+
+// providerID is the OpenCode provider id of an account: canonical (the
+// built-in provider: anthropic, openai, unjailed) for the first account of
+// its kind, else the account's name made an id ("Work LiteLLM" ->
+// work-litellm), numbered on clashes.
+func providerID(canonical, name string, used map[string]bool) string {
+	if canonical != "" && !used[canonical] {
+		used[canonical] = true
+		return canonical
+	}
+	base := strings.Trim(providerIDChars.ReplaceAllString(strings.ToLower(name), "-"), "-")
+	if base == "" || base == canonical {
+		base = cmp.Or(canonical, "provider") + "-account"
+	}
+	id := base
+	for i := 2; used[id]; i++ {
+		id = base + "-" + strconv.Itoa(i)
+	}
+	used[id] = true
+	return id
+}
+
+// openCodeProviders turns the session's AI accounts (runner.EnvAIAccounts)
+// into OpenCode providers, each named after its account. It also returns
+// the ids of the Unjailed providers and their model lists, for the default
+// model and the reasoning plugin.
+func openCodeProviders(get func(string) string) (map[string]any, []string, map[string][]string) {
+	var accounts []runner.AIAccount
+	if v := get(runner.EnvAIAccounts); v != "" {
+		if err := json.Unmarshal([]byte(v), &accounts); err != nil {
+			slog.Warn("ignoring AI accounts that do not parse", "err", err)
+		}
+	}
+	providers := map[string]any{}
+	used := map[string]bool{}
+	var unjailed []string
+	unjailedModels := map[string][]string{}
+	for _, a := range accounts {
+		key := get(a.KeyEnv)
+		if key == "" || !strings.HasPrefix(a.KeyEnv, runner.EnvAIKeyPrefix) {
+			continue
+		}
+		// The key stays in the environment, out of the config text.
+		options := map[string]any{"apiKey": "{env:" + a.KeyEnv + "}"}
+		p := map[string]any{"name": a.Name, "options": options}
+		var id string
+		switch a.Kind {
+		case store.AcctAnthropicAPIKey:
+			id = providerID("anthropic", a.Name, used)
+			base := "https://api.anthropic.com/v1"
+			if a.BaseURL != "" {
+				// The base URL is Claude Code's (ANTHROPIC_BASE_URL, without
+				// /v1); the AI SDK wants the API root.
+				base = strings.TrimSuffix(a.BaseURL, "/v1") + "/v1"
+				options["baseURL"] = base
+			}
+			if id != "anthropic" {
+				p["npm"] = "@ai-sdk/anthropic"
+				p["models"] = providerModels(orList(fetchModels(a.Kind, base, key), anthropicFallbackModels), nil)
+			}
+		case store.AcctOpenAIAPIKey:
+			id = providerID("openai", a.Name, used)
+			if id != "openai" {
+				ids := slices.DeleteFunc(fetchModels(a.Kind, "https://api.openai.com/v1", key), func(m string) bool { return !chatModel(m) })
+				p["npm"] = "@ai-sdk/openai"
+				p["models"] = providerModels(orList(ids, openAIFallbackModels), nil)
+			}
+		case store.AcctOpenAICompatible:
+			if a.BaseURL == "" {
+				continue
+			}
+			ids := a.Models
+			if len(ids) == 0 {
+				ids = fetchModels(a.Kind, a.BaseURL, key)
+			}
+			if len(ids) == 0 {
+				slog.Warn("leaving out an OpenAI-compatible account with no models", "account", a.Name)
+				continue
+			}
+			id = providerID("", a.Name, used)
+			p["npm"] = "@ai-sdk/openai-compatible"
+			options["baseURL"] = a.BaseURL
+			p["models"] = providerModels(ids, nil)
+		case store.AcctUnjailed:
+			base := cmp.Or(a.BaseURL, unjailedDefaultBaseURL)
+			ids := fetchModels(a.Kind, base, key)
+			if len(ids) == 0 {
+				ids = unjailedFallbackModels
+			}
+			id = providerID(unjailedProviderID, a.Name, used)
+			p["npm"] = "@ai-sdk/openai-compatible"
+			options["baseURL"] = base
+			p["models"] = providerModels(ids, unjailedContextWindows)
+			unjailed = append(unjailed, id)
+			unjailedModels[id] = ids
+		default:
+			continue
+		}
+		providers[id] = p
+	}
+	return providers, unjailed, unjailedModels
 }
 
 // openCodeConfig builds the session's OpenCode configuration and the
@@ -168,41 +329,26 @@ func openCodeConfig(env []string) (map[string]any, []string) {
 	cfg := map[string]any{"autoupdate": false, "share": "disabled"}
 	var args []string
 
-	if key := get(runner.EnvUnjailedAPIKey); key != "" {
-		base := strings.TrimRight(cmp.Or(get(runner.EnvUnjailedBaseURL), unjailedDefaultBaseURL), "/")
-		ids := fetchModels(base, key)
-		if len(ids) == 0 {
-			ids = unjailedFallbackModels
-		}
-		models := map[string]any{}
-		for _, id := range ids {
-			ctx := unjailedDefaultContext
-			if c, ok := unjailedContextWindows[id]; ok {
-				ctx = c
-			}
-			models[id] = map[string]any{"name": id, "limit": map[string]any{"context": ctx, "output": unjailedMaxOutput}}
-		}
-		cfg["provider"] = map[string]any{unjailedProviderID: map[string]any{
-			"npm":  "@ai-sdk/openai-compatible",
-			"name": "Unjailed",
-			// The key stays in the environment, out of the config text.
-			"options": map[string]any{"baseURL": base, "apiKey": "{env:" + runner.EnvUnjailedAPIKey + "}"},
-			"models":  models,
-		}}
+	providers, unjailed, unjailedModels := openCodeProviders(get)
+	if len(providers) > 0 {
+		cfg["provider"] = providers
+	}
+	if len(unjailed) > 0 {
+		first, ids := unjailed[0], unjailedModels[unjailed[0]]
 		// OpenCode starts on the configured model before the one picked last
 		// in its model list, so the default is only set until there is one:
-		// glm-5.3, or the endpoint's first model when it has no such one.
+		// glm-5.3 of the first Unjailed account, or its first model.
 		if !openCodeHasRecentModel(home) {
 			model := ids[0]
 			if slices.Contains(ids, unjailedDefaultModel) {
 				model = unjailedDefaultModel
 			}
-			cfg["model"] = unjailedProviderID + "/" + model
+			cfg["model"] = first + "/" + model
 		}
 		if slices.Contains(ids, unjailedSmallModel) {
-			cfg["small_model"] = unjailedProviderID + "/" + unjailedSmallModel
+			cfg["small_model"] = first + "/" + unjailedSmallModel
 		}
-		if file := writeSessionFile(home, "unjailed-reasoning.js", unjailedReasoningPlugin); file != "" {
+		if file := writeSessionFile(home, "unjailed-reasoning.js", unjailedReasoningPlugin(unjailed)); file != "" {
 			cfg["plugin"] = []string{"file://" + file}
 		}
 	}

@@ -25,6 +25,8 @@ export interface TerminalHandle {
   links: () => string[];
   /** xterm's own selection when there is one. */
   selection: () => string;
+  /** The terminal's width in columns. */
+  cols: () => number;
 }
 
 const urlRE = /https?:\/\/[^\s"'<>`)\]]+/g;
@@ -184,6 +186,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       return [...seen];
     },
     selection: () => xterm.current?.getSelection() ?? "",
+    cols: () => xterm.current?.cols ?? 0,
   }));
 
   useEffect(() => {
@@ -624,7 +627,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       )}
       {exit !== null && status === "open" && (
         <div class="banner" style="top:auto;bottom:0">
-          Agent exited with code {exit}. Use “Restart agent” to relaunch it; the pod and volume are untouched.
+          Agent exited with code {exit}. Stop and start the session to relaunch it; the volume is kept.
         </div>
       )}
       <div ref={el} class="term-host" style="height:100%" />

@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { api, type K8sAccess, type CreateSessionRequest, type GitHubRepo, type Repo, type Session, type SessionDefaults, type Toleration, type User } from "../api";
+import { api, type Account, type K8sAccess, type CreateSessionRequest, type GitHubRepo, type Repo, type Session, type SessionDefaults, type Toleration, type User } from "../api";
 import { Nav } from "../components/Nav";
-import { navigate } from "../router";
+import { Link, navigate } from "../router";
+
+/** The account kinds Claude Code and Codex sessions sign in with (one each). */
+const SIGN_IN_KINDS: Record<string, string[]> = {
+  claude: ["anthropic_api_key", "claude_oauth_token", "claude_login"],
+  codex: ["openai_api_key", "codex_login"],
+};
+/** The account kinds OpenCode gets as providers (all of them). */
+const PROVIDER_KINDS = ["anthropic_api_key", "openai_api_key", "openai_compatible", "unjailed"];
 
 /** Parse one repo per line: `url [branch] [path]`. */
 export function parseRepos(text: string): { repos: Repo[]; error?: string } {
@@ -102,6 +110,9 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
   const [systemPrompt, setSystemPrompt] = useState("");
   const [systemPromptReplace, setSystemPromptReplace] = useState(false);
   const [agentDefinition, setAgentDefinition] = useState("");
+  const [aiAccount, setAIAccount] = useState("");
+  const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const [accountDefaults, setAccountDefaults] = useState<Record<string, string>>({});
   const [editable, setEditable] = useState<boolean | null>(editing ? null : true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -127,6 +138,12 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         if (r.defaults) setDefaults(r.defaults);
       })
       .catch(() => undefined);
+    Promise.all([api.accounts(), api.profile()])
+      .then(([a, p]) => {
+        setAccounts(a.accounts);
+        setAccountDefaults(p.defaults);
+      })
+      .catch(() => setAccounts([]));
     loadGitHub();
   }, []);
 
@@ -156,6 +173,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         setSystemPrompt(s.system_prompt || "");
         setSystemPromptReplace(!!s.system_prompt_replace);
         setAgentDefinition(s.agent_definition || "");
+        setAIAccount(s.ai_account || "");
         setEditable(s.state === "stopped" || s.state === "failed");
       })
       .catch((e) => setError((e as Error).message));
@@ -199,6 +217,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
     }
     setBusy(true);
     const req: CreateSessionRequest = { name, agent, repos: parsed.repos, autonomous, git_credentials: gitCredentials, k8s_access: k8sAccess };
+    if (SIGN_IN_KINDS[agent]) req.ai_account = aiAccount;
     if (k8sAccess === "namespace") {
       req.k8s_namespaces = k8sNamespaces
         .split(/[\s,]+/)
@@ -282,13 +301,21 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
           </div>
           <div>
             <label>Agent</label>
-            <select value={agent} onChange={(e) => setAgent((e.target as HTMLSelectElement).value)} disabled={editing}>
+            <select
+              value={agent}
+              onChange={(e) => {
+                setAgent((e.target as HTMLSelectElement).value);
+                setAIAccount("");
+              }}
+              disabled={editing}
+            >
               {agents.map((a) => (
                 <option value={a}>{a}</option>
               ))}
             </select>
           </div>
         </div>
+        <AccountChoice agent={agent} accounts={accounts} defaults={accountDefaults} value={aiAccount} onChange={setAIAccount} />
         {gh?.configured && (
           <div class="repo-browser">
             <label style="margin-top:14px">Browse your GitHub repositories</label>
@@ -346,7 +373,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         <div class="checkbox">
           <input id="gitcreds" type="checkbox" checked={gitCredentials} onChange={(e) => setGitCredentials((e.target as HTMLInputElement).checked)} />
           <label for="gitcreds" style="margin:0;color:inherit">
-            Git credentials for the agent (your SSH key and HTTPS/GitHub tokens). Off: the repos are still cloned with them, but the agent can only
+            Git credentials for the agent (your git accounts). Off: the repos are still cloned with them, but the agent can only
             commit, not push or use <code>gh</code>
           </label>
         </div>
@@ -546,3 +573,49 @@ function dnsLabel(name: string): string {
   return h || "session";
 }
 
+
+// AccountChoice picks the account a Claude Code or Codex session signs in
+// with, and says what OpenCode and shell sessions get instead.
+function AccountChoice(props: {
+  agent: string;
+  accounts: Account[] | null;
+  defaults: Record<string, string>;
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  if (!props.accounts) return null;
+  const kinds = SIGN_IN_KINDS[props.agent];
+  if (!kinds) {
+    const providers = props.accounts.filter((a) => PROVIDER_KINDS.includes(a.kind) && a.has_value);
+    const text =
+      props.agent === "opencode"
+        ? providers.length
+          ? `OpenCode gets all ${providers.length} of your API key and endpoint accounts as providers: ${providers.map((a) => a.name).join(", ")}.`
+          : "OpenCode gets your API key and endpoint accounts as providers; you have none yet."
+        : props.agent === "shell"
+          ? "A shell session gets all of your AI accounts."
+          : "";
+    return text ? <div class="muted" style="font-size:12px;margin-top:6px">{text}</div> : null;
+  }
+  const options = props.accounts.filter((a) => kinds.includes(a.kind));
+  const label = props.agent === "codex" ? "Codex" : "Claude Code";
+  if (!options.length) {
+    return (
+      <div class="muted" style="font-size:12px;margin-top:6px">
+        No {label} account yet: add one on the <Link href="/account">account page</Link>.
+      </div>
+    );
+  }
+  const def = options.find((a) => a.id === props.defaults[props.agent]) ?? options[0];
+  return (
+    <div>
+      <label>{label} account</label>
+      <select value={props.value} onChange={(e) => props.onChange((e.target as HTMLSelectElement).value)}>
+        <option value="">Your default ({def.name})</option>
+        {options.map((a) => (
+          <option value={a.id}>{a.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+}

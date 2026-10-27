@@ -25,7 +25,7 @@ func (s *Service) GitHubRepos(ctx context.Context, userID string, refresh bool) 
 	if s.GitHub == nil || s.Creds == nil {
 		return nil, false, nil
 	}
-	token, err := s.Creds.Get(ctx, userID, store.CredGitHubToken)
+	token, err := s.Creds.GitHubToken(ctx, userID)
 	if err != nil {
 		return nil, false, err
 	}

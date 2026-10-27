@@ -23,7 +23,7 @@ func stores(t *testing.T) map[string]Store {
 			t.Fatalf("open postgres: %v", err)
 		}
 		// Start from a clean slate; tests share one database.
-		_, _ = pg.pool.Exec(ctx, "TRUNCATE session_events, sessions, user_credentials, repo_usage, users")
+		_, _ = pg.pool.Exec(ctx, "TRUNCATE session_events, sessions, user_credentials, accounts, user_profiles, repo_usage, users")
 		t.Cleanup(pg.Close)
 		out["postgres"] = pg
 	} else {
@@ -189,6 +189,85 @@ func exercise(t *testing.T, st Store) {
 	cs, _ = st.Credentials().List(ctx, u.ID)
 	if len(cs) != 1 {
 		t.Fatalf("after delete = %d", len(cs))
+	}
+	if ids, err := st.Credentials().UserIDs(ctx); err != nil || len(ids) != 1 || ids[0] != u.ID {
+		t.Fatalf("credential users = %v, %v", ids, err)
+	}
+
+	// accounts
+	a1 := &Account{UserID: u.ID, Kind: AcctOpenAICompatible, Name: "LiteLLM", BaseURL: "http://l/v1", Models: []string{"a", "b"}}
+	if err := st.Accounts().Create(ctx, a1); err != nil || a1.ID == "" {
+		t.Fatalf("create account: %v", err)
+	}
+	if err := st.Accounts().Create(ctx, &Account{UserID: u.ID, Kind: AcctAnthropicAPIKey, Name: "litellm"}); err != ErrConflict {
+		t.Fatalf("duplicate AI account name err = %v", err)
+	}
+	g1 := &Account{UserID: u.ID, Kind: AcctGitHTTPS, Name: "github.com", Host: "github.com"}
+	if err := st.Accounts().Create(ctx, g1); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Accounts().Create(ctx, &Account{UserID: u.ID, Kind: AcctGitHTTPS, Name: "other", Host: "GitHub.com"}); err != ErrConflict {
+		t.Fatalf("second HTTPS account for a host err = %v", err)
+	}
+	// Same host, other kind; same name as an AI account: both fine.
+	if err := st.Accounts().Create(ctx, &Account{UserID: u.ID, Kind: AcctGitSSH, Name: "LiteLLM", Host: "github.com"}); err != nil {
+		t.Fatal(err)
+	}
+	// Another user may use the same name.
+	if err := st.Accounts().Create(ctx, &Account{UserID: adm.ID, Kind: AcctAnthropicAPIKey, Name: "LiteLLM"}); err != nil {
+		t.Fatal(err)
+	}
+	accts, err := st.Accounts().List(ctx, u.ID)
+	if err != nil || len(accts) != 3 || accts[0].ID != a1.ID || len(accts[0].Models) != 2 || accts[1].Host != "github.com" {
+		t.Fatalf("accounts = %+v, %v", accts, err)
+	}
+	before := a1.UpdatedAt
+	a1.Name, a1.Models = "Gateway", nil
+	if err := st.Accounts().Update(ctx, a1); err != nil || a1.Name != "Gateway" || len(a1.Models) != 0 || !a1.UpdatedAt.After(before) {
+		t.Fatalf("update account = %+v, %v", a1, err)
+	}
+	if got, err := st.Accounts().Get(ctx, u.ID, a1.ID); err != nil || got.Name != "Gateway" || got.BaseURL != "http://l/v1" {
+		t.Fatalf("get account = %+v, %v", got, err)
+	}
+	if _, err := st.Accounts().Get(ctx, adm.ID, a1.ID); err != ErrNotFound {
+		t.Fatalf("account of another user err = %v", err)
+	}
+	if _, err := st.Accounts().Get(ctx, u.ID, "not-a-uuid"); err != ErrNotFound {
+		t.Fatalf("bad id err = %v", err)
+	}
+	if err := st.Accounts().Delete(ctx, u.ID, g1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Accounts().Delete(ctx, u.ID, g1.ID); err != ErrNotFound {
+		t.Fatalf("second delete err = %v", err)
+	}
+
+	// profiles
+	p, err := st.Profiles().Get(ctx, u.ID)
+	if err != nil || p.GitName != "" || p.Defaults == nil {
+		t.Fatalf("empty profile = %+v, %v", p, err)
+	}
+	if err := st.Profiles().Put(ctx, &Profile{UserID: u.ID, GitName: "Alice", GitEmail: "a@x", Defaults: map[string]string{"claude": a1.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Profiles().Put(ctx, &Profile{UserID: u.ID, GitName: "Alice B", GitEmail: "a@x", Defaults: map[string]string{"claude": a1.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := st.Profiles().Get(ctx, u.ID); err != nil || p.GitName != "Alice B" || p.Defaults["claude"] != a1.ID {
+		t.Fatalf("profile = %+v, %v", p, err)
+	}
+
+	// a session's AI account
+	sa := &Session{OwnerID: u.ID, Name: "acct", Agent: "claude", State: StateCreating, AIAccount: a1.ID}
+	if err := st.Sessions().Create(ctx, sa); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.Sessions().Get(ctx, sa.ID); got.AIAccount != a1.ID {
+		t.Fatalf("ai account = %q", got.AIAccount)
+	}
+	sa.AIAccount = ""
+	if got, err := st.Sessions().Update(ctx, sa); err != nil || got.AIAccount != "" {
+		t.Fatalf("ai account after update = %+v, %v", got, err)
 	}
 
 	// repo usage

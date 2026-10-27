@@ -53,6 +53,8 @@ export interface Session {
   /** What kubectl in the pod may do: nothing, read the cluster, also write in k8s_namespaces, or own a sandbox cluster. */
   k8s_access: K8sAccess;
   k8s_namespaces: string[];
+  /** Claude Code and Codex: the account the session signs in with; "" = the owner's default. */
+  ai_account: string;
   /** Sandbox mode: the host namespace of the session's vcluster. */
   sandbox_namespace?: string;
   /** Sandbox mode: the DNS name the sandbox's Ingress hosts live under (absent without a sandbox domain). */
@@ -113,11 +115,40 @@ export interface SessionDefaults {
   egress_allowed: string[];
 }
 
-export interface Credential {
+/** An AI or git account. Its value (key, token, SSH key, saved login) is never sent back. */
+export interface Account {
+  id: string;
   kind: string;
-  secret: boolean;
-  value?: string;
+  name: string;
+  /** Git accounts: the host (github.com, *.example.com, or * for any other). */
+  host?: string;
+  base_url?: string;
+  /** HTTPS git accounts: the username (empty: x-access-token). */
+  username?: string;
+  /** OpenAI-compatible accounts: the models offered (empty: the endpoint's list). */
+  models: string[];
+  /** False when the value is missing from the Secret; sessions skip such an account. */
+  has_value: boolean;
+  created_at: string;
   updated_at: string;
+}
+
+export interface AccountInput {
+  kind?: string;
+  name?: string;
+  host?: string;
+  base_url?: string;
+  username?: string;
+  models?: string[];
+  /** The secret; on a change, empty keeps the current one. */
+  value?: string;
+}
+
+export interface Profile {
+  git_name: string;
+  git_email: string;
+  /** Agent (claude, codex) -> the account its sessions use unless they pick one. */
+  defaults: Record<string, string>;
 }
 
 export interface GitHubRepo {
@@ -152,6 +183,7 @@ export interface CreateSessionRequest {
   agent_definition?: string;
   k8s_access?: K8sAccess;
   k8s_namespaces?: string[];
+  ai_account?: string;
 }
 
 export class ApiError extends Error {
@@ -204,8 +236,6 @@ export const api = {
   deleteSession: (id: string) => request<Session>("DELETE", `/sessions/${id}`),
   startSession: (id: string) => request<Session>("POST", `/sessions/${id}/start`),
   stopSession: (id: string) => request<Session>("POST", `/sessions/${id}/stop`),
-  restartAgent: (id: string) => request<{ ok: boolean }>("POST", `/sessions/${id}/restart-agent`),
-  saveLogin: (id: string, kind: string) => request<{ ok: boolean }>("POST", `/sessions/${id}/save-login`, { kind }),
   sessionEvents: (id: string) => request<{ events: SessionEvent[] }>("GET", `/sessions/${id}/events`),
   sessionLogs: async (id: string) => {
     const res = await fetch(`/api/v1/sessions/${id}/logs`, { credentials: "same-origin" });
@@ -221,12 +251,14 @@ export const api = {
     return text;
   },
 
-  credentials: () => request<{ credentials: Credential[]; kinds: string[] }>("GET", "/me/credentials"),
+  accounts: () => request<{ accounts: Account[]; kinds: string[] }>("GET", "/me/accounts"),
+  createAccount: (a: AccountInput) => request<{ accounts: Account[]; kinds: string[] }>("POST", "/me/accounts", a),
+  updateAccount: (id: string, a: AccountInput) => request<{ accounts: Account[]; kinds: string[] }>("PUT", `/me/accounts/${id}`, a),
+  deleteAccount: (id: string) => request<{ accounts: Account[]; kinds: string[] }>("DELETE", `/me/accounts/${id}`),
+  profile: () => request<Profile>("GET", "/me/profile"),
+  putProfile: (p: Profile) => request<Profile>("PUT", "/me/profile", p),
   githubRepos: (refresh = false) =>
     request<{ configured: boolean; repos: GitHubRepo[]; error?: string }>("GET", `/me/github/repos${refresh ? "?refresh=1" : ""}`),
-  putCredentials: (values: Record<string, string>) =>
-    request<{ credentials: Credential[]; kinds: string[] }>("PUT", "/me/credentials", { values }),
-  deleteCredential: (kind: string) => request<{ ok: boolean }>("DELETE", `/me/credentials/${kind}`),
 };
 
 /** Subscribe to session state changes over SSE. Returns a stop function. */

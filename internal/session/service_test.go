@@ -204,59 +204,6 @@ func TestLifecycle(t *testing.T) {
 	}
 }
 
-func TestCredentials(t *testing.T) {
-	svc, _, u := newService(t)
-	ctx := context.Background()
-	if err := svc.Creds.Set(ctx, u.ID, store.CredAnthropicAPIKey, []byte("  sk-ant \n")); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Creds.Set(ctx, u.ID, store.CredGitUserName, []byte("Alice")); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Creds.Set(ctx, u.ID, "nope", []byte("x")); err == nil {
-		t.Fatal("unknown kind accepted")
-	}
-	// A setup token copied off a phone screen arrives wrapped; whitespace
-	// goes, the token stays whole. Something that is not a token is refused.
-	if err := svc.Creds.Set(ctx, u.ID, store.CredClaudeOAuthToken, []byte("  sk-ant-oat01-abc\n  def \n ghi\n")); err != nil {
-		t.Fatal(err)
-	}
-	if v, _ := svc.Creds.Get(ctx, u.ID, store.CredClaudeOAuthToken); string(v) != "sk-ant-oat01-abcdefghi" {
-		t.Fatalf("oauth token stored as %q", v)
-	}
-	if err := svc.Creds.Set(ctx, u.ID, store.CredClaudeOAuthToken, []byte("Store this token securely")); err == nil {
-		t.Fatal("non-token accepted as an OAuth token")
-	} else if _, ok := err.(*ValidationError); !ok {
-		t.Fatalf("err type %T", err)
-	}
-	if v, _ := svc.Creds.Get(ctx, u.ID, store.CredAnthropicAPIKey); string(v) != "sk-ant" {
-		t.Fatalf("api key stored as %q", v)
-	}
-	list, err := svc.Creds.List(ctx, u.ID)
-	if err != nil || len(list) != 3 {
-		t.Fatalf("list = %+v, %v", list, err)
-	}
-	for _, i := range list {
-		switch i.Kind {
-		case store.CredAnthropicAPIKey:
-			if !i.Secret || i.Value != "" {
-				t.Fatalf("secret value leaked: %+v", i)
-			}
-		case store.CredGitUserName:
-			if i.Secret || i.Value != "Alice" {
-				t.Fatalf("plain value missing: %+v", i)
-			}
-		}
-	}
-	if err := svc.Creds.Delete(ctx, u.ID, store.CredAnthropicAPIKey); err != nil {
-		t.Fatal(err)
-	}
-	list, _ = svc.Creds.List(ctx, u.ID)
-	if len(list) != 2 {
-		t.Fatalf("after delete = %d", len(list))
-	}
-}
-
 func TestGitHubRepos(t *testing.T) {
 	svc, _, u := newService(t)
 	ctx := context.Background()
@@ -277,7 +224,8 @@ func TestGitHubRepos(t *testing.T) {
 	}))
 	defer srv.Close()
 	svc.GitHub = &github.Client{BaseURL: srv.URL}
-	if err := svc.Creds.Set(ctx, u.ID, store.CredGitHubToken, []byte("ghp_x")); err != nil {
+	gh, err := svc.Creds.CreateAccount(ctx, u.ID, AccountInput{Kind: store.AcctGitHTTPS, Host: "github.com", Value: "ghp_x"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	// Two sessions with org/used (one via git@ spelling), one deleted afterwards: usage persists.
@@ -303,7 +251,9 @@ func TestGitHubRepos(t *testing.T) {
 		t.Fatalf("order = %v, want %s", got, want)
 	}
 	// Bad token surfaces as a validation error, still "configured".
-	_ = svc.Creds.Set(ctx, u.ID, store.CredGitHubToken, []byte("bad"))
+	if _, err := svc.Creds.UpdateAccount(ctx, u.ID, gh.ID, AccountInput{Host: "github.com", Value: "bad"}); err != nil {
+		t.Fatal(err)
+	}
 	svc.GitHub = &github.Client{BaseURL: srv.URL}
 	_, configured, err = svc.GitHubRepos(ctx, u.ID, true)
 	if err == nil || !configured {
@@ -408,10 +358,7 @@ func TestSyncLogin(t *testing.T) {
 	port, _ := strconv.Atoi(portStr)
 	svc.Term = &term.Proxy{Resolver: staticResolver{term.Endpoint{IP: host, Port: port, Token: "t"}}, Log: svc.Log}
 	saved := func() string {
-		v, err := svc.Creds.Get(ctx, u.ID, store.CredClaudeLogin)
-		if err != nil {
-			t.Fatal(err)
-		}
+		v := accountValue(t, svc.Creds, u.ID, store.AcctClaudeLogin)
 		if v == nil {
 			return ""
 		}
@@ -435,8 +382,12 @@ func TestSyncLogin(t *testing.T) {
 
 	// The user saves. The account copy is newer than the file, so polling
 	// does not export again.
-	if err := svc.SaveLogin(ctx, u, sess.ID, store.CredClaudeLogin); err != nil {
+	if err := svc.SaveLogin(ctx, u, sess.ID, store.AcctClaudeLogin); err != nil {
 		t.Fatal(err)
+	}
+	// The new login account is the session's from now on.
+	if got, _ := svc.Store.Sessions().Get(ctx, sess.ID); got.AIAccount == "" {
+		t.Fatal("session not switched to the saved login")
 	}
 	svc.PollOnce(ctx)
 	if fr.count() != 1 || saved() != `{"v":1}` {

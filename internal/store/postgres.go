@@ -106,6 +106,12 @@ func (p *Postgres) Sessions() Sessions { return pgSessions{p.pool} }
 // Credentials returns the credential aggregate.
 func (p *Postgres) Credentials() Credentials { return pgCredentials{p.pool} }
 
+// Accounts returns the account aggregate.
+func (p *Postgres) Accounts() Accounts { return pgAccounts{p.pool} }
+
+// Profiles returns the profile aggregate.
+func (p *Postgres) Profiles() Profiles { return pgProfiles{p.pool} }
+
 // Events returns the event aggregate.
 func (p *Postgres) Events() Events { return pgEvents{p.pool} }
 
@@ -200,14 +206,14 @@ type pgSessions struct{ pool *pgxpool.Pool }
 const sessionCols = `id, owner_id, name, agent, repos, image_tag, pvc_size, storage_class, runtime_class, k8s_access, k8s_namespaces,
 	resources, node_selector, tolerations, env, autonomous, state, state_reason, generation,
 	created_at, updated_at, last_attached_at, last_output_at, deleted_at, no_git_credentials, egress,
-	system_prompt, system_prompt_replace, agent_definition`
+	system_prompt, system_prompt_replace, agent_definition, ai_account`
 
 func scanSession(row pgx.Row) (*Session, error) {
 	var s Session
 	err := row.Scan(&s.ID, &s.OwnerID, &s.Name, &s.Agent, &s.Repos, &s.ImageTag, &s.PVCSize, &s.StorageClass, &s.RuntimeClass, &s.K8sAccess, &s.K8sNamespaces,
 		&s.Resources, &s.NodeSelector, &s.Tolerations, &s.Env, &s.Autonomous, &s.State, &s.StateReason, &s.Generation,
 		&s.CreatedAt, &s.UpdatedAt, &s.LastAttachedAt, &s.LastOutputAt, &s.DeletedAt, &s.NoGitCredentials, &s.Egress,
-		&s.SystemPrompt, &s.SystemPromptReplace, &s.AgentDefinition)
+		&s.SystemPrompt, &s.SystemPromptReplace, &s.AgentDefinition, &s.AIAccount)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -253,11 +259,11 @@ func (r pgSessions) Create(ctx context.Context, s *Session) error {
 	}
 	normaliseK8s(s)
 	_, err := r.pool.Exec(ctx, `INSERT INTO sessions (`+sessionCols+`) VALUES
-		($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
+		($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)`,
 		s.ID, s.OwnerID, s.Name, s.Agent, s.Repos, s.ImageTag, s.PVCSize, s.StorageClass, s.RuntimeClass, s.K8sAccess, s.K8sNamespaces,
 		s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous, s.State, s.StateReason, s.Generation,
 		s.CreatedAt, s.UpdatedAt, s.LastAttachedAt, s.LastOutputAt, s.DeletedAt, s.NoGitCredentials, s.Egress,
-		s.SystemPrompt, s.SystemPromptReplace, s.AgentDefinition)
+		s.SystemPrompt, s.SystemPromptReplace, s.AgentDefinition, s.AIAccount)
 	return mapErr(err)
 }
 
@@ -300,11 +306,11 @@ func (r pgSessions) Update(ctx context.Context, s *Session) (*Session, error) {
 	normaliseK8s(s)
 	return scanSession(r.pool.QueryRow(ctx, `UPDATE sessions SET name=$2, repos=$3, image_tag=$4, runtime_class=$5, k8s_access=$6, k8s_namespaces=$7,
 		resources=$8, node_selector=$9, tolerations=$10, env=$11, autonomous=$12, no_git_credentials=$13, egress=$14,
-		system_prompt=$15, system_prompt_replace=$16, agent_definition=$17, updated_at=now()
+		system_prompt=$15, system_prompt_replace=$16, agent_definition=$17, ai_account=$18, updated_at=now()
 		WHERE id=$1 RETURNING `+sessionCols,
 		s.ID, s.Name, s.Repos, s.ImageTag, s.RuntimeClass, s.K8sAccess, s.K8sNamespaces, s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous,
 		s.NoGitCredentials, s.Egress, s.SystemPrompt, s.SystemPromptReplace,
-		s.AgentDefinition))
+		s.AgentDefinition, s.AIAccount))
 }
 
 // normaliseK8s fills the access mode and namespace list so the columns never
@@ -393,6 +399,115 @@ func (r pgCredentials) List(ctx context.Context, userID string) ([]*Credential, 
 		out = append(out, &c)
 	}
 	return out, rows.Err()
+}
+
+func (r pgCredentials) UserIDs(ctx context.Context) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `SELECT DISTINCT user_id::text FROM user_credentials`)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	return ids, mapErr(err)
+}
+
+// ---- accounts ----
+
+type pgAccounts struct{ pool *pgxpool.Pool }
+
+const accountCols = `id, user_id, kind, name, host, base_url, username, models, created_at, updated_at`
+
+func scanAccount(row pgx.Row) (*Account, error) {
+	var a Account
+	if err := row.Scan(&a.ID, &a.UserID, &a.Kind, &a.Name, &a.Host, &a.BaseURL, &a.Username, &a.Models, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		return nil, mapErr(err)
+	}
+	return &a, nil
+}
+
+func (r pgAccounts) Create(ctx context.Context, a *Account) error {
+	if a.ID == "" {
+		a.ID = NewID()
+	}
+	if a.Models == nil {
+		a.Models = []string{}
+	}
+	// The database's clock, like Update's: updated_at is compared with it.
+	err := r.pool.QueryRow(ctx, `INSERT INTO accounts (id, user_id, kind, name, host, base_url, username, models) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		RETURNING created_at, updated_at`,
+		a.ID, a.UserID, a.Kind, a.Name, a.Host, a.BaseURL, a.Username, a.Models).Scan(&a.CreatedAt, &a.UpdatedAt)
+	return mapErr(err)
+}
+
+func (r pgAccounts) Update(ctx context.Context, a *Account) error {
+	if a.Models == nil {
+		a.Models = []string{}
+	}
+	got, err := scanAccount(r.pool.QueryRow(ctx, `UPDATE accounts SET name=$3, host=$4, base_url=$5, username=$6, models=$7, updated_at=now()
+		WHERE user_id=$1 AND id=$2 RETURNING `+accountCols, a.UserID, a.ID, a.Name, a.Host, a.BaseURL, a.Username, a.Models))
+	if err != nil {
+		return err
+	}
+	*a = *got
+	return nil
+}
+
+func (r pgAccounts) Get(ctx context.Context, userID, id string) (*Account, error) {
+	return scanAccount(r.pool.QueryRow(ctx, `SELECT `+accountCols+` FROM accounts WHERE user_id=$1 AND id::text=$2`, userID, id))
+}
+
+func (r pgAccounts) List(ctx context.Context, userID string) ([]*Account, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+accountCols+` FROM accounts WHERE user_id=$1 ORDER BY created_at, id`, userID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var out []*Account
+	for rows.Next() {
+		a, err := scanAccount(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, mapErr(rows.Err())
+}
+
+func (r pgAccounts) Delete(ctx context.Context, userID, id string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM accounts WHERE user_id=$1 AND id::text=$2`, userID, id)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ---- profiles ----
+
+type pgProfiles struct{ pool *pgxpool.Pool }
+
+func (r pgProfiles) Get(ctx context.Context, userID string) (*Profile, error) {
+	p := Profile{UserID: userID}
+	err := r.pool.QueryRow(ctx, `SELECT git_name, git_email, defaults, updated_at FROM user_profiles WHERE user_id=$1`, userID).
+		Scan(&p.GitName, &p.GitEmail, &p.Defaults, &p.UpdatedAt)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, mapErr(err)
+	}
+	if p.Defaults == nil {
+		p.Defaults = map[string]string{}
+	}
+	return &p, nil
+}
+
+func (r pgProfiles) Put(ctx context.Context, p *Profile) error {
+	if p.Defaults == nil {
+		p.Defaults = map[string]string{}
+	}
+	_, err := r.pool.Exec(ctx, `INSERT INTO user_profiles (user_id, git_name, git_email, defaults, updated_at) VALUES ($1,$2,$3,$4,now())
+		ON CONFLICT (user_id) DO UPDATE SET git_name=EXCLUDED.git_name, git_email=EXCLUDED.git_email, defaults=EXCLUDED.defaults, updated_at=now()`,
+		p.UserID, p.GitName, p.GitEmail, p.Defaults)
+	return mapErr(err)
 }
 
 // ---- events ----

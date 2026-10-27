@@ -83,10 +83,13 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("GET /api/v1/sessions/{id}/scrollback", s.scrollback)
 	authed.HandleFunc("GET /api/v1/sessions/{id}/events", s.sessionEventLog)
 	authed.HandleFunc("GET /api/v1/sessions/{id}/logs", s.sessionLogs)
-	authed.HandleFunc("GET /api/v1/me/credentials", s.listCredentials)
 	authed.HandleFunc("GET /api/v1/me/github/repos", s.githubRepos)
-	authed.HandleFunc("PUT /api/v1/me/credentials", s.putCredentials)
-	authed.HandleFunc("DELETE /api/v1/me/credentials/{kind}", s.deleteCredential)
+	authed.HandleFunc("GET /api/v1/me/accounts", s.listAccounts)
+	authed.HandleFunc("POST /api/v1/me/accounts", s.createAccount)
+	authed.HandleFunc("PUT /api/v1/me/accounts/{id}", s.updateAccount)
+	authed.HandleFunc("DELETE /api/v1/me/accounts/{id}", s.deleteAccount)
+	authed.HandleFunc("GET /api/v1/me/profile", s.getProfile)
+	authed.HandleFunc("PUT /api/v1/me/profile", s.putProfile)
 	mux.Handle("/api/v1/", s.requireAuth(s.requireCSRF(authed)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) { writeErr(w, http.StatusNotFound, "no such route") })
 
@@ -552,53 +555,4 @@ func (s *Server) githubRepos(w http.ResponseWriter, r *http.Request) {
 		repos = []session.GitHubRepo{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"configured": configured, "repos": repos})
-}
-
-// ---- credentials ----
-
-func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
-	p := principal(r)
-	list, err := s.Creds.List(r.Context(), p.User.ID)
-	if err != nil {
-		s.mapErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"credentials": list, "kinds": store.CredentialKinds})
-}
-
-// putCredentials accepts {"values": {"anthropic_api_key": "...", ...}}.
-// Empty strings are ignored; use DELETE to remove a kind.
-func (s *Server) putCredentials(w http.ResponseWriter, r *http.Request) {
-	p := principal(r)
-	var body struct {
-		Values map[string]string `json:"values"`
-	}
-	if err := decode(r, &body); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	for kind, v := range body.Values {
-		if strings.TrimSpace(v) == "" {
-			continue
-		}
-		if err := s.Creds.Set(r.Context(), p.User.ID, kind, []byte(v)); err != nil {
-			s.mapErr(w, err)
-			return
-		}
-	}
-	list, err := s.Creds.List(r.Context(), p.User.ID)
-	if err != nil {
-		s.mapErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"credentials": list, "kinds": store.CredentialKinds})
-}
-
-func (s *Server) deleteCredential(w http.ResponseWriter, r *http.Request) {
-	p := principal(r)
-	if err := s.Creds.Delete(r.Context(), p.User.ID, r.PathValue("kind")); err != nil {
-		s.mapErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

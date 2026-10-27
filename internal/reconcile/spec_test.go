@@ -1,7 +1,11 @@
 package reconcile
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -56,66 +60,94 @@ func TestBuildPVC(t *testing.T) {
 	}
 }
 
+// testCredentials is an owner with one account of every kind (two Claude
+// Code ones), each value "v-<id>".
+func testCredentials() UserCredentials {
+	acct := func(id, kind, name string) *store.Account {
+		return &store.Account{ID: id, UserID: "u1", Kind: kind, Name: name}
+	}
+	accounts := []*store.Account{
+		{ID: "ant", UserID: "u1", Kind: store.AcctAnthropicAPIKey, Name: "Anthropic", BaseURL: "https://proxy"},
+		acct("oat", store.AcctClaudeOAuthToken, "Max plan"),
+		acct("cl", store.AcctClaudeLogin, "Claude login"),
+		acct("oai", store.AcctOpenAIAPIKey, "OpenAI"),
+		acct("cx", store.AcctCodexLogin, "Codex login"),
+		{ID: "llm", UserID: "u1", Kind: store.AcctOpenAICompatible, Name: "Work LiteLLM", BaseURL: "http://litellm/v1", Models: []string{"m"}},
+		acct("uj", store.AcctUnjailed, "Unjailed"),
+		{ID: "gh", UserID: "u1", Kind: store.AcctGitHTTPS, Name: "github.com", Host: "github.com", Username: ""},
+		{ID: "any", UserID: "u1", Kind: store.AcctGitHTTPS, Name: "*", Host: "*", Username: "bob"},
+		{ID: "ssh", UserID: "u1", Kind: store.AcctGitSSH, Name: "*", Host: "*"},
+		acct("empty", store.AcctOpenAIAPIKey, "No value"),
+	}
+	values := map[string][]byte{"unrelated": []byte("x")}
+	for _, a := range accounts {
+		if a.ID != "empty" {
+			values[store.AccountSecretKey(a.ID)] = []byte("v-" + a.ID)
+		}
+	}
+	return UserCredentials{Accounts: accounts, Values: values, Profile: &store.Profile{UserID: "u1", GitEmail: "a@b.c", Defaults: map[string]string{runner.AgentClaude: "oat"}}}
+}
+
 func TestBuildSecret(t *testing.T) {
-	s := testSession()
-	sec := BuildSecret(s, testCfg(), "tok", map[string][]byte{
-		store.CredAnthropicAPIKey:  []byte("sk-ant"),
-		store.CredGitSSHKey:        []byte("-----BEGIN"),
-		store.CredGitHubToken:      []byte("ghp_x"),
-		store.CredClaudeOAuthToken: []byte("sk-ant-oat01-x"),
-		store.CredClaudeLogin:      []byte(`{"a":1}`),
-		store.CredUnjailedAPIKey:   []byte("sk-uj"),
-		"unknown":                  []byte("x"),
-	})
-	if string(sec.Data["RUNNER_TOKEN"]) != "tok" || string(sec.Data["ANTHROPIC_API_KEY"]) != "sk-ant" || string(sec.Data["GIT_SSH_KEY"]) != "-----BEGIN" || string(sec.Data["GH_TOKEN"]) != "ghp_x" || string(sec.Data["CLAUDE_CODE_OAUTH_TOKEN"]) != "sk-ant-oat01-x" {
-		t.Fatalf("data = %v", sec.Data)
+	s := testSession() // claude
+	sec := BuildSecret(s, testCfg(), "tok", testCredentials())
+	d := sec.Data
+	// The default Claude account (the OAuth token), git and the identity.
+	if string(d["RUNNER_TOKEN"]) != "tok" || string(d["CLAUDE_CODE_OAUTH_TOKEN"]) != "v-oat" || string(d["GH_TOKEN"]) != "v-gh" || string(d["GIT_USER_EMAIL"]) != "a@b.c" {
+		t.Fatalf("data = %v", d)
 	}
-	if string(sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"]) != "eyJhIjoxfQ==" {
-		t.Fatalf("login seed = %q", sec.Data["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"])
+	var https []runner.GitHTTPSCredential
+	if err := json.Unmarshal(d[runner.EnvGitHTTPS], &https); err != nil || len(https) != 2 || https[1] != (runner.GitHTTPSCredential{Host: "*", Username: "bob", Token: "v-any"}) {
+		t.Fatalf("https = %+v, %v", https, err)
 	}
-	if _, ok := sec.Data["UNJAILED_API_KEY"]; ok {
-		t.Fatal("OpenClaude key projected into a claude session")
+	var ssh []runner.GitSSHKey
+	if err := json.Unmarshal(d[runner.EnvGitSSH], &ssh); err != nil || len(ssh) != 1 || ssh[0].Key != "v-ssh" {
+		t.Fatalf("ssh = %+v, %v", ssh, err)
 	}
-	if _, ok := sec.Data["unknown"]; ok {
+	if _, ok := d["unrelated"]; ok {
 		t.Fatal("unknown key projected")
 	}
 	if sec.Annotations[k8s.AnnotationGeneration] != "3" {
 		t.Fatalf("generation annotation = %v", sec.Annotations)
 	}
+	// A pick of its own wins over the default: the saved login, seeded.
+	s.AIAccount = "cl"
+	d = BuildSecret(s, testCfg(), "tok", testCredentials()).Data
+	if string(d["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"]) != base64.StdEncoding.EncodeToString([]byte("v-cl")) || string(d["AGENTS_OPERATOR_SEED_ACCOUNT_CLAUDE_LOGIN"]) != "cl" {
+		t.Fatalf("login seed = %v", d)
+	}
+	if _, ok := d["CLAUDE_CODE_OAUTH_TOKEN"]; ok {
+		t.Fatal("the default account projected next to the picked one")
+	}
 	// No user secret at all still yields a token.
-	sec = BuildSecret(s, testCfg(), "tok2", nil)
+	sec = BuildSecret(s, testCfg(), "tok2", UserCredentials{})
 	if len(sec.Data) != 1 || string(sec.Data["RUNNER_TOKEN"]) != "tok2" {
 		t.Fatalf("data = %v", sec.Data)
 	}
 }
 
-func TestBuildSecretScopesModelCredentials(t *testing.T) {
-	user := map[string][]byte{
-		store.CredAnthropicAPIKey:  []byte("sk-ant"),
-		store.CredAnthropicBaseURL: []byte("https://proxy"),
-		store.CredClaudeOAuthToken: []byte("sk-ant-oat01-x"),
-		store.CredOpenAIAPIKey:     []byte("sk-oai"),
-		store.CredClaudeLogin:      []byte(`{"a":1}`),
-		store.CredCodexLogin:       []byte(`{"c":1}`),
-		store.CredUnjailedAPIKey:   []byte("sk-uj"),
-		store.CredUnjailedBaseURL:  []byte("https://unjailedai.com/v1"),
-		store.CredGitHubToken:      []byte("ghp_x"),
-		store.CredGitSSHKey:        []byte("-----BEGIN"),
-		store.CredGitUserEmail:     []byte("a@b.c"),
+func TestBuildSecretScopesAIAccounts(t *testing.T) {
+	git := []string{"GH_TOKEN", runner.EnvGitHTTPS, runner.EnvGitSSH, "GIT_USER_EMAIL"}
+	keys := func(names ...string) []string {
+		out := []string{runner.EnvAIAccounts}
+		for _, n := range names {
+			out = append(out, runner.EnvAIKeyPrefix+n)
+		}
+		return out
 	}
-	git := []string{"GH_TOKEN", "GIT_SSH_KEY", "GIT_USER_EMAIL"}
 	for agent, want := range map[string][]string{
-		runner.AgentClaude:   {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"},
-		runner.AgentOpenCode: {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "UNJAILED_API_KEY", "UNJAILED_BASE_URL"},
-		runner.AgentCodex:    {"OPENAI_API_KEY", "AGENTS_OPERATOR_LOGIN_CODEX_LOGIN"},
-		runner.AgentShell: {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY",
-			"UNJAILED_API_KEY", "UNJAILED_BASE_URL",
-			"AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN", "AGENTS_OPERATOR_LOGIN_CODEX_LOGIN"},
+		runner.AgentClaude: {"CLAUDE_CODE_OAUTH_TOKEN"},
+		runner.AgentCodex:  {"OPENAI_API_KEY"}, // no default: the oldest account Codex can use
+		// Every provider account, each key under the account's name.
+		runner.AgentOpenCode: keys("ANTHROPIC", "OPENAI", "WORK_LITELLM", "UNJAILED"),
+		// The defaults in the CLIs' variables, plus every account with a key.
+		runner.AgentShell: append([]string{"CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY"},
+			keys("ANTHROPIC", "MAX_PLAN", "OPENAI", "WORK_LITELLM", "UNJAILED")...),
 		"some-future-agent": nil,
 	} {
 		s := testSession()
 		s.Agent = agent
-		data := BuildSecret(s, testCfg(), "tok", user).Data
+		data := BuildSecret(s, testCfg(), "tok", testCredentials()).Data
 		want = append(append([]string{"RUNNER_TOKEN"}, git...), want...)
 		got := make([]string, 0, len(data))
 		for k := range data {
@@ -125,6 +157,52 @@ func TestBuildSecretScopesModelCredentials(t *testing.T) {
 		slices.Sort(want)
 		if !slices.Equal(got, want) {
 			t.Errorf("%s: keys = %v, want %v", agent, got, want)
+		}
+	}
+
+	// The OpenCode description names each key's variable, never a value.
+	s := testSession()
+	s.Agent = runner.AgentOpenCode
+	data := BuildSecret(s, testCfg(), "tok", testCredentials()).Data
+	var described []runner.AIAccount
+	if err := json.Unmarshal(data[runner.EnvAIAccounts], &described); err != nil {
+		t.Fatal(err)
+	}
+	if len(described) != 4 || !reflect.DeepEqual(described[2], runner.AIAccount{ID: "llm", Name: "Work LiteLLM", Kind: store.AcctOpenAICompatible, BaseURL: "http://litellm/v1", Models: []string{"m"}, KeyEnv: runner.EnvAIKeyPrefix + "WORK_LITELLM"}) {
+		t.Fatalf("described = %+v", described)
+	}
+	if strings.Contains(string(data[runner.EnvAIAccounts]), "v-") {
+		t.Fatal("a key in the description")
+	}
+}
+
+func TestSelectAccount(t *testing.T) {
+	uc := testCredentials()
+	cases := []struct{ agent, pick, want string }{
+		{runner.AgentClaude, "", "oat"},     // the default
+		{runner.AgentClaude, "cl", "cl"},    // the session's pick
+		{runner.AgentClaude, "oai", "oat"},  // not a Claude account: the default
+		{runner.AgentClaude, "gone", "oat"}, // deleted: the default
+		{runner.AgentCodex, "", "oai"},      // no default: the oldest
+		{runner.AgentCodex, "cx", "cx"},
+		{runner.AgentOpenCode, "ant", ""}, // OpenCode signs in through providers
+	}
+	for _, c := range cases {
+		got := ""
+		if a := SelectAccount(c.agent, c.pick, uc.Accounts, uc.Profile); a != nil {
+			got = a.ID
+		}
+		if got != c.want {
+			t.Errorf("%s pick %q = %q, want %q", c.agent, c.pick, got, c.want)
+		}
+	}
+}
+
+func TestKeyEnv(t *testing.T) {
+	used := map[string]bool{}
+	for _, c := range [][2]string{{"Work LiteLLM", "WORK_LITELLM"}, {"work-litellm", "WORK_LITELLM_2"}, {"äöü", "ACCOUNT"}, {" ", "ACCOUNT_2"}} {
+		if got := keyEnv(c[0], used); got != runner.EnvAIKeyPrefix+c[1] {
+			t.Errorf("%q = %s", c[0], got)
 		}
 	}
 }

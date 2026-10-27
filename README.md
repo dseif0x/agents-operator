@@ -29,7 +29,7 @@ helm install agents-operator agents-operator/agents-operator -n agents-operator 
   --set ingress.host=agents-operator.example.com
 ```
 
-The NOTES print how to read the generated admin password. Set your model credentials on the account page: an API key, or for a Claude subscription the token printed by `claude setup-token` (run it inside any session; the token never expires between sessions). Logging in with the CLI inside a session and pressing *Save login* works too, and the hub keeps that copy current as the CLI rotates its tokens. Add a GitHub token there too and agents get `gh` plus HTTPS access to github.com for PRs, checks and Actions runs.
+The NOTES print how to read the generated admin password. Add your accounts on the account page, as many as you like: Anthropic and OpenAI API keys, Claude subscription tokens printed by `claude setup-token` (run it inside any session; the token never expires between sessions), OpenAI-compatible endpoints such as LiteLLM, and Unjailed keys. Claude Code and Codex sessions sign in with the account picked for the session or your default; OpenCode gets every key and endpoint as a provider under its name. Git accounts go there as well, one HTTPS token and one SSH key per host; with a token for github.com agents get `gh` plus HTTPS access to github.com for PRs, checks and Actions runs.
 
 ## Security model
 
@@ -37,7 +37,7 @@ Agents run with permission checks skipped, on real repos, with real credentials,
 
 - non-root (UID 1000), read-only root filesystem, all capabilities dropped, seccomp RuntimeDefault, no service account token unless a session opts into Kubernetes access (read-only, or read-only plus `edit` in namespaces its owner lists; or a sandbox: a vcluster of its own and only its kubeconfig), no host network/paths/privileged. There is no values flag to relax any of this.
 - default-deny NetworkPolicy: cluster DNS, and 443 and 22 outward to public addresses only (no private or link-local ranges, so neither the cluster, the nodes nor your LAN), inbound only from the hub. A session can open specific addresses on your network for its agent (local network access), within ranges the chart allows and never the cluster's own.
-- per-session random runner tokens rotated on every start; per-user credentials in Kubernetes Secrets, never echoed by the API. A session gets only the model credentials its agent uses; git credentials go to every agent unless the session turns them off, in which case the runner only clones with them and the agent can commit but not push.
+- per-session random runner tokens rotated on every start; per-user credentials in Kubernetes Secrets, never echoed by the API. A session gets only the AI accounts its agent uses (Claude Code and Codex exactly one); git credentials go to every agent unless the session turns them off, in which case the runner only clones with them and the agent can commit but not push.
 - the runner token, SSH key and saved-login seeds never sit in the agent's reach: they are moved out of PID 1's environment before it starts, and the runner, which holds them, is non-dumpable.
 - hub: distroless, cookie sessions (`HttpOnly; Secure; SameSite=Lax`), CSRF header on writes, Origin and Host allowlists, login rate limiting, argon2id.
 - namespace-scoped Role with exactly the verbs needed; cluster-wide rights only when namespace write access for sessions is turned on, and only the ones that needs.
