@@ -25,6 +25,8 @@ export interface TerminalHandle {
   links: () => string[];
   /** xterm's own selection when there is one. */
   selection: () => string;
+  /** The terminal's width in columns. */
+  cols: () => number;
 }
 
 const urlRE = /https?:\/\/[^\s"'<>`)\]]+/g;
@@ -184,6 +186,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       return [...seen];
     },
     selection: () => xterm.current?.getSelection() ?? "",
+    cols: () => xterm.current?.cols ?? 0,
   }));
 
   useEffect(() => {
