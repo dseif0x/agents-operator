@@ -17,6 +17,7 @@ type Memory struct {
 	credentials map[string]map[string]*Credential
 	accounts    []*Account
 	profiles    map[string]*Profile
+	chat        *memChatData
 	events      map[string][]*Event
 	usage       map[string]map[string]int
 	nextEvent   int64
@@ -29,6 +30,7 @@ func NewMemory() *Memory {
 		sessions:    map[string]*Session{},
 		credentials: map[string]map[string]*Credential{},
 		profiles:    map[string]*Profile{},
+		chat:        newMemChatData(),
 		events:      map[string][]*Event{},
 		usage:       map[string]map[string]int{},
 	}

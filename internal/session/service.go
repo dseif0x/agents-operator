@@ -88,6 +88,8 @@ type Service struct {
 	// the leader acts on what it sees (login export, idle stop, output
 	// timestamps). nil means always.
 	Leading func() bool
+	// Uplinks carries chat messages to running sessions (nil: none).
+	Uplinks ChatNotifier
 
 	live sync.Map // session id -> *Live
 	// loginSynced remembers, per running session, the credential-file
