@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useRef, useState } from "preact/hooks";
+import { useRef } from "preact/hooks";
 
 // TapButton acts on the touch itself. On phones a tap on a <button> moves
 // focus away from xterm's textarea, which closes the on-screen keyboard;
@@ -10,12 +10,19 @@ import { useRef, useState } from "preact/hooks";
 // work for mice. The buttons carry no tabindex: Safari focuses anything
 // with one on tap, and that blur is the one preventDefault cannot stop.
 // With `repeat`, holding the button fires it again and again (arrows,
-// backspace), like a real key.
+// backspace), like a real key. Only sideways movement (the bar scrolling)
+// cancels a tap: the phone keyboard sliding in or out moves the whole bar
+// up or down under a resting finger, and that must not swallow the key.
+const SCROLL_SLOP = 10;
 function TapButton(props: { onTap: () => void; repeat?: boolean; class?: string; title?: string; pressed?: boolean; children: ComponentChildren }) {
-  const start = useRef<{ x: number; y: number } | null>(null);
+  const start = useRef<{ x: number } | null>(null);
   const timer = useRef<number | undefined>(undefined);
   const ticker = useRef<number | undefined>(undefined);
   const repeated = useRef(false);
+  // The interval below outlives the render that started it: always call the
+  // current handler.
+  const onTap = useRef(props.onTap);
+  onTap.current = props.onTap;
   const stop = () => {
     clearTimeout(timer.current);
     clearInterval(ticker.current);
@@ -28,20 +35,20 @@ function TapButton(props: { onTap: () => void; repeat?: boolean; class?: string;
       aria-pressed={props.pressed}
       onTouchStart={(e) => {
         const t = e.touches[0];
-        start.current = t ? { x: t.clientX, y: t.clientY } : null;
+        start.current = t ? { x: t.clientX } : null;
         repeated.current = false;
         if (props.repeat) {
           timer.current = window.setTimeout(() => {
             repeated.current = true;
-            props.onTap();
-            ticker.current = window.setInterval(props.onTap, 60);
+            onTap.current();
+            ticker.current = window.setInterval(() => onTap.current(), 60);
           }, 350);
         }
       }}
       onTouchMove={(e) => {
         const s = start.current;
         const t = e.touches[0];
-        if (s && t && Math.hypot(t.clientX - s.x, t.clientY - s.y) > 10) stop();
+        if (s && t && Math.abs(t.clientX - s.x) > SCROLL_SLOP) stop();
       }}
       onTouchEnd={(e) => {
         stop();
@@ -52,9 +59,9 @@ function TapButton(props: { onTap: () => void; repeat?: boolean; class?: string;
           return;
         }
         const t = e.changedTouches[0];
-        if (!s || !t || Math.hypot(t.clientX - s.x, t.clientY - s.y) > 10) return;
+        if (!s || !t || Math.abs(t.clientX - s.x) > SCROLL_SLOP) return;
         e.preventDefault();
-        props.onTap();
+        onTap.current();
       }}
       onTouchCancel={() => {
         stop();
@@ -69,24 +76,20 @@ function TapButton(props: { onTap: () => void; repeat?: boolean; class?: string;
 }
 
 // Sticky key bar for phones: keys the on-screen keyboard lacks, two rows
-// deep. A Ctrl toggle applies to the next key sent (from the bar or typed).
-// Keys go straight to the session and never touch focus; tapping the
-// terminal is what opens the keyboard.
+// deep. Ctrl arms the terminal's modifier, which applies to the next key
+// from the bar or typed on the keyboard (Ctrl, then b on the keyboard, is
+// Ctrl+B). Keys go straight to the session and never touch focus: the
+// keyboard stays up or down exactly as it was. Re-focusing the terminal
+// after a key was what made arrow taps bring the keyboard up or drop it.
 export function KeyBar(props: {
+  /** Send one key; the terminal applies a pending Ctrl. */
   onKey: (seq: string) => void;
-  /** Whether the terminal had the keyboard up; read before the tap lands. */
-  terminalFocused: () => boolean;
-  /** Give focus back to the terminal, inside the tap, when a key took it. */
-  refocus: () => void;
+  ctrl: boolean;
+  onCtrl: () => void;
   onPaste: () => void;
   onSelect: () => void;
   onLinks: () => void;
 }) {
-  const [ctrl, setCtrl] = useState(false);
-  // Whether the keyboard was up when the finger came down. Should a tap
-  // still steal focus, giving it straight back inside the same gesture
-  // keeps the keyboard where it was.
-  const hadFocus = useRef(false);
   // The bar scrolls sideways by hand: preventing the default on touchstart
   // is what stops a tap from moving focus off the terminal on iOS (the
   // spec says no mouse events, hence no focus change, follow a cancelled
@@ -95,15 +98,7 @@ export function KeyBar(props: {
   const bar = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; left: number } | null>(null);
 
-  const send = (seq: string) => {
-    if (ctrl && seq.length === 1) {
-      const code = seq.toUpperCase().charCodeAt(0);
-      if (code >= 64 && code <= 95) seq = String.fromCharCode(code - 64);
-      setCtrl(false);
-    }
-    props.onKey(seq);
-    if (hadFocus.current) props.refocus();
-  };
+  const send = (seq: string) => props.onKey(seq);
 
   // [label, sequence, repeats while held]
   const keys: [string, string, boolean?][] = [
@@ -133,7 +128,6 @@ export function KeyBar(props: {
       onTouchStart={(e) => {
         e.stopPropagation();
         e.preventDefault();
-        hadFocus.current = props.terminalFocused();
         const t = e.touches[0];
         drag.current = t && bar.current ? { x: t.clientX, left: bar.current.scrollLeft } : null;
       }}
@@ -154,7 +148,7 @@ export function KeyBar(props: {
       <TapButton class="action" onTap={props.onLinks} title="Links on screen">
         Links
       </TapButton>
-      <TapButton class={ctrl ? "active" : ""} onTap={() => setCtrl(!ctrl)} pressed={ctrl} title="Apply Ctrl to the next key">
+      <TapButton class={props.ctrl ? "active" : ""} onTap={props.onCtrl} pressed={props.ctrl} title="Apply Ctrl to the next key, from the bar or the keyboard">
         Ctrl
       </TapButton>
       {keys.map(([label, seq, repeat]) => (

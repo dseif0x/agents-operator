@@ -45,6 +45,21 @@ const (
 	MsgExit  = "exit"  // {"t":"exit","code":0}
 	MsgLogin = "login" // {"t":"login","kind":"claude_login","data":"<base64>"} — reply to export_login
 	MsgError = "error" // {"t":"error","message":"..."}
+	// MsgDetached tells an attached client that another one took the
+	// session over; its connection is closed with CloseDetached right after.
+	MsgDetached = "detached" // {"t":"detached"}
+)
+
+// Single attach: one browser at a time drives the PTY (its size, its
+// input), so a phone and a desktop no longer fight over the terminal size.
+// A WebSocket to /ws with AttachParam=1 is an attachment and takes over from
+// the previous one; without it (the hub's own control connections) it
+// detaches nobody.
+const (
+	AttachParam = "attach"
+	// CloseDetached is the WebSocket close code of a detached client, passed
+	// through by the hub so the browser knows not to reconnect on its own.
+	CloseDetached = 4001
 )
 
 // Control is the JSON payload of every text frame.

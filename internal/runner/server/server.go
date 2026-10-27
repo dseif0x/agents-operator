@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +38,34 @@ type Server struct {
 	Log   *slog.Logger
 
 	clients atomic.Int64
+
+	// The attached client (see runner.AttachParam): detach closes it, and
+	// attachID tells a finishing connection whether it is still the one.
+	attachMu sync.Mutex
+	attachID uint64
+	detach   func()
+}
+
+// attach makes the calling connection the attached one and detaches the
+// previous attachment, if any. The returned release must run when the
+// connection ends.
+func (s *Server) attach(detach func()) (release func()) {
+	s.attachMu.Lock()
+	s.attachID++
+	id := s.attachID
+	prev := s.detach
+	s.detach = detach
+	s.attachMu.Unlock()
+	if prev != nil {
+		prev()
+	}
+	return func() {
+		s.attachMu.Lock()
+		if s.attachID == id {
+			s.detach = nil
+		}
+		s.attachMu.Unlock()
+	}
 }
 
 // Handler returns the HTTP handler for the runner.
@@ -116,6 +145,18 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	defer c.Close(websocket.StatusNormalClosure, "bye")
+
+	if r.URL.Query().Get(runner.AttachParam) == "1" {
+		release := s.attach(func() {
+			// Say why before closing, then end this connection's pumps.
+			dctx, dcancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = writeControl(dctx, c, runner.Control{T: runner.MsgDetached})
+			dcancel()
+			_ = c.Close(websocket.StatusCode(runner.CloseDetached), "attached elsewhere")
+			cancel()
+		})
+		defer release()
+	}
 
 	sub := s.Proc.Subscribe()
 	defer sub.Close()

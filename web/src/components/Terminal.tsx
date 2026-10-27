@@ -10,6 +10,10 @@ import { currentTheme, terminalTheme, type Theme } from "../theme";
 
 export interface TerminalHandle {
   send: (data: string) => void;
+  /** Send a key from the key bar; a pending Ctrl applies to a single character. */
+  sendKey: (seq: string) => void;
+  /** Arm or disarm Ctrl for the next key, from the bar or the keyboard. */
+  toggleCtrl: () => void;
   /** Send clipboard-style text as if typed (bracketed paste when the app asked for it). */
   paste: (text: string) => void;
   focus: () => void;
@@ -49,7 +53,36 @@ function bufferText(term: XTerm): string {
 
 interface Props {
   sessionId: string;
+  /** Ctrl armed or released (to draw the key bar's Ctrl button). */
+  onCtrlChange?: (on: boolean) => void;
 }
+
+/**
+ * Ctrl applied to one typed character: letters and @[\]^_ map to C0
+ * control codes (Ctrl+B = 0x02), space and 2 to NUL, ? to DEL. Anything
+ * else passes unchanged.
+ */
+function withCtrl(ch: string): string {
+  if (ch === " " || ch === "2") return "\x00";
+  if (ch === "?") return "\x7f";
+  const code = ch.toUpperCase().charCodeAt(0);
+  return code >= 64 && code <= 95 ? String.fromCharCode(code - 64) : ch;
+}
+
+// OSC 52 writes (a TUI copying its selection) reach the system clipboard;
+// reads are refused. A read is a program asking for the clipboard with no
+// tap behind it, which on iOS pops the system "Allow Paste" prompt out of
+// nowhere. Pasting is the Paste button's job.
+const writeOnlyClipboard = {
+  readText: () => "",
+  writeText: async (_sel: unknown, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      /* no permission or no focus: nothing to do */
+    }
+  },
+};
 
 /** Phones and tablets: no hover, coarse pointer. */
 const touchDevice = () => matchMedia("(hover: none) and (pointer: coarse)").matches;
@@ -105,19 +138,41 @@ async function reflowReplay(bytes: Uint8Array, cols: number, rows: number): Prom
 
 // Terminal wraps xterm.js and a reconnecting WebSocket to the hub. Binary
 // frames are PTY bytes; text frames are JSON control messages.
-export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ sessionId }, ref) {
+export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ sessionId, onCtrlChange }, ref) {
   const el = useRef<HTMLDivElement>(null);
   const ws = useRef<WebSocket | null>(null);
   const xterm = useRef<XTerm | null>(null);
   const fit = useRef<FitAddon | null>(null);
-  const [status, setStatus] = useState<"connecting" | "open" | "closed">("connecting");
+  // "detached": another browser attached this session; only "Move back
+  // here" reconnects (an automatic retry would steal it back, forever).
+  const [status, setStatus] = useState<"connecting" | "open" | "closed" | "detached">("connecting");
   const [exit, setExit] = useState<number | null>(null);
   const [retryIn, setRetryIn] = useState(0);
+  const reattach = useRef<() => void>(() => undefined);
+  // Ctrl lives here, not in the key bar: letters typed on the phone's own
+  // keyboard arrive through xterm's onData and must see it too (Ctrl+B).
+  const ctrl = useRef(false);
+  const ctrlListener = useRef(onCtrlChange);
+  ctrlListener.current = onCtrlChange;
+  const setCtrl = (on: boolean) => {
+    if (ctrl.current === on) return;
+    ctrl.current = on;
+    ctrlListener.current?.(on);
+  };
+  /** Apply a pending Ctrl to a single character, and release it. */
+  const applyCtrl = (data: string) => {
+    if (!ctrl.current || data.length !== 1) return data;
+    setCtrl(false);
+    return withCtrl(data);
+  };
+  const sendRaw = (data: string) => {
+    if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(new TextEncoder().encode(data));
+  };
 
   useImperativeHandle(ref, () => ({
-    send: (data: string) => {
-      if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(new TextEncoder().encode(data));
-    },
+    send: sendRaw,
+    sendKey: (seq: string) => sendRaw(applyCtrl(seq)),
+    toggleCtrl: () => setCtrl(!ctrl.current),
     paste: (text: string) => xterm.current?.paste(text),
     focus: () => xterm.current?.focus(),
     hasFocus: () => !!xterm.current?.textarea && document.activeElement === xterm.current.textarea,
@@ -148,8 +203,9 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     term.loadAddon(new WebLinksAddon());
     // OSC 52: TUIs like Claude Code copy their own selections by asking the
     // terminal to set the clipboard ("sent N chars via OSC 52"). Without
-    // this addon xterm drops that request on the floor.
-    term.loadAddon(new ClipboardAddon());
+    // this addon xterm drops that request on the floor. Write-only: see
+    // writeOnlyClipboard.
+    term.loadAddon(new ClipboardAddon(undefined, writeOnlyClipboard));
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
     term.open(el.current);
@@ -251,19 +307,59 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     };
     host.addEventListener("click", onClick);
 
+    // Fit the grid to the box. Cell metrics change when the WebGL renderer
+    // takes over, when the web font arrives and when the page is zoomed;
+    // none of those resizes the box, so each refits explicitly. Bursts
+    // (a window drag, the phone keyboard sliding) are coalesced: every fit
+    // that changes the grid is a SIGWINCH, and a TUI repainting dozens of
+    // times a second leaves garbage behind.
+    let fitTimer: number | undefined;
+    let disposed = false;
+    const fitNow = () => {
+      clearTimeout(fitTimer);
+      if (disposed || !host.isConnected || host.clientWidth === 0 || host.clientHeight === 0) return; // hidden: keep the old size
+      try {
+        fitAddon.fit();
+      } catch {
+        /* renderer not ready yet */
+      }
+    };
+    const fitSoon = () => {
+      clearTimeout(fitTimer);
+      fitTimer = window.setTimeout(fitNow, 80);
+    };
+
     // WebGL renderer with a canvas/DOM fallback when the context is lost or unavailable.
     import("@xterm/addon-webgl")
       .then(({ WebglAddon }) => {
+        if (disposed) return;
         try {
           const webgl = new WebglAddon();
-          webgl.onContextLoss(() => webgl.dispose());
+          webgl.onContextLoss(() => {
+            webgl.dispose();
+            fitSoon();
+          });
           term.loadAddon(webgl);
         } catch {
           /* DOM renderer stays */
         }
+        fitSoon();
       })
       .catch(() => undefined);
-    fitAddon.fit();
+    fitNow();
+    document.fonts?.ready.then(fitSoon).catch(() => undefined);
+    // Browser zoom changes devicePixelRatio, and with it the cell size.
+    let dprQuery: MediaQueryList | null = null;
+    const onDpr = () => {
+      fitSoon();
+      watchDpr();
+    };
+    const watchDpr = () => {
+      dprQuery?.removeEventListener("change", onDpr);
+      dprQuery = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      dprQuery.addEventListener("change", onDpr);
+    };
+    watchDpr();
     xterm.current = term;
     fit.current = fitAddon;
 
@@ -358,6 +454,10 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
       prime();
     }
 
+    // Detached by another browser: no automatic reconnects at all (a retry
+    // or a returning tab would take the session back, and the two devices
+    // would trade it forever). Only reattach() connects again.
+    let detached = false;
     const connect = () => {
       if (closed) return;
       setStatus("connecting");
@@ -375,7 +475,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
         // terminal, not just a cleared screen, so modes left over from
         // before (the alternate screen, mouse reporting) do not apply to it.
         term.reset();
-        fitAddon.fit();
+        fitNow();
         sendResize();
         // On a phone a focus outside a tap leaves the textarea focused with
         // the keyboard closed, which then needs two taps to open it.
@@ -396,6 +496,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
         try {
           const m = JSON.parse(ev.data as string) as { t: string; code?: number; cols?: number; rows?: number; scrollback?: boolean; message?: string };
           if (m.t === "exit") setExit(m.code ?? 0);
+          else if (m.t === "detached") detached = true;
           else if (m.t === "hello") {
             setExit(null);
             replayAt = m.scrollback && m.cols && m.rows && (m.cols !== term.cols || m.rows !== term.rows) ? { cols: m.cols, rows: m.rows } : null;
@@ -404,11 +505,17 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
           /* ignore */
         }
       };
-      s.onclose = () => {
+      s.onclose = (ev) => {
         if (socket !== s) return;
         socket = null;
         ws.current = null;
         if (closed) return;
+        if (detached || ev.code === 4001) {
+          detached = true;
+          setCtrl(false);
+          setStatus("detached");
+          return;
+        }
         setStatus("closed");
         const wait = backoff;
         backoff = Math.min(backoff * 2, 30000);
@@ -428,7 +535,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     };
 
     const onData = term.onData((d) => {
-      if (socket?.readyState === WebSocket.OPEN) socket.send(encoder.encode(d));
+      if (socket?.readyState === WebSocket.OPEN) socket.send(encoder.encode(applyCtrl(d)));
     });
     const onBinary = term.onBinary((d) => {
       if (socket?.readyState === WebSocket.OPEN) {
@@ -439,8 +546,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     });
     const onResize = term.onResize(sendResize);
 
-    const refit = () => fitAddon.fit();
-    const ro = new ResizeObserver(refit);
+    const ro = new ResizeObserver(fitSoon);
     ro.observe(el.current);
     const onTheme = (e: Event) => {
       term.options.theme = terminalTheme((e as CustomEvent<Theme>).detail);
@@ -448,18 +554,29 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
     addEventListener("agents-operator:theme", onTheme);
     // Reconnect promptly when the tab comes back.
     const onVisible = () => {
-      if (document.visibilityState === "visible" && !socket && !closed) {
+      if (document.visibilityState === "visible" && !socket && !closed && !detached) {
         clearTimeout(retryTimer);
         clearInterval(countdown);
         connect();
       }
     };
     document.addEventListener("visibilitychange", onVisible);
+    // "Move back here": take the session over again.
+    reattach.current = () => {
+      if (closed || socket) return;
+      detached = false;
+      backoff = 1000;
+      connect();
+    };
 
     connect();
 
     return () => {
       closed = true;
+      disposed = true;
+      clearTimeout(fitTimer);
+      dprQuery?.removeEventListener("change", onDpr);
+      reattach.current = () => undefined;
       clearTimeout(retryTimer);
       clearInterval(countdown);
       ro.disconnect();
@@ -491,9 +608,18 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal({ se
 
   return (
     <>
-      {status !== "open" && (
+      {(status === "connecting" || status === "closed") && (
         <div class="banner">
           {status === "connecting" ? "Connecting…" : `Disconnected. Reconnecting${retryIn ? ` in ${retryIn}s` : "…"}`}
+        </div>
+      )}
+      {status === "detached" && (
+        <div class="overlay detached">
+          <div style="font-size:18px">Opened somewhere else</div>
+          <div>This session is attached in another window or on another device. Only one place drives the terminal at a time.</div>
+          <button class="btn primary" onClick={() => reattach.current()}>
+            Move back here
+          </button>
         </div>
       )}
       {exit !== null && status === "open" && (

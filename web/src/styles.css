@@ -534,6 +534,35 @@ details summary {
   color: var(--accent);
 }
 
+/* paste fallback sheet: 16px so iOS does not zoom in on focus */
+.sheet .hint {
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+.sheet .paste-field {
+  flex: 1;
+  /* auto, not the global 100%: with the margins that ran off the screen */
+  width: auto;
+  align-self: stretch;
+  margin: 0 12px 12px;
+  padding: 10px;
+  font-family: var(--mono);
+  font-size: 16px;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  resize: none;
+}
+
+/* the session is attached in another window: opaque, so the stale screen
+   underneath does not look live */
+.overlay.detached {
+  background: var(--bg);
+  color: var(--fg);
+}
+
 /* selectable text / links sheet over the terminal */
 .sheet {
   position: absolute;
