@@ -42,9 +42,12 @@ Its weak spot is a lesson. A reported bug had bots that should have stayed quiet
   - **Codex:** a section of the `~/.codex/AGENTS.md` the runner already generates.
   - **OpenCode:** the existing instructions file, or the build agent's prompt in "replace" mode.
   - **Shell:** ignored.
-- **Chat identity:** each session gets a **handle** (the name used in `@mentions`, defaulting to the session name made mention-safe: `fix-login-bug` → `@fix-login-bug`), plus an optional emoji or colour for its avatar in the chat.
+- **Chat identity:** each session gets an **immutable handle**, generated when it is created: a Docker-style word pair such as `eager_turing` or `quirky_lovelace` (an adjective plus a well-known scientist or engineer, as Docker names containers).
+  - **Unique and fixed:** handles are unique per owner and never change, not even when the session is renamed, so old messages always point at the right agent. Existing sessions get one in the migration that adds the column.
+  - **What it's for:** the handle is what a mention stores and what agents type (`@eager_turing`). People never have to remember it (see the UI).
+  - **Avatar:** an optional emoji or colour for the session's avatar in the chat.
 - **The chat tools:** the generated AGENTS.md has a short section on them (how to read, post, mention and reply; that not answering is fine), so the persona can stay about character and role.
-- **Restarts:** changing the persona or handle takes effect on the next start, like every other setting.
+- **Restarts:** changing the persona takes effect on the next start, like every other setting.
 
 ### 2. Chats
 
@@ -53,7 +56,7 @@ Its weak spot is a lesson. A reported bug had bots that should have stayed quiet
   - **author:** the owner or a session;
   - **text:** Markdown, at most 32 KB;
   - **attachments:** images, at most 10 MB each and 5 per message;
-  - **mentions:** session ids, resolved by the hub from `@handle`, or "everyone" for `@everyone`;
+  - **mentions:** session ids, resolved by the hub from `@handle`, or "everyone" for `@everyone`. The text keeps `@handle` as written, so it stays unambiguous after renames;
   - **reply-to:** optionally, the message this one answers.
 - **Context is fetched, not pushed.** The description, the members and their personas are not sent along with every message. An agent looks them up with `chat_info` when it wants to know, the same way the owner opens the chat's info panel. Messages stay short, and an agent that already knows the group doesn't pay for it again.
 
@@ -73,7 +76,7 @@ A stdio MCP server, registered by the runner with the session's CLI:
 | Tool | What it does |
 |---|---|
 | `chats_list` | the chats this session is in, with unread counts |
-| `chat_info(chat)` | the chat's description and members: handle, persona, whether it is running and what it is doing right now |
+| `chat_info(chat)` | the chat's description and members: session name, handle (what to type to mention it), persona, whether it is running and what it is doing right now |
 | `chat_read(chat, since?, limit?)` | messages, oldest first, with author, mentions and reply-to; images come as file paths (see below) |
 | `chat_send(chat, text, reply_to?, images?)` | post Markdown, optionally as a reply and with images given as paths in the workspace; `@handle` and `@everyone` in the text mention |
 
@@ -112,26 +115,26 @@ That's all for the first version. The task board and session-control tools from 
 
 - **Layout,** like Discord or WhatsApp:
   - **Chat list** (left, or the first screen on a phone): chats with the last message, an unread badge, and a "needs you" marker when a member waits for permission.
-  - **Chat view:** messages grouped by author with avatar, handle and time.
+  - **Chat view:** messages grouped by author with avatar, **session name** and time. The handle shows on hover or tap. A mention renders as a chip with the session's current name (`@eager_turing` → **@fix-login-bug**), so the chat reads naturally while the stored text stays stable.
     - **Replies** show a quote of the message they answer; tapping it scrolls to the original.
     - **Markdown** is rendered with code blocks, tables, lists and links, using `marked` plus `DOMPurify`, with syntax highlighting for code.
     - **Images** appear inline and open full size on tap.
     - **Activity:** "@reviewer is working…" appears while an agent handles a message, and "queued" shows on messages not yet delivered.
   - **Input:**
-    - Markdown text with `@` autocomplete over the chat's handles and `@everyone`.
+    - Markdown text with `@` autocomplete matching both session names and handles: typing `@fix` suggests "fix-login-bug · eager_turing". Picking one inserts `@eager_turing`, which the input shows as a chip with the session name. `@everyone` is in the list too.
     - **Reply** on any message (hover button, or swipe on a phone) quotes it above the input.
     - A hint under the box says who the message goes to: "to everyone, whoever has something to say", "to @reviewer", or "everyone must answer".
     - Images by paste, drag and drop, or the file picker (phone camera included).
     - Enter sends; Shift+Enter starts a new line.
   - **Info panel:** the description (editable), members with persona (link to edit it), current activity and a link to the terminal, add/remove members, mute the chat or a member.
-- **Navigation:** clicking an agent's handle opens its terminal. The session page gets a "Chats" drawer tab listing the session's chats.
+- **Navigation:** clicking an agent's name or mention chip opens its terminal. The session page gets a "Chats" drawer tab listing the session's chats.
 - **Live updates** come over the existing SSE stream (new messages, read state, member activity).
 - **Images** are served by the hub from `/api/v1/chats/{id}/attachments/{aid}`, behind the usual login cookie.
 
 ### 7. Data model
 
 ```sql
-sessions           + persona text, handle text, avatar text           -- handle unique per owner
+sessions           + persona text, handle text NOT NULL, avatar text  -- handle generated at create, never updated; unique per owner
 chats              (id, owner_id, name, description, muted, created_at)
 chat_members       (chat_id, session_id, muted, added_at)
 chat_messages      (id, chat_id, author_session /* null = owner */, text, mentions jsonb /* session ids, or ["everyone"] */, reply_to, created_at)
@@ -151,7 +154,7 @@ Messages are kept until the chat is deleted. Deleting a session removes it from 
 - `GET /chats/{id}/messages?before=&limit=` (paged) and `POST /chats/{id}/messages` (multipart: text, `reply_to` and images).
 - `GET /chats/{id}/attachments/{aid}`.
 - `POST /chats/{id}/read`.
-- The persona, handle and avatar are new fields on session create and edit.
+- The persona and avatar are new fields on session create and edit; the handle is generated by the hub and read-only in the API.
 
 ### 9. Security
 
@@ -162,7 +165,7 @@ Messages are kept until the chat is deleted. Deleting a session removes it from 
 
 ## Phases
 
-1. **Personas and handles:** the session form field, applied to Claude Code, Codex and OpenCode. Useful on its own.
+1. **Personas and handles:** the persona field on the session form, applied to Claude Code, Codex and OpenCode; handles generated for new and existing sessions and shown on the session page. Useful on its own.
 2. **Chats with text:** data model, API, chat UI with Markdown, mentions, replies and `@everyone`, uplink, `agent-runner mcp` (`chats_list`, `chat_info`, `chat_read`, `chat_send`), idle delivery, muting.
 3. **Images:** upload and inline display in the UI, attachments over the uplink, image paths both ways.
 4. **Polish:** Claude Code `Stop`-hook delivery while busy, unread badges and browser notifications, chat templates ("implementer + reviewer + tester" with personas and a description).
@@ -177,13 +180,14 @@ Each phase ships on its own. Sessions that are in no chat behave exactly as toda
   - delivery: idle → typed prompt, busy → queued, permission → nothing typed, several messages batched into one prompt;
   - image path checks: outside the workspace refused, wrong type refused.
 - **Hub:**
+  - handles: generated unique per owner (retry on a clash), unchanged by renames and edits, backfilled for existing sessions;
   - addressing: untagged → everyone with "decide yourself", mentions and replies → only those, `@everyone` → everyone with "answer", never to the author, unknown handles left as text;
   - the delivery queue for stopped sessions;
   - muting: a muted member's messages are not delivered and it receives nothing; a muted chat delivers nothing;
   - membership checks on the uplink;
   - attachment quota;
   - Markdown sanitizing (a test corpus of XSS payloads rendered through the UI's pipeline).
-- **UI:** Playwright against the built UI with a mocked API: sending, replying, `@` autocomplete, the "goes to" hint, Markdown and image rendering, phone layout.
+- **UI:** Playwright against the built UI with a mocked API: sending, replying, `@` autocomplete by name and by handle, mention chips showing the session name, the "goes to" hint, Markdown and image rendering, phone layout.
 - **End to end in `testing`:** two Claude Code sessions with personas in one chat.
   - An untagged question that only one of them should answer.
   - A reply to one of them.
@@ -194,5 +198,4 @@ Each phase ships on its own. Sessions that are in no chat behave exactly as toda
 
 ## Open questions
 
-1. **Handles:** session name by default, editable. Or should handles be fixed once set, so old messages keep pointing at the right agent after a rename?
-2. **Persona vs. system prompt:** fold the existing OpenCode system prompt and its "replace" mode into the persona, or keep "replace" as an advanced OpenCode-only option?
+1. **Persona vs. system prompt:** fold the existing OpenCode system prompt and its "replace" mode into the persona, or keep "replace" as an advanced OpenCode-only option?
