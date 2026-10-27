@@ -136,6 +136,11 @@ func run() error {
 	}.Defaults()
 	proxy := &term.Proxy{Resolver: &reconcile.Resolver{Informers: inf, Namespace: cfg.Namespace}, OriginPatterns: cfg.AllowedHosts, Log: log}
 	creds := &session.Credentials{Store: st, CS: cs, Namespace: cfg.Namespace}
+	// Credentials saved before accounts existed become accounts; a user it
+	// fails for keeps the old slots and is tried again on the next start.
+	if err := creds.MigrateCredentials(ctx, log); err != nil {
+		log.Error("moving credentials to accounts failed for some users", "err", err)
+	}
 	svc := &session.Service{
 		Store: st, Term: proxy, Broker: session.NewBroker(), Creds: creds, GitHub: &github.Client{}, IdleStopAfter: cfg.IdleStopAfter, Log: log,
 		Defaults: session.Defaults{

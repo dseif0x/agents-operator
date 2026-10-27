@@ -5,11 +5,9 @@ package reconcile
 
 import (
 	"cmp"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -167,65 +165,11 @@ func BuildPVC(s *store.Session, cfg Config) *corev1.PersistentVolumeClaim {
 	return pvc
 }
 
-// credentialEnv maps user credential kinds to the env var the runner reads.
-var credentialEnv = map[string]string{
-	store.CredAnthropicAPIKey:  "ANTHROPIC_API_KEY",
-	store.CredAnthropicBaseURL: "ANTHROPIC_BASE_URL",
-	store.CredClaudeOAuthToken: runner.EnvClaudeOAuthToken,
-	store.CredOpenAIAPIKey:     "OPENAI_API_KEY",
-	store.CredUnjailedAPIKey:   runner.EnvUnjailedAPIKey,
-	store.CredUnjailedBaseURL:  runner.EnvUnjailedBaseURL,
-	store.CredGitSSHKey:        runner.EnvGitSSHKey,
-	store.CredGitHTTPSToken:    runner.EnvGitHTTPSToken,
-	store.CredGitHubToken:      runner.EnvGitHubToken,
-	store.CredGitUserName:      runner.EnvGitUserName,
-	store.CredGitUserEmail:     runner.EnvGitUserEmail,
-}
-
-// modelCredentials are the credential kinds that sign in to a model
-// provider. A session only gets the ones its agent uses (agentCredentials);
-// git credentials and identity go to every session.
-var modelCredentials = map[string]bool{
-	store.CredAnthropicAPIKey: true, store.CredAnthropicBaseURL: true, store.CredClaudeOAuthToken: true,
-	store.CredOpenAIAPIKey: true, store.CredClaudeLogin: true, store.CredCodexLogin: true,
-	store.CredUnjailedAPIKey: true, store.CredUnjailedBaseURL: true,
-}
-
-// agentCredentials lists the model credentials each agent's CLI reads, so a
-// prompt-injected agent cannot read the keys of providers it never talks
-// to. The shell has no model behind it and gets all of them, for running
-// any CLI by hand. An agent missing here gets none.
-var agentCredentials = map[string][]string{
-	runner.AgentClaude:   {store.CredAnthropicAPIKey, store.CredAnthropicBaseURL, store.CredClaudeOAuthToken, store.CredClaudeLogin},
-	runner.AgentOpenCode: {store.CredAnthropicAPIKey, store.CredAnthropicBaseURL, store.CredOpenAIAPIKey, store.CredUnjailedAPIKey, store.CredUnjailedBaseURL},
-	runner.AgentCodex:    {store.CredOpenAIAPIKey, store.CredCodexLogin},
-}
-
-// credentialFor reports whether a session running agent gets credential kind.
-func credentialFor(agent, kind string) bool {
-	if !modelCredentials[kind] || agent == runner.AgentShell {
-		return true
-	}
-	return slices.Contains(agentCredentials[agent], kind)
-}
-
 // BuildSecret returns the per-session Secret: the runner token plus the
-// user's credentials projected as env, limited to the model credentials
-// the session's agent uses. userSecret is the data of the per-user Secret
-// (may be nil).
-func BuildSecret(s *store.Session, cfg Config, token string, userSecret map[string][]byte) *corev1.Secret {
+// owner's accounts the session gets, as env (credentialEnv).
+func BuildSecret(s *store.Session, cfg Config, token string, uc UserCredentials) *corev1.Secret {
 	data := map[string][]byte{runner.EnvRunnerToken: []byte(token)}
-	for kind, env := range credentialEnv {
-		if v, ok := userSecret[kind]; ok && len(v) > 0 && credentialFor(s.Agent, kind) {
-			data[env] = v
-		}
-	}
-	// Saved CLI logins are seeded on first boot; the runner expects base64.
-	for kind := range runner.LoginFiles {
-		if v, ok := userSecret[kind]; ok && len(v) > 0 && credentialFor(s.Agent, kind) {
-			data[runner.EnvSeedPrefix+strings.ToUpper(kind)] = []byte(base64.StdEncoding.EncodeToString(v))
-		}
-	}
+	credentialEnv(data, s, uc)
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: ObjectName(s.ID), Namespace: cfg.Namespace, Labels: Labels(s),

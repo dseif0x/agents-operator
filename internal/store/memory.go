@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"maps"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -13,6 +15,8 @@ type Memory struct {
 	users       map[string]*User
 	sessions    map[string]*Session
 	credentials map[string]map[string]*Credential
+	accounts    []*Account
+	profiles    map[string]*Profile
 	events      map[string][]*Event
 	usage       map[string]map[string]int
 	nextEvent   int64
@@ -24,6 +28,7 @@ func NewMemory() *Memory {
 		users:       map[string]*User{},
 		sessions:    map[string]*Session{},
 		credentials: map[string]map[string]*Credential{},
+		profiles:    map[string]*Profile{},
 		events:      map[string][]*Event{},
 		usage:       map[string]map[string]int{},
 	}
@@ -56,6 +61,8 @@ func (r memRepoUsage) List(_ context.Context, userID string) (map[string]int, er
 func (m *Memory) Users() Users             { return memUsers{m} }
 func (m *Memory) Sessions() Sessions       { return memSessions{m} }
 func (m *Memory) Credentials() Credentials { return memCredentials{m} }
+func (m *Memory) Accounts() Accounts       { return memAccounts{m} }
+func (m *Memory) Profiles() Profiles       { return memProfiles{m} }
 func (m *Memory) Events() Events           { return memEvents{m} }
 func (m *Memory) Ping(context.Context) error {
 	return nil
@@ -190,6 +197,7 @@ func (r memSessions) Update(_ context.Context, s *Session) (*Session, error) {
 	cur.NoGitCredentials = s.NoGitCredentials
 	cur.Egress = append([]string{}, s.Egress...)
 	cur.SystemPrompt, cur.SystemPromptReplace, cur.AgentDefinition = s.SystemPrompt, s.SystemPromptReplace, s.AgentDefinition
+	cur.AIAccount = s.AIAccount
 	cur.UpdatedAt = time.Now()
 	return copySession(cur), nil
 }
@@ -294,6 +302,144 @@ func (r memCredentials) List(_ context.Context, userID string) ([]*Credential, e
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Kind < out[j].Kind })
 	return out, nil
+}
+
+func (r memCredentials) UserIDs(context.Context) ([]string, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	var out []string
+	for id, m := range r.m.credentials {
+		if len(m) > 0 {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+type memAccounts struct{ m *Memory }
+
+func copyAccount(a *Account) *Account {
+	c := *a
+	c.Models = append([]string{}, a.Models...)
+	return &c
+}
+
+// conflicts mirrors the unique indexes: one git account per user, kind and
+// host; AI account names unique per user.
+func (r memAccounts) conflicts(a *Account) bool {
+	for _, o := range r.m.accounts {
+		if o.UserID != a.UserID || o.ID == a.ID {
+			continue
+		}
+		if GitAccountKind(a.Kind) && o.Kind == a.Kind && strings.EqualFold(o.Host, a.Host) {
+			return true
+		}
+		if !GitAccountKind(a.Kind) && !GitAccountKind(o.Kind) && strings.EqualFold(o.Name, a.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r memAccounts) Create(_ context.Context, a *Account) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	if a.ID == "" {
+		a.ID = NewID()
+	}
+	if r.conflicts(a) {
+		return ErrConflict
+	}
+	// Strictly increasing, so List keeps creation order within a test.
+	now := time.Now()
+	if n := len(r.m.accounts); n > 0 && !now.After(r.m.accounts[n-1].CreatedAt) {
+		now = r.m.accounts[n-1].CreatedAt.Add(time.Microsecond)
+	}
+	a.CreatedAt, a.UpdatedAt = now, now
+	r.m.accounts = append(r.m.accounts, copyAccount(a))
+	return nil
+}
+
+func (r memAccounts) Update(_ context.Context, a *Account) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	for _, o := range r.m.accounts {
+		if o.UserID == a.UserID && o.ID == a.ID {
+			if r.conflicts(&Account{ID: a.ID, UserID: a.UserID, Kind: o.Kind, Name: a.Name, Host: a.Host}) {
+				return ErrConflict
+			}
+			o.Name, o.Host, o.BaseURL, o.Username, o.Models = a.Name, a.Host, a.BaseURL, a.Username, append([]string{}, a.Models...)
+			o.UpdatedAt = time.Now()
+			if !o.UpdatedAt.After(o.CreatedAt) {
+				o.UpdatedAt = o.CreatedAt.Add(time.Microsecond)
+			}
+			*a = *copyAccount(o)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (r memAccounts) Get(_ context.Context, userID, id string) (*Account, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	for _, o := range r.m.accounts {
+		if o.UserID == userID && o.ID == id {
+			return copyAccount(o), nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (r memAccounts) List(_ context.Context, userID string) ([]*Account, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	var out []*Account
+	for _, o := range r.m.accounts {
+		if o.UserID == userID {
+			out = append(out, copyAccount(o))
+		}
+	}
+	return out, nil
+}
+
+func (r memAccounts) Delete(_ context.Context, userID, id string) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	for i, o := range r.m.accounts {
+		if o.UserID == userID && o.ID == id {
+			r.m.accounts = append(r.m.accounts[:i], r.m.accounts[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+type memProfiles struct{ m *Memory }
+
+func (r memProfiles) Get(_ context.Context, userID string) (*Profile, error) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	p := Profile{UserID: userID, Defaults: map[string]string{}}
+	if cur := r.m.profiles[userID]; cur != nil {
+		p = *cur
+		p.Defaults = maps.Clone(cur.Defaults)
+	}
+	return &p, nil
+}
+
+func (r memProfiles) Put(_ context.Context, p *Profile) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	c := *p
+	c.Defaults = maps.Clone(p.Defaults)
+	if c.Defaults == nil {
+		c.Defaults = map[string]string{}
+	}
+	c.UpdatedAt = time.Now()
+	r.m.profiles[p.UserID] = &c
+	return nil
 }
 
 type memEvents struct{ m *Memory }

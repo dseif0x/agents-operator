@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -144,6 +145,11 @@ type CreateRequest struct {
 	// up for the mode.
 	K8sAccess     string   `json:"k8s_access"`
 	K8sNamespaces []string `json:"k8s_namespaces"`
+	// AIAccount is the account a Claude Code or Codex session signs in
+	// with ("" = the owner's default for the agent). Other agents refuse
+	// it: OpenCode gets every provider account, the shell every account.
+	// On an edit, absent keeps the current value.
+	AIAccount *string `json:"ai_account"`
 }
 
 // MaxK8sNamespaces caps the namespaces a session may write to.
@@ -292,10 +298,19 @@ var envKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var reservedEnv = map[string]bool{
 	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvAgentGitCredentials: true, runner.EnvRepos: true,
 	runner.EnvWorkspace: true, runner.EnvListen: true, "HOME": true, "PATH": true,
-	runner.EnvGitSSHKey: true, runner.EnvGitHTTPSToken: true, runner.EnvGitHubToken: true,
+	runner.EnvGitSSH: true, runner.EnvGitHTTPS: true, runner.EnvGitHubToken: true, runner.EnvAIAccounts: true,
+	runner.EnvGitUserName: true, runner.EnvGitUserEmail: true, runner.EnvPrivateFile: true,
 	runner.EnvK8sAccess: true, runner.EnvK8sNamespaces: true, runner.EnvEgress: true,
 	runner.EnvSandboxNamespace: true, runner.EnvSandboxHost: true, runner.EnvSandboxSecurity: true,
 	runner.EnvSystemPrompt: true, runner.EnvSystemPromptMode: true, runner.EnvAgentDefinition: true, runner.EnvAgentDefinitionName: true,
+}
+
+// reservedEnvPrefixes start variables the hub sets that cannot be
+// overridden per session either: login seeds and account keys.
+var reservedEnvPrefixes = []string{runner.EnvSeedPrefix, runner.EnvSeedAccountPrefix, runner.EnvAIKeyPrefix}
+
+func reservedEnvKey(k string) bool {
+	return reservedEnv[k] || slices.ContainsFunc(reservedEnvPrefixes, func(p string) bool { return strings.HasPrefix(k, p) })
 }
 
 // MaxRepos caps the repositories per session.
@@ -407,7 +422,7 @@ func (s *Service) validate(req *CreateRequest) ([]store.Repo, error) {
 		}
 	}
 	for k := range req.Env {
-		if !envKeyRE.MatchString(k) || reservedEnv[k] {
+		if !envKeyRE.MatchString(k) || reservedEnvKey(k) {
 			return nil, &ValidationError{"invalid or reserved env var " + k}
 		}
 	}
@@ -486,6 +501,13 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 	if err := s.checkSandboxHost(ctx, "", req); err != nil {
 		return nil, err
 	}
+	aiAccount := ""
+	if req.AIAccount != nil {
+		aiAccount = *req.AIAccount
+	}
+	if err := s.checkAIAccount(ctx, owner.ID, req.Agent, aiAccount); err != nil {
+		return nil, err
+	}
 	autonomous := s.Defaults.Autonomous
 	if req.Autonomous != nil {
 		autonomous = *req.Autonomous
@@ -496,7 +518,7 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, RuntimeClass: req.RuntimeClass, Resources: req.Resources,
 		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
 		NoGitCredentials: noGit, Egress: req.Egress, SystemPrompt: req.SystemPrompt, SystemPromptReplace: req.SystemPromptReplace, AgentDefinition: req.AgentDefinition, K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
-		State: store.StateCreating,
+		AIAccount: aiAccount, State: store.StateCreating,
 	}
 	if err := s.Store.Sessions().Create(ctx, sess); err != nil {
 		return nil, err
@@ -542,6 +564,12 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 	if req.GitCredentials != nil {
 		next.NoGitCredentials = !*req.GitCredentials
 	}
+	if req.AIAccount != nil {
+		if err := s.checkAIAccount(ctx, owner.ID, sess.Agent, *req.AIAccount); err != nil {
+			return nil, err
+		}
+		next.AIAccount = *req.AIAccount
+	}
 	updated, err := s.Store.Sessions().Update(ctx, &next)
 	if err != nil {
 		return nil, err
@@ -550,6 +578,23 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 	s.recordRepoUsage(ctx, owner.ID, sess.Repos, repos)
 	s.SessionChanged(ctx, updated)
 	return updated, nil
+}
+
+// checkAIAccount accepts "" or an account of the owner's that agent signs
+// in with.
+func (s *Service) checkAIAccount(ctx context.Context, ownerID, agent, id string) error {
+	if id == "" {
+		return nil
+	}
+	kinds, ok := reconcile.SignInKinds[agent]
+	if !ok {
+		return &ValidationError{"only Claude Code and Codex sessions pick an AI account; " + agent + " sessions get all of them"}
+	}
+	a, err := s.Store.Accounts().Get(ctx, ownerID, id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !slices.Contains(kinds, a.Kind)) {
+		return &ValidationError{"ai_account is not an account " + agent + " can sign in with"}
+	}
+	return err
 }
 
 // recordRepoUsage counts repositories that are new to the session.
@@ -676,8 +721,10 @@ func (s *Service) RestartAgent(ctx context.Context, owner *store.User, id string
 	return nil
 }
 
-// SaveLogin exports the CLI's credential file from the running session and
-// stores it in the user's Secret so later sessions start logged in.
+// SaveLogin exports the CLI's credential files from the running session
+// into the owner's accounts so later sessions start logged in: into the
+// login account the session signed in with, else into a new one, which the
+// session then uses.
 func (s *Service) SaveLogin(ctx context.Context, owner *store.User, id, kind string) error {
 	if _, ok := runner.LoginFiles[kind]; !ok {
 		return &ValidationError{"unknown login kind"}
@@ -689,33 +736,49 @@ func (s *Service) SaveLogin(ctx context.Context, owner *store.User, id, kind str
 	if sess.State != store.StateRunning {
 		return ErrInvalidTransition
 	}
-	if err := s.exportLogin(ctx, sess, kind); err != nil {
+	target, err := s.Creds.loginAccount(ctx, sess, kind)
+	if err != nil {
 		return err
 	}
-	s.event(ctx, id, "user", kind+" saved to account by "+owner.Username)
+	a, err := s.exportLogin(ctx, sess, kind, target)
+	if err != nil {
+		return err
+	}
+	if target == nil && runner.LoginKindForAgent(sess.Agent) == kind {
+		next := *sess
+		next.AIAccount = a.ID
+		if _, err := s.Store.Sessions().Update(ctx, &next); err != nil {
+			return err
+		}
+	}
+	s.event(ctx, id, "user", kindLabel[kind]+" saved to account "+a.Name+" by "+owner.Username)
 	return nil
 }
 
 // exportLogin asks the session's runner for the CLI's current login files
-// and stores the bundle in the owner's Secret.
-func (s *Service) exportLogin(ctx context.Context, sess *store.Session, kind string) error {
+// and stores the bundle in account target, or a new login account when nil.
+func (s *Service) exportLogin(ctx context.Context, sess *store.Session, kind string, target *store.Account) (*store.Account, error) {
 	reply, err := s.Term.Control(ctx, sess.ID, runner.Control{T: runner.MsgExportLogin, Kind: kind}, runner.MsgLogin)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	data, err := decodeBase64(reply.Data)
 	if err != nil || len(data) == 0 {
-		return errors.New("runner returned an empty login")
+		return nil, errors.New("runner returned an empty login")
 	}
-	return s.Creds.Set(ctx, sess.OwnerID, kind, data)
+	id := ""
+	if target != nil {
+		id = target.ID
+	}
+	return s.Creds.SaveLogin(ctx, sess.OwnerID, id, kind, data)
 }
 
 // syncLogin keeps a saved login current. Claude Code's OAuth refresh tokens
 // are single use: once the CLI in one session has refreshed, the pair saved
 // earlier is dead and a new session seeded from it lands on the login
 // screen. So whenever a runner reports that its CLI rewrote the credential
-// file, and the owner has that login saved, the account copy is replaced
-// with the fresh one. Users who never saved a login are left alone.
+// file, and the session signed in with a saved login account, that account
+// is replaced with the fresh copy. Sessions on other accounts are left alone.
 func (s *Service) syncLogin(ctx context.Context, sess *store.Session, st runner.Status) {
 	if st.LoginUpdatedAt == nil {
 		return
@@ -728,16 +791,10 @@ func (s *Service) syncLogin(ctx context.Context, sess *store.Session, st runner.
 	if v, ok := s.loginSynced.Load(sess.ID); ok && !at.After(v.(time.Time)) {
 		return
 	}
-	rows, err := s.Store.Credentials().List(ctx, sess.OwnerID)
+	saved, err := s.Creds.loginAccount(ctx, sess, kind)
 	if err != nil {
-		s.Log.Warn("poller: list credentials failed", "session", sess.ID, "err", err)
+		s.Log.Warn("poller: list accounts failed", "session", sess.ID, "err", err)
 		return
-	}
-	var saved *store.Credential
-	for _, r := range rows {
-		if r.Kind == kind {
-			saved = r
-		}
 	}
 	// One attempt per change, success or not: a runner that cannot export
 	// (the CLI logged out, say) must not be asked again every ten seconds.
@@ -745,12 +802,12 @@ func (s *Service) syncLogin(ctx context.Context, sess *store.Session, st runner.
 	if saved == nil || !at.After(saved.UpdatedAt) {
 		return
 	}
-	if err := s.exportLogin(ctx, sess, kind); err != nil {
+	if _, err := s.exportLogin(ctx, sess, kind, saved); err != nil {
 		s.Log.Warn("poller: refreshing saved login failed", "session", sess.ID, "kind", kind, "err", err)
 		return
 	}
-	s.Log.Info("saved login refreshed from session", "session", sess.ID, "kind", kind)
-	s.event(ctx, sess.ID, "login", kind+" in the account refreshed from this session")
+	s.Log.Info("saved login refreshed from session", "session", sess.ID, "kind", kind, "account", saved.ID)
+	s.event(ctx, sess.ID, "login", "account "+saved.Name+" refreshed from this session")
 }
 
 // Events lists the session's event log, newest first.
@@ -954,6 +1011,7 @@ type View struct {
 	AgentDefinition     string   `json:"agent_definition"`
 	K8sAccess           string   `json:"k8s_access"`
 	K8sNamespaces       []string `json:"k8s_namespaces"`
+	AIAccount           string   `json:"ai_account"`
 	// SandboxNamespace and SandboxHost describe the session's sandbox
 	// cluster (sandbox mode only): its host namespace and the DNS name its
 	// Ingress hosts go under.
@@ -985,7 +1043,7 @@ func (s *Service) View(sess *store.Session) View {
 		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, RuntimeClass: sess.RuntimeClass, Resources: sess.Resources,
 		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
 		GitCredentials: !sess.NoGitCredentials, Egress: sess.Egress, SystemPrompt: sess.SystemPrompt, SystemPromptReplace: sess.SystemPromptReplace, AgentDefinition: sess.AgentDefinition, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
-		State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
+		AIAccount: sess.AIAccount, State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
 	}
 	if v.K8sAccess == store.K8sAccessSandbox && s.Defaults.K8sSandbox {
