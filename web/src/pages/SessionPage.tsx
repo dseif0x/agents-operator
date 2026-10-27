@@ -144,12 +144,6 @@ export function SessionPage({ id }: { id: string }) {
     act("delete", () => api.deleteSession(id).then(() => navigate("/", true)));
   };
 
-  const saveLogin = () => {
-    if (!session) return;
-    const kind = session.agent === "codex" ? "codex_login" : "claude_login";
-    act("save-login", () => api.saveLogin(id, kind));
-  };
-
   const s = session;
   const canAttach = s?.state === "running";
 
@@ -186,16 +180,6 @@ export function SessionPage({ id }: { id: string }) {
         {s && (s.state === "running" || s.state === "creating") && (
           <button class="btn small" disabled={!!busy} onClick={() => act("stop", () => api.stopSession(id))}>
             Stop
-          </button>
-        )}
-        {canAttach && (
-          <button class="btn small" disabled={!!busy} onClick={() => act("restart", () => api.restartAgent(id))} title="Relaunch the agent CLI in the same pod">
-            Restart agent
-          </button>
-        )}
-        {canAttach && s.agent !== "shell" && s.agent !== "opencode" && (
-          <button class="btn small" disabled={!!busy} onClick={saveLogin} title="Copy the CLI's login file to your account">
-            Save login
           </button>
         )}
         <button class="btn small" onClick={() => setDrawer(drawer ? null : "events")} title="Events and logs">
