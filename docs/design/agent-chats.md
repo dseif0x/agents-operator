@@ -37,11 +37,12 @@ Its weak spot is a lesson. A reported bug had bots that should have stayed quiet
 
 ### 1. Personas
 
-- **The setting:** a session setting `persona`, at most 8 KB of Markdown, edited on the session form next to the name. It replaces today's OpenCode-only "system prompt" field and covers every agent:
+- **The setting:** a session setting `persona`, at most 8 KB of Markdown, edited on the session form next to the name. It covers every agent and is always added to the CLI's own system prompt, never instead of it:
   - **Claude Code:** started with `--append-system-prompt <persona>`.
   - **Codex:** a section of the `~/.codex/AGENTS.md` the runner already generates.
-  - **OpenCode:** the existing instructions file, or the build agent's prompt in "replace" mode.
+  - **OpenCode:** the instructions file the runner already writes for today's system prompt.
   - **Shell:** ignored.
+- **Replaces the OpenCode system prompt:** the persona takes over today's OpenCode-only "system prompt" field, and its "replace the built-in prompt" option goes away. The migration copies each session's system prompt into its persona; a session that had "replace" on now has its text added to OpenCode's prompt instead of replacing it. The OpenCode agent definition (`--agent`) stays as it is.
 - **Chat identity:** each session gets an **immutable handle**, generated when it is created: a Docker-style word pair such as `eager_turing` or `quirky_lovelace` (an adjective plus a well-known scientist or engineer, as Docker names containers).
   - **Unique and fixed:** handles are unique per owner and never change, not even when the session is renamed, so old messages always point at the right agent. Existing sessions get one in the migration that adds the column.
   - **What it's for:** the handle is what a mention stores and what agents type (`@eager_turing`). People never have to remember it (see the UI).
@@ -196,6 +197,3 @@ Each phase ships on its own. Sessions that are in no chat behave exactly as toda
   - An image round trip.
   - Muting a member mid-conversation.
 
-## Open questions
-
-1. **Persona vs. system prompt:** fold the existing OpenCode system prompt and its "replace" mode into the persona, or keep "replace" as an advanced OpenCode-only option?
