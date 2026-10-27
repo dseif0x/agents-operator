@@ -29,7 +29,7 @@ helm install agents-operator agents-operator/agents-operator -n agents-operator 
   --set ingress.host=agents-operator.example.com
 ```
 
-The NOTES print how to read the generated admin password. Add your accounts on the account page, as many as you like: Anthropic and OpenAI API keys, Claude subscription tokens printed by `claude setup-token` (run it inside any session; the token never expires between sessions), OpenAI-compatible endpoints such as LiteLLM, and Unjailed keys. Claude Code and Codex sessions sign in with the account picked for the session or your default; OpenCode gets every key and endpoint as a provider under its name. Logging in with the CLI inside a session and pressing *Save login* works too, and the hub keeps that copy current as the CLI rotates its tokens. Git accounts go there as well, one HTTPS token and one SSH key per host; with a token for github.com agents get `gh` plus HTTPS access to github.com for PRs, checks and Actions runs.
+The NOTES print how to read the generated admin password. Add your accounts on the account page, as many as you like: Anthropic and OpenAI API keys, Claude subscription tokens printed by `claude setup-token` (run it inside any session; the token never expires between sessions), OpenAI-compatible endpoints such as LiteLLM, and Unjailed keys. Claude Code and Codex sessions sign in with the account picked for the session or your default; OpenCode gets every key and endpoint as a provider under its name. Git accounts go there as well, one HTTPS token and one SSH key per host; with a token for github.com agents get `gh` plus HTTPS access to github.com for PRs, checks and Actions runs.
 
 ## Security model
 

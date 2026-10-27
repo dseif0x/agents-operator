@@ -602,7 +602,7 @@ function AccountChoice(props: {
   if (!options.length) {
     return (
       <div class="muted" style="font-size:12px;margin-top:6px">
-        No {label} account yet: add one on the <Link href="/account">account page</Link>, or sign in inside the session and use “Save login”.
+        No {label} account yet: add one on the <Link href="/account">account page</Link>.
       </div>
     );
   }

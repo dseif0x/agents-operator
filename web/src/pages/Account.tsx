@@ -21,11 +21,11 @@ const KINDS: Record<
   },
   claude_login: {
     label: "Claude Code login",
-    help: "Claude Code's login files, saved from a session with “Save login”. Claude Code refreshes its tokens every few hours and the old pair stops working, so the hub copies the fresh files back from the session using the login. Sessions running at the same time on one login can sign each other out; a token avoids that.",
+    help: "Claude Code's login files, saved earlier from a session. Claude Code refreshes its tokens every few hours and the old pair stops working, so the hub copies the fresh files back from the session using the login. Sessions running at the same time on one login can sign each other out; a token avoids that.",
     login: true,
   },
   openai_api_key: { label: "OpenAI API key", help: "Codex sessions that use it get OPENAI_API_KEY; OpenCode gets it as a provider.", placeholder: "sk-…" },
-  codex_login: { label: "Codex login", help: "Codex's login file, saved from a session with “Save login”.", login: true },
+  codex_login: { label: "Codex login", help: "Codex's login file, saved earlier from a session.", login: true },
   openai_compatible: {
     label: "OpenAI-compatible endpoint",
     help: "Any OpenAI-compatible API (LiteLLM, vLLM, llama.cpp, OpenRouter…). OpenCode gets it as a provider named after the account, with the models below or, if none are listed, the endpoint's own list.",
@@ -182,9 +182,6 @@ export function Account(props: { user: User; onLogout: () => void }) {
           {form("ai")}
           {ai.length === 0 && editing?.group !== "ai" && <div class="muted">No AI accounts yet.</div>}
           {ai.map(row)}
-          <p class="muted" style="margin:12px 0 0;font-size:13px">
-            Saved logins come from a session: sign in to the CLI there and use “Save login” on the session page.
-          </p>
           {SIGN_IN.map((s) => {
             const options = ai.filter((a) => s.kinds.includes(a.kind));
             if (options.length < 2) return null;
