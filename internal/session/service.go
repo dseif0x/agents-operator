@@ -1063,9 +1063,9 @@ type View struct {
 	// Handle is the session's immutable chat name; mention it as @handle.
 	Handle          string   `json:"handle"`
 	AgentDefinition string   `json:"agent_definition"`
-	K8sAccess           string   `json:"k8s_access"`
-	K8sNamespaces       []string `json:"k8s_namespaces"`
-	AIAccount           string   `json:"ai_account"`
+	K8sAccess       string   `json:"k8s_access"`
+	K8sNamespaces   []string `json:"k8s_namespaces"`
+	AIAccount       string   `json:"ai_account"`
 	// SandboxNamespace and SandboxHost describe the session's sandbox
 	// cluster (sandbox mode only): its host namespace and the DNS name its
 	// Ingress hosts go under.

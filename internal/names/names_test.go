@@ -12,7 +12,9 @@ func TestNew(t *testing.T) {
 		seen[h] = true
 	}
 	// Everything taken without a number: a numbered handle comes back.
-	h := New(func(s string) bool { return !Pattern.MatchString(s) || len(s) < 3 || s[len(s)-1] < '0' || s[len(s)-1] > '9' })
+	h := New(func(s string) bool {
+		return !Pattern.MatchString(s) || len(s) < 3 || s[len(s)-1] < '0' || s[len(s)-1] > '9'
+	})
 	if !Pattern.MatchString(h) {
 		t.Fatalf("numbered handle %q", h)
 	}
