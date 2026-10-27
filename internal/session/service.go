@@ -1013,6 +1013,17 @@ func (s *Service) PollOnce(ctx context.Context) {
 	for st, n := range counts {
 		sessionsGauge.WithLabelValues(st).Set(float64(n))
 	}
+	// Chat uplinks: the leader holds them, a follower drops any it had.
+	if ul, ok := s.Uplinks.(interface {
+		Ensure(context.Context, []*store.Session)
+		CloseAll()
+	}); ok {
+		if s.leading() {
+			ul.Ensure(ctx, all)
+		} else {
+			ul.CloseAll()
+		}
+	}
 }
 
 func refresh(sess *store.Session, st runner.Status) *store.Session {

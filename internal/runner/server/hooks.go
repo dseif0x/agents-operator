@@ -17,10 +17,15 @@ import (
 // runs `agent-runner hook` on every lifecycle event (see the runner's
 // bootstrap, which installs them in ~/.claude/settings.json); that helper
 // forwards the event JSON to this handler on the loopback interface.
-// Nothing outside the pod can reach it, and nothing a hook says can change
-// what the CLI does: the helper always exits 0.
+// Nothing outside the pod can reach it, and the helper always exits 0. The
+// one thing an answer can do is block a Stop with queued chat messages
+// (OnStop), so the agent reads them instead of going idle.
 type Hooks struct {
 	Log *slog.Logger
+	// OnStop, when set, is asked on the main agent's Stop event for a
+	// reason to block the stop with (queued chat messages); the answer goes
+	// back to the CLI through `agent-runner hook`'s stdout.
+	OnStop func() string
 
 	mu  sync.Mutex
 	cur *runner.Activity
@@ -57,6 +62,13 @@ func (h *Hooks) Handler() http.Handler {
 			return
 		}
 		h.Apply(ev, time.Now())
+		if ev.Event == "Stop" && ev.AgentID == "" && h.OnStop != nil {
+			if reason := h.OnStop(); reason != "" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]string{"decision": "block", "reason": reason})
+				return
+			}
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	return mux

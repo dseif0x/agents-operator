@@ -16,13 +16,13 @@ func TestHookForward(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(srv.Close)
-	hookForward(srv.URL+"/hook", strings.NewReader(`{"hook_event_name":"Stop"}`))
+	hookForward(srv.URL+"/hook", strings.NewReader(`{"hook_event_name":"Stop"}`), io.Discard)
 	if got != `POST /hook application/json {"hook_event_name":"Stop"}` {
 		t.Fatalf("forwarded %q", got)
 	}
 	// Nothing to send, or nobody listening: silent either way.
-	hookForward(srv.URL+"/hook", strings.NewReader(""))
-	hookForward("http://127.0.0.1:1/hook", strings.NewReader(`{"hook_event_name":"Stop"}`))
+	hookForward(srv.URL+"/hook", strings.NewReader(""), io.Discard)
+	hookForward("http://127.0.0.1:1/hook", strings.NewReader(`{"hook_event_name":"Stop"}`), io.Discard)
 	t.Setenv("RUNNER_HOOK_URL", "")
 	if hookURL() != "http://127.0.0.1:7682/hook" {
 		t.Fatalf("default url = %s", hookURL())

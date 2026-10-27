@@ -35,7 +35,9 @@ type Server struct {
 	// Hooks carries the agent's own account of what it is doing (nil for
 	// agents without hook support); it overrides the tail heuristic.
 	Hooks *Hooks
-	Log   *slog.Logger
+	// Chat serves the hub's uplink (nil: no chats).
+	Chat *Chat
+	Log  *slog.Logger
 
 	clients atomic.Int64
 
@@ -78,6 +80,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /status", s.auth(s.status))
 	mux.HandleFunc("GET /scrollback", s.auth(s.scrollback))
 	mux.HandleFunc("GET /ws", s.auth(s.ws))
+	if s.Chat != nil {
+		mux.HandleFunc("GET "+runner.UplinkPath, s.auth(s.Chat.ServeUplink))
+	}
 	return mux
 }
 

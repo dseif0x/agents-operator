@@ -33,8 +33,11 @@ func main() {
 		os.Exit(initMain(os.Args[2:]))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "hook" {
-		hookForward(hookURL(), os.Stdin)
+		hookForward(hookURL(), os.Stdin, os.Stdout)
 		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		os.Exit(mcpMain(os.Stdin, os.Stdout, chatURL()))
 	}
 	os.Exit(run())
 }
@@ -112,7 +115,14 @@ func run() int {
 	defer proc.Close()
 
 	hooks := &server.Hooks{Log: log}
-	srv := &server.Server{Proc: proc, Token: token, Agent: *agent, Home: ws.HomeDir(), LoginBaseline: loginBaseline, Hooks: hooks, Log: log}
+	chat := &server.Chat{Proc: proc, Agent: *agent, Home: ws.HomeDir(), Roots: []string{ws.Root, ws.TempDir()}, Log: log}
+	if *agent == runner.AgentClaude {
+		// Only Claude Code reports through hooks; its Stop hook can take
+		// chat messages queued during a turn.
+		chat.Hooks = hooks
+		hooks.OnStop = chat.StopHook
+	}
+	srv := &server.Server{Proc: proc, Token: token, Agent: *agent, Home: ws.HomeDir(), LoginBaseline: loginBaseline, Hooks: hooks, Chat: chat, Log: log}
 	httpSrv := &http.Server{
 		Addr:              *listen,
 		Handler:           srv.Handler(),
@@ -130,8 +140,13 @@ func run() int {
 	log.Info("agent-runner listening", "addr", ln.Addr().String(), "agent", *agent, "autonomous", autonomous)
 
 	// Agent hook events arrive on the loopback interface only; the agent
-	// CLI's hooks post to it through `agent-runner hook`.
-	hookSrv := &http.Server{Addr: *hookAddr, Handler: hooks.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	// CLI's hooks post to it through `agent-runner hook`, and its chat
+	// tools (`agent-runner mcp`) through /chat/.
+	loopback := http.NewServeMux()
+	loopback.Handle("/hook", hooks.Handler())
+	loopback.Handle("/chat/", chat.Handler())
+	hookSrv := &http.Server{Addr: *hookAddr, Handler: loopback, ReadHeaderTimeout: 5 * time.Second}
+	go chat.Run(ctx)
 	if hln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", *hookAddr); err != nil {
 		log.Warn("hook listener failed; agent activity will come from the terminal tail", "addr", *hookAddr, "err", err)
 	} else {
@@ -183,6 +198,11 @@ func AgentCommand(agent string, autonomous bool, dir string, env []string) serve
 		if persona != "" {
 			args = append(args, "--append-system-prompt", persona)
 		}
+		// The chat tools; allowed without a prompt, they only talk to the
+		// session's own chats.
+		if cfg := mcpConfigFile(envValue(env, "HOME")); cfg != "" {
+			args = append(args, "--mcp-config", cfg, "--allowedTools", "mcp__"+mcpServerName)
+		}
 		return server.Command{Path: "claude", Args: args, Dir: dir, Env: withoutEnv(env, runner.EnvPersona)}
 	case runner.AgentOpenCode:
 		args := []string{}
@@ -193,8 +213,10 @@ func AgentCommand(agent string, autonomous bool, dir string, env []string) serve
 		args = append(args, agentArgs...)
 		return server.Command{Path: "opencode", Args: args, Dir: dir, Env: openCodeEnv(env, cfg)}
 	case runner.AgentCodex:
-		// The persona is in the generated ~/.codex/AGENTS.md (writeAgentsFile).
-		return server.Command{Path: "codex", Args: nil, Dir: dir, Env: withoutEnv(env, runner.EnvPersona)}
+		// The persona is in the generated ~/.codex/AGENTS.md (writeAgentsFile);
+		// the chat tools are configured on the command line.
+		args := []string{"-c", "mcp_servers." + mcpServerName + `.command="agent-runner"`, "-c", "mcp_servers." + mcpServerName + `.args=["mcp"]`}
+		return server.Command{Path: "codex", Args: args, Dir: dir, Env: withoutEnv(env, runner.EnvPersona)}
 	default:
 		return server.Command{Path: "bash", Args: []string{"-l"}, Dir: dir, Env: withoutEnv(env, runner.EnvPersona)}
 	}

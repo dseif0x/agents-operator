@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -418,11 +419,12 @@ func TestPrepareClaudeSettings(t *testing.T) {
 	hooks, _ := m["hooks"].(map[string]any)
 	for _, ev := range claudeHookEvents {
 		groups, _ := hooks[ev].([]any)
-		if !hasRunnerHook(groups) {
+		if findRunnerHook(groups) == nil {
 			t.Fatalf("no runner hook for %s: %v", ev, hooks[ev])
 		}
 		group := groups[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
-		if group["type"] != "command" || group["async"] != true {
+		// Stop waits for the runner (it can hand over chat messages).
+		if group["type"] != "command" || (group["async"] == true) == (ev == "Stop") {
 			t.Fatalf("hook for %s = %v", ev, group)
 		}
 	}
@@ -431,6 +433,14 @@ func TestPrepareClaudeSettings(t *testing.T) {
 	if after, _ := os.ReadFile(settings); string(after) != string(before) {
 		t.Fatalf("hooks added twice:\n%s", after)
 	}
+	// An asynchronous Stop hook from an older runner is made synchronous.
+	if err := os.WriteFile(settings, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"agent-runner hook","async":true,"timeout":5}]}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws.prepareClaudeSettings()
+	if h := findRunnerHook(read()["hooks"].(map[string]any)["Stop"].([]any)); h["async"] != nil || fmt.Sprint(h["timeout"]) != "30" {
+		t.Fatalf("old Stop hook = %v", h)
+	}
 	// A hook the user wrote stays, and ours is added next to it, not over it.
 	if err := os.WriteFile(settings, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"notify-send done"}]}]}}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -438,7 +448,7 @@ func TestPrepareClaudeSettings(t *testing.T) {
 	ws.prepareClaudeSettings()
 	m = read()
 	stop, _ := m["hooks"].(map[string]any)["Stop"].([]any)
-	if len(stop) != 2 || stop[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"] != "notify-send done" || !hasRunnerHook(stop) {
+	if len(stop) != 2 || stop[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"] != "notify-send done" || findRunnerHook(stop) == nil {
 		t.Fatalf("user hook lost: %v", stop)
 	}
 	if err := os.Remove(settings); err != nil {

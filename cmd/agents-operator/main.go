@@ -157,6 +157,7 @@ func run() error {
 	}
 	rec := reconcile.New(rcfg, st, cs, inf, svc, cfg.ReconcileInterval, log)
 	svc.Orch = rec
+	svc.Uplinks = session.NewUplinks(svc, proxy.Resolver, log)
 	var leading, shuttingDown atomic.Bool
 	svc.Leading = leading.Load
 

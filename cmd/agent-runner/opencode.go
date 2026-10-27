@@ -325,7 +325,10 @@ func openCodeConfig(env []string) (map[string]any, []string) {
 		return ""
 	}
 	home := get("HOME")
-	cfg := map[string]any{"autoupdate": false, "share": "disabled"}
+	cfg := map[string]any{"autoupdate": false, "share": "disabled",
+		// The chat tools (`agent-runner mcp`).
+		"mcp": map[string]any{mcpServerName: map[string]any{"type": "local", "command": []string{"agent-runner", "mcp"}, "enabled": true}},
+	}
 	var args []string
 
 	providers, unjailed, unjailedModels := openCodeProviders(get)
