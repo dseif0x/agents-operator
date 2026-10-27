@@ -90,6 +90,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("DELETE /api/v1/me/accounts/{id}", s.deleteAccount)
 	authed.HandleFunc("GET /api/v1/me/profile", s.getProfile)
 	authed.HandleFunc("PUT /api/v1/me/profile", s.putProfile)
+	s.chatRoutes(authed)
 	mux.Handle("/api/v1/", s.requireAuth(s.requireCSRF(authed)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) { writeErr(w, http.StatusNotFound, "no such route") })
 
@@ -247,7 +248,7 @@ func (s *Server) mapErr(w http.ResponseWriter, err error) {
 	var ve *session.ValidationError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		writeErr(w, http.StatusNotFound, "session not found")
+		writeErr(w, http.StatusNotFound, "not found")
 	case errors.Is(err, session.ErrInvalidTransition):
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, term.ErrNotRunning):

@@ -263,6 +263,26 @@ func (p *Process) AltScreen() bool {
 	return p.running && p.modes.alt
 }
 
+// BracketedPaste reports whether the agent turned on bracketed paste, so
+// text can be pasted as one block with its line breaks.
+func (p *Process) BracketedPaste() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.running && p.modes.modes[2004]
+}
+
+// Quiet is how long the agent has printed nothing (since start without
+// output), and whether it runs.
+func (p *Process) Quiet(now time.Time) (time.Duration, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	last := p.lastOutput
+	if last.IsZero() || last.Before(p.startedAt) {
+		last = p.startedAt
+	}
+	return now.Sub(last), p.running
+}
+
 // redrawNudge is how long the PTY stays one row short in Redraw. TUIs
 // debounce resizes and compare the size with the last one they drew at:
 // OpenCode ignores a nudge shorter than about 100ms (measured).

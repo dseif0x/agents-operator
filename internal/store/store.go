@@ -203,10 +203,12 @@ type Session struct {
 	// top of the chart's NetworkPolicy, in internal/egress canonical form
 	// (`192.168.1.10`, `192.168.1.0/24`, `192.168.1.10:8080`).
 	Egress []string
-	// SystemPrompt is a custom system prompt for OpenClaude, appended to
-	// its own or, with SystemPromptReplace, used instead of it.
-	SystemPrompt        string
-	SystemPromptReplace bool
+	// Persona is free text on the agent's personality and role, added to
+	// the CLI's own system prompt (Claude Code, Codex and OpenCode).
+	Persona string
+	// Handle is the session's immutable chat name ("eager_turing"), unique
+	// per owner; chat mentions store it. Set once, never updated.
+	Handle string
 	// AgentDefinition is an OpenClaude agent definition (Markdown with
 	// front matter, see internal/agentdef) the session starts with --agent.
 	AgentDefinition string
@@ -254,6 +256,9 @@ type Sessions interface {
 	Update(ctx context.Context, s *Session) (*Session, error)
 	// SetState updates state and reason. It returns the updated row.
 	SetState(ctx context.Context, id, state, reason string) (*Session, error)
+	// SetHandle gives a session without a handle one (ErrNotFound when it
+	// already has one, ErrConflict when the owner uses it elsewhere).
+	SetHandle(ctx context.Context, id, handle string) error
 	// Bump increments generation and sets the state, in one statement.
 	Bump(ctx context.Context, id, state string) (*Session, error)
 	TouchAttached(ctx context.Context, id string, at time.Time) error
@@ -331,6 +336,7 @@ type Store interface {
 	Credentials() Credentials
 	Accounts() Accounts
 	Profiles() Profiles
+	Chats() Chats
 	Events() Events
 	RepoUsage() RepoUsage
 	Ping(ctx context.Context) error

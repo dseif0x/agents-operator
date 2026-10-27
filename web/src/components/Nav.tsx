@@ -10,6 +10,9 @@ export function Nav(props: { user: User; onLogout: () => void; right?: preact.Co
       </Link>
       <span class="spacer" />
       {props.right}
+      <Link href="/chats" class="btn small" title="Chats with your agents">
+        Chats
+      </Link>
       <Link href="/account" class="btn small" title="Account and credentials">
         {props.user.username}
       </Link>

@@ -483,7 +483,7 @@ func TestBuildPodK8sAccess(t *testing.T) {
 	}
 }
 
-func TestSystemPromptAndAgentEnv(t *testing.T) {
+func TestPersonaAndAgentEnv(t *testing.T) {
 	s := testSession()
 	s.Agent = runner.AgentOpenCode
 	envOf := func() map[string]string {
@@ -493,19 +493,16 @@ func TestSystemPromptAndAgentEnv(t *testing.T) {
 		}
 		return m
 	}
-	if env := envOf(); env[runner.EnvSystemPrompt] != "" || env[runner.EnvAgentDefinition] != "" {
+	if env := envOf(); env[runner.EnvPersona] != "" || env[runner.EnvAgentDefinition] != "" || env[runner.EnvHandle] != "" {
 		t.Fatalf("env without either: %v", env)
 	}
-	s.SystemPrompt = "Be terse."
+	s.Persona = "Be terse."
+	s.Handle = "eager_turing"
 	s.AgentDefinition = "---\nname: red-team\ndescription: Reviewer\n---\nYou review code."
 	env := envOf()
-	if env[runner.EnvSystemPrompt] != "Be terse." || env[runner.EnvSystemPromptMode] != "append" ||
+	if env[runner.EnvPersona] != "Be terse." || env[runner.EnvHandle] != "eager_turing" ||
 		env[runner.EnvAgentDefinition] != s.AgentDefinition || env[runner.EnvAgentDefinitionName] != "red-team" {
 		t.Fatalf("env = %v", env)
-	}
-	s.SystemPromptReplace = true
-	if env := envOf(); env[runner.EnvSystemPromptMode] != "replace" {
-		t.Fatalf("replace env = %v", env)
 	}
 	// A definition that no longer parses is left out.
 	s.AgentDefinition = "not a definition"

@@ -24,6 +24,7 @@ import (
 	"github.com/dseif0x/agents-operator/internal/config"
 	"github.com/dseif0x/agents-operator/internal/egress"
 	"github.com/dseif0x/agents-operator/internal/github"
+	"github.com/dseif0x/agents-operator/internal/names"
 	"github.com/dseif0x/agents-operator/internal/reconcile"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/store"
@@ -87,6 +88,8 @@ type Service struct {
 	// the leader acts on what it sees (login export, idle stop, output
 	// timestamps). nil means always.
 	Leading func() bool
+	// Uplinks carries chat messages to running sessions (nil: none).
+	Uplinks ChatNotifier
 
 	live sync.Map // session id -> *Live
 	// loginSynced remembers, per running session, the credential-file
@@ -128,16 +131,12 @@ type CreateRequest struct {
 	// the chart's NetworkPolicy: `192.168.1.10`, `192.168.1.0/24`,
 	// `192.168.1.10:8080`. Each must lie in Defaults.Egress's allowed ranges.
 	Egress []string `json:"egress"`
-	// SystemPrompt is a custom system prompt for OpenClaude sessions,
-	// appended to the CLI's own, or used instead of it with
-	// SystemPromptReplace. Other agents refuse it.
-	SystemPrompt        string `json:"system_prompt"`
-	SystemPromptReplace bool   `json:"system_prompt_replace"`
-	// AgentDefinition is an OpenClaude agent definition (Markdown with
+	// Persona is free text on the agent's personality and role, added to
+	// the CLI's own system prompt. Shell sessions refuse it.
+	Persona string `json:"persona"`
+	// AgentDefinition is an OpenCode agent definition (Markdown with
 	// front matter: name, description, optionally tools and model; the
-	// body is the agent's prompt) the session starts with --agent. Its
-	// prompt replaces OpenClaude's own, so SystemPrompt can only be
-	// appended alongside it.
+	// body is the agent's prompt) the session starts with --agent.
 	AgentDefinition string `json:"agent_definition"`
 	// K8sAccess is what kubectl in the pod may do: "off" (default), "readonly"
 	// (the chart's read-only runner ServiceAccount) or "namespace" (read-only
@@ -302,7 +301,7 @@ var reservedEnv = map[string]bool{
 	runner.EnvGitUserName: true, runner.EnvGitUserEmail: true, runner.EnvPrivateFile: true,
 	runner.EnvK8sAccess: true, runner.EnvK8sNamespaces: true, runner.EnvEgress: true,
 	runner.EnvSandboxNamespace: true, runner.EnvSandboxHost: true, runner.EnvSandboxSecurity: true,
-	runner.EnvSystemPrompt: true, runner.EnvSystemPromptMode: true, runner.EnvAgentDefinition: true, runner.EnvAgentDefinitionName: true,
+	runner.EnvPersona: true, runner.EnvHandle: true, runner.EnvAgentDefinition: true, runner.EnvAgentDefinitionName: true,
 }
 
 // reservedEnvPrefixes start variables the hub sets that cannot be
@@ -440,44 +439,87 @@ func (s *Service) validate(req *CreateRequest) ([]store.Repo, error) {
 		return nil, &ValidationError{"egress: " + err.Error()}
 	}
 	req.Egress = egress
-	if err := validateSystemPrompt(req); err != nil {
+	if err := validatePersona(req); err != nil {
 		return nil, err
 	}
 	return repos, nil
 }
 
-// MaxSystemPrompt caps a session's custom system prompt.
-const MaxSystemPrompt = 32 << 10
+// MaxPersona caps a session's persona.
+const MaxPersona = 8 << 10
 
-// validateSystemPrompt checks the session's custom system prompt and agent
-// definition: only OpenClaude takes them, they go on its command line and
-// into a file, so they are plain text of bounded size.
-func validateSystemPrompt(req *CreateRequest) error {
+// MaxAgentDefinition caps an OpenCode agent definition.
+const MaxAgentDefinition = 32 << 10
+
+// validatePersona checks the persona (every agent but the shell) and the
+// OpenCode agent definition: they go on a command line and into files, so
+// they are plain text of bounded size.
+func validatePersona(req *CreateRequest) error {
 	clean := func(s string) string { return strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n")) }
-	req.SystemPrompt, req.AgentDefinition = clean(req.SystemPrompt), clean(req.AgentDefinition)
-	if req.SystemPrompt == "" {
-		req.SystemPromptReplace = false
+	req.Persona, req.AgentDefinition = clean(req.Persona), clean(req.AgentDefinition)
+	for _, t := range []string{req.Persona, req.AgentDefinition} {
+		if !utf8.ValidString(t) || strings.ContainsRune(t, 0) {
+			return &ValidationError{"the persona and agent definition must be plain UTF-8 text"}
+		}
 	}
-	if req.SystemPrompt == "" && req.AgentDefinition == "" {
+	if req.Persona != "" && req.Agent == runner.AgentShell {
+		return &ValidationError{"a shell session has no agent to give a persona"}
+	}
+	if len(req.Persona) > MaxPersona {
+		return &ValidationError{fmt.Sprintf("the persona is limited to %d KiB", MaxPersona>>10)}
+	}
+	if req.AgentDefinition == "" {
 		return nil
 	}
 	if req.Agent != runner.AgentOpenCode {
-		return &ValidationError{"a custom system prompt or agent definition is only supported for " + runner.AgentOpenCode + " sessions"}
+		return &ValidationError{"an agent definition is only supported for " + runner.AgentOpenCode + " sessions"}
 	}
-	for _, t := range []string{req.SystemPrompt, req.AgentDefinition} {
-		if !utf8.ValidString(t) || strings.ContainsRune(t, 0) {
-			return &ValidationError{"the system prompt and agent definition must be plain UTF-8 text"}
+	if len(req.AgentDefinition) > MaxAgentDefinition {
+		return &ValidationError{fmt.Sprintf("the agent definition is limited to %d KiB", MaxAgentDefinition>>10)}
+	}
+	if _, err := agentdef.Parse(req.AgentDefinition + "\n"); err != nil {
+		return &ValidationError{err.Error()}
+	}
+	return nil
+}
+
+// newHandle picks a handle the owner does not use yet.
+func (s *Service) newHandle(ctx context.Context, ownerID string) (string, error) {
+	sessions, err := s.Store.Sessions().List(ctx, ownerID)
+	if err != nil {
+		return "", err
+	}
+	taken := map[string]bool{}
+	for _, o := range sessions {
+		taken[o.Handle] = true
+	}
+	return names.New(func(h string) bool { return taken[h] }), nil
+}
+
+// BackfillHandles gives every session without a handle one (sessions
+// created before handles existed). Run at hub start.
+func (s *Service) BackfillHandles(ctx context.Context) error {
+	all, err := s.Store.Sessions().ListAll(ctx)
+	if err != nil {
+		return err
+	}
+	for _, sess := range all {
+		if sess.Handle != "" {
+			continue
 		}
-	}
-	if len(req.SystemPrompt) > MaxSystemPrompt {
-		return &ValidationError{fmt.Sprintf("the system prompt is limited to %d KiB", MaxSystemPrompt>>10)}
-	}
-	if req.AgentDefinition != "" {
-		if _, err := agentdef.Parse(req.AgentDefinition + "\n"); err != nil {
-			return &ValidationError{err.Error()}
-		}
-		if req.SystemPromptReplace {
-			return &ValidationError{"with an agent definition the agent's prompt replaces OpenClaude's own; the system prompt can only be appended"}
+		for attempt := 0; ; attempt++ {
+			h, err := s.newHandle(ctx, sess.OwnerID)
+			if err != nil {
+				return err
+			}
+			err = s.Store.Sessions().SetHandle(ctx, sess.ID, h)
+			if errors.Is(err, store.ErrConflict) && attempt < 5 {
+				continue
+			}
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return err
+			}
+			break
 		}
 	}
 	return nil
@@ -517,11 +559,25 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 		OwnerID: owner.ID, Name: req.Name, Agent: req.Agent, Repos: repos,
 		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, RuntimeClass: req.RuntimeClass, Resources: req.Resources,
 		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
-		NoGitCredentials: noGit, Egress: req.Egress, SystemPrompt: req.SystemPrompt, SystemPromptReplace: req.SystemPromptReplace, AgentDefinition: req.AgentDefinition, K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
+		NoGitCredentials: noGit, Egress: req.Egress, Persona: req.Persona, AgentDefinition: req.AgentDefinition, K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
 		AIAccount: aiAccount, State: store.StateCreating,
 	}
-	if err := s.Store.Sessions().Create(ctx, sess); err != nil {
-		return nil, err
+	// A handle another request took in the meantime is a conflict: pick again.
+	for attempt := 0; ; attempt++ {
+		h, err := s.newHandle(ctx, owner.ID)
+		if err != nil {
+			return nil, err
+		}
+		sess.Handle = h
+		err = s.Store.Sessions().Create(ctx, sess)
+		if errors.Is(err, store.ErrConflict) && attempt < 5 {
+			sess.ID = ""
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		break
 	}
 	s.event(ctx, sess.ID, "user", "created by "+owner.Username)
 	s.recordRepoUsage(ctx, owner.ID, nil, repos)
@@ -556,7 +612,7 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 	next.Name, next.Repos, next.ImageTag, next.RuntimeClass = req.Name, repos, req.ImageTag, req.RuntimeClass
 	next.K8sAccess, next.K8sNamespaces = req.K8sAccess, req.K8sNamespaces
 	next.Egress = req.Egress
-	next.SystemPrompt, next.SystemPromptReplace, next.AgentDefinition = req.SystemPrompt, req.SystemPromptReplace, req.AgentDefinition
+	next.Persona, next.AgentDefinition = req.Persona, req.AgentDefinition
 	next.Resources, next.NodeSelector, next.Tolerations, next.Env = req.Resources, req.NodeSelector, req.Tolerations, req.Env
 	if req.Autonomous != nil {
 		next.Autonomous = *req.Autonomous
@@ -957,6 +1013,17 @@ func (s *Service) PollOnce(ctx context.Context) {
 	for st, n := range counts {
 		sessionsGauge.WithLabelValues(st).Set(float64(n))
 	}
+	// Chat uplinks: the leader holds them, a follower drops any it had.
+	if ul, ok := s.Uplinks.(interface {
+		Ensure(context.Context, []*store.Session)
+		CloseAll()
+	}); ok {
+		if s.leading() {
+			ul.Ensure(ctx, all)
+		} else {
+			ul.CloseAll()
+		}
+	}
 }
 
 func refresh(sess *store.Session, st runner.Status) *store.Session {
@@ -1005,13 +1072,13 @@ type View struct {
 	Autonomous     bool                `json:"autonomous"`
 	GitCredentials bool                `json:"git_credentials"`
 	Egress         []string            `json:"egress"`
-	SystemPrompt   string              `json:"system_prompt"`
-	// SystemPromptReplace: the prompt replaces OpenClaude's own.
-	SystemPromptReplace bool     `json:"system_prompt_replace"`
-	AgentDefinition     string   `json:"agent_definition"`
-	K8sAccess           string   `json:"k8s_access"`
-	K8sNamespaces       []string `json:"k8s_namespaces"`
-	AIAccount           string   `json:"ai_account"`
+	Persona        string              `json:"persona"`
+	// Handle is the session's immutable chat name; mention it as @handle.
+	Handle          string   `json:"handle"`
+	AgentDefinition string   `json:"agent_definition"`
+	K8sAccess       string   `json:"k8s_access"`
+	K8sNamespaces   []string `json:"k8s_namespaces"`
+	AIAccount       string   `json:"ai_account"`
 	// SandboxNamespace and SandboxHost describe the session's sandbox
 	// cluster (sandbox mode only): its host namespace and the DNS name its
 	// Ingress hosts go under.
@@ -1042,7 +1109,7 @@ func (s *Service) View(sess *store.Session) View {
 		ID: sess.ID, Name: sess.Name, Agent: sess.Agent, Repos: sess.Repos,
 		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, RuntimeClass: sess.RuntimeClass, Resources: sess.Resources,
 		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
-		GitCredentials: !sess.NoGitCredentials, Egress: sess.Egress, SystemPrompt: sess.SystemPrompt, SystemPromptReplace: sess.SystemPromptReplace, AgentDefinition: sess.AgentDefinition, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
+		GitCredentials: !sess.NoGitCredentials, Egress: sess.Egress, Persona: sess.Persona, Handle: sess.Handle, AgentDefinition: sess.AgentDefinition, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
 		AIAccount: sess.AIAccount, State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
 	}

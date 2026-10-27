@@ -4,11 +4,16 @@ import (
 	"sync"
 )
 
-// Event is what the SSE endpoint streams to the list page.
+// Event is what the SSE endpoint streams to the UI.
 type Event struct {
-	Type    string `json:"type"` // "session" (changed) or "deleted"
-	ID      string `json:"id"`
-	Session *View  `json:"session,omitempty"`
+	// Type is "session" (changed), "deleted", "chat" (a chat changed;
+	// Chat is nil when it was deleted) or "chat_message" (a new message, or
+	// its delivery state changed).
+	Type    string       `json:"type"`
+	ID      string       `json:"id"`
+	Session *View        `json:"session,omitempty"`
+	Chat    *ChatView    `json:"chat,omitempty"`
+	Message *MessageView `json:"message,omitempty"`
 }
 
 // Broker fans session events out to SSE subscribers, per owner.

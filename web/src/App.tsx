@@ -6,6 +6,7 @@ import { SessionList } from "./pages/SessionList";
 import { NewSession } from "./pages/NewSession";
 import { SessionPage } from "./pages/SessionPage";
 import { Account } from "./pages/Account";
+import { Chats } from "./pages/Chats";
 
 export function App() {
   const route = useRoute();
@@ -57,6 +58,10 @@ export function App() {
       return <NewSession user={user} onLogout={logout} edit={route.params.id} />;
     case "/account":
       return <Account user={user} onLogout={logout} />;
+    case "/chats":
+      return <Chats user={user} onLogout={logout} />;
+    case "/chats/:id":
+      return <Chats user={user} onLogout={logout} chatId={route.params.id} />;
     default:
       return <SessionList user={user} onLogout={logout} />;
   }

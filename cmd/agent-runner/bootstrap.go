@@ -331,6 +331,18 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 			b.WriteString("- The owner's AI accounts, each key in its own variable: " + list + ".\n")
 		}
 	}
+	if w.Agent != runner.AgentShell {
+		b.WriteString("\n## Chats\n\n")
+		handle := os.Getenv(runner.EnvHandle)
+		if handle != "" {
+			b.WriteString("- Your owner can put you in chats with other agent sessions. There your handle is `@" + handle + "`.\n")
+		} else {
+			b.WriteString("- Your owner can put you in chats with other agent sessions.\n")
+		}
+		b.WriteString("- Chat messages for you arrive as prompts starting with `[agents-operator chat]`, saying whether they are addressed to you. Answer with the `chat_send` tool (MCP server `chat`); `chat_read`, `chat_info` and `chats_list` give context.\n")
+		b.WriteString("- A message addressed to you or to `@everyone` wants an answer. A message to everyone (no mentions) only needs one if you have something to add; otherwise carry on without posting.\n")
+		b.WriteString("- To hand work to another agent, mention its `@handle` (chat_info lists them). Keep messages short; share code through git branches, not pasted files.\n")
+	}
 	b.WriteString("\n## Conventions\n\n")
 	if canPush {
 		b.WriteString("- Work on branches and open pull requests rather than pushing to the default branch, unless told otherwise.\n")
@@ -359,7 +371,13 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		text := content
+		// Codex has no flag to add to its system prompt; its global
+		// instructions file carries the persona instead.
+		if persona := strings.TrimSpace(os.Getenv(runner.EnvPersona)); persona != "" && strings.HasSuffix(p, filepath.Join(".codex", "AGENTS.md")) {
+			text += "\n## Your persona\n\n" + persona + "\n"
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
 			return err
 		}
 	}
@@ -583,9 +601,21 @@ func (w *Workspace) prepareClaudeSettings() {
 	}
 }
 
+// runnerHook is the runner's hook entry for event ev. Every event is
+// reported asynchronously, so a hook never slows the CLI down, except Stop:
+// that one waits for the runner's answer, which can block the stop with
+// queued chat messages (server.Hooks.OnStop).
+func runnerHook(ev string) map[string]any {
+	if ev == "Stop" {
+		return map[string]any{"type": "command", "command": claudeHookCommand, "timeout": 30}
+	}
+	return map[string]any{"type": "command", "command": claudeHookCommand, "async": true, "timeout": 5}
+}
+
 // mergeClaudeHooks adds the runner's hook to every event in
-// claudeHookEvents that does not carry it yet. Returns whether it changed
-// anything.
+// claudeHookEvents that does not carry it yet, and brings an existing one
+// to the current form (Stop used to be asynchronous). Returns whether it
+// changed anything.
 func mergeClaudeHooks(settings map[string]any) bool {
 	hooks, _ := settings["hooks"].(map[string]any)
 	if hooks == nil {
@@ -594,12 +624,18 @@ func mergeClaudeHooks(settings map[string]any) bool {
 	changed := false
 	for _, ev := range claudeHookEvents {
 		groups, _ := hooks[ev].([]any)
-		if hasRunnerHook(groups) {
+		want := runnerHook(ev)
+		if hook := findRunnerHook(groups); hook != nil {
+			if fmt.Sprint(hook["async"]) != fmt.Sprint(want["async"]) || fmt.Sprint(hook["timeout"]) != fmt.Sprint(want["timeout"]) {
+				delete(hook, "async")
+				for k, v := range want {
+					hook[k] = v
+				}
+				changed = true
+			}
 			continue
 		}
-		groups = append(groups, map[string]any{
-			"hooks": []any{map[string]any{"type": "command", "command": claudeHookCommand, "async": true, "timeout": 5}},
-		})
+		groups = append(groups, map[string]any{"hooks": []any{want}})
 		hooks[ev] = groups
 		changed = true
 	}
@@ -609,18 +645,19 @@ func mergeClaudeHooks(settings map[string]any) bool {
 	return changed
 }
 
-func hasRunnerHook(groups []any) bool {
+// findRunnerHook returns the runner's hook entry among groups, or nil.
+func findRunnerHook(groups []any) map[string]any {
 	for _, g := range groups {
 		group, _ := g.(map[string]any)
 		list, _ := group["hooks"].([]any)
 		for _, h := range list {
 			hook, _ := h.(map[string]any)
 			if cmd, _ := hook["command"].(string); cmd == claudeHookCommand {
-				return true
+				return hook
 			}
 		}
 	}
-	return false
+	return nil
 }
 
 // updateJSONFile reads the JSON object in path (an absent file is an empty

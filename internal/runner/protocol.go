@@ -265,11 +265,12 @@ const (
 	// EnvEgress lists, comma-separated, the local network destinations the
 	// session's NetworkPolicy opens; only used for the generated AGENTS.md.
 	EnvEgress = "EGRESS"
-	// EnvSystemPrompt is an OpenClaude session's custom system prompt;
-	// EnvSystemPromptMode says whether it is appended to the CLI's own
-	// ("append", the default) or replaces it ("replace").
-	EnvSystemPrompt     = "AGENT_SYSTEM_PROMPT"
-	EnvSystemPromptMode = "AGENT_SYSTEM_PROMPT_MODE"
+	// EnvPersona is the session's persona, added to the agent CLI's own
+	// system prompt: --append-system-prompt for Claude Code, a section of
+	// ~/.codex/AGENTS.md for Codex, an instructions file for OpenCode.
+	EnvPersona = "AGENT_PERSONA"
+	// EnvHandle is the session's chat handle ("eager_turing").
+	EnvHandle = "AGENT_HANDLE"
 	// EnvAgentDefinition is an OpenClaude session's agent definition and
 	// EnvAgentDefinitionName its name: the runner writes it to
 	// ~/.openclaude/agents/<name>.md and starts the CLI with --agent <name>.

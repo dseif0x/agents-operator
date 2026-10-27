@@ -28,9 +28,8 @@ import (
 //     ones, and OpenCode's OpenAI-compatible provider for OpenAI-compatible
 //     endpoints and Unjailed (with the endpoint's models and, for Unjailed,
 //     their context sizes);
-//   - the session's custom system prompt: replacing OpenCode's own as the
-//     prompt of its default "build" agent, or appended as an instructions
-//     file;
+//   - the session's persona, as an instructions file added to OpenCode's
+//     own prompt;
 //   - the session's agent definition as an OpenCode agent, selected with
 //     --agent;
 //   - with the Unjailed provider, a plugin that keeps earlier replies'
@@ -326,7 +325,10 @@ func openCodeConfig(env []string) (map[string]any, []string) {
 		return ""
 	}
 	home := get("HOME")
-	cfg := map[string]any{"autoupdate": false, "share": "disabled"}
+	cfg := map[string]any{"autoupdate": false, "share": "disabled",
+		// The chat tools (`agent-runner mcp`).
+		"mcp": map[string]any{mcpServerName: map[string]any{"type": "local", "command": []string{"agent-runner", "mcp"}, "enabled": true}},
+	}
 	var args []string
 
 	providers, unjailed, unjailedModels := openCodeProviders(get)
@@ -353,10 +355,8 @@ func openCodeConfig(env []string) (map[string]any, []string) {
 		}
 	}
 
-	if prompt := strings.TrimSpace(get(runner.EnvSystemPrompt)); prompt != "" {
-		if get(runner.EnvSystemPromptMode) == "replace" {
-			cfg["agent"] = map[string]any{"build": map[string]any{"prompt": prompt}}
-		} else if file := writeSessionFile(home, "system-prompt.md", prompt); file != "" {
+	if persona := strings.TrimSpace(get(runner.EnvPersona)); persona != "" {
+		if file := writeSessionFile(home, "persona.md", persona); file != "" {
 			cfg["instructions"] = []string{file}
 		}
 	}
@@ -390,7 +390,7 @@ func openCodeEnv(env []string, cfg map[string]any) []string {
 	out := make([]string, 0, len(env)+6)
 	for _, kv := range env {
 		switch k, _, _ := strings.Cut(kv, "="); k {
-		case runner.EnvSystemPrompt, runner.EnvSystemPromptMode, runner.EnvAgentDefinition, runner.EnvAgentDefinitionName, "OPENCODE_CONFIG_CONTENT":
+		case runner.EnvPersona, runner.EnvAgentDefinition, runner.EnvAgentDefinitionName, "OPENCODE_CONFIG_CONTENT":
 		default:
 			out = append(out, kv)
 		}

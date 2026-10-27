@@ -45,9 +45,10 @@ export interface Session {
   git_credentials: boolean;
   /** Local network destinations the agent may reach: `192.168.1.10`, `192.168.1.0/24`, `192.168.1.10:8080`. */
   egress: string[];
-  /** OpenCode only: custom system prompt, appended to its own unless system_prompt_replace. */
-  system_prompt: string;
-  system_prompt_replace: boolean;
+  /** Personality and role, added to the agent's own system prompt (not for shell sessions). */
+  persona: string;
+  /** Immutable chat handle ("eager_turing"); mentions are @handle. */
+  handle: string;
   /** OpenCode only: agent definition (Markdown with front matter) started with --agent. */
   agent_definition: string;
   /** What kubectl in the pod may do: nothing, read the cluster, also write in k8s_namespaces, or own a sandbox cluster. */
@@ -178,8 +179,7 @@ export interface CreateSessionRequest {
   autonomous?: boolean;
   git_credentials?: boolean;
   egress?: string[];
-  system_prompt?: string;
-  system_prompt_replace?: boolean;
+  persona?: string;
   agent_definition?: string;
   k8s_access?: K8sAccess;
   k8s_namespaces?: string[];
@@ -259,7 +259,132 @@ export const api = {
   putProfile: (p: Profile) => request<Profile>("PUT", "/me/profile", p),
   githubRepos: (refresh = false) =>
     request<{ configured: boolean; repos: GitHubRepo[]; error?: string }>("GET", `/me/github/repos${refresh ? "?refresh=1" : ""}`),
+
+  chats: () => request<{ chats: Chat[] }>("GET", "/chats"),
+  chat: (id: string) => request<Chat>("GET", `/chats/${id}`),
+  createChat: (name: string, members: string[], description = "") => request<Chat>("POST", "/chats", { name, members, description }),
+  updateChat: (id: string, patch: { name?: string; description?: string; muted?: boolean }) => request<Chat>("PATCH", `/chats/${id}`, patch),
+  deleteChat: (id: string) => request<{ ok: boolean }>("DELETE", `/chats/${id}`),
+  addChatMember: (id: string, sessionId: string) => request<Chat>("POST", `/chats/${id}/members`, { session_id: sessionId }),
+  removeChatMember: (id: string, sessionId: string) => request<Chat>("DELETE", `/chats/${id}/members/${sessionId}`),
+  muteChatMember: (id: string, sessionId: string, muted: boolean) => request<Chat>("PATCH", `/chats/${id}/members/${sessionId}`, { muted }),
+  chatMessages: (id: string, opts: { before?: number; after?: number; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.before) q.set("before", String(opts.before));
+    if (opts.after) q.set("after", String(opts.after));
+    if (opts.limit) q.set("limit", String(opts.limit));
+    return request<{ messages: ChatMessage[] }>("GET", `/chats/${id}/messages?${q}`);
+  },
+  markChatRead: (id: string, lastId: number) => request<{ ok: boolean }>("POST", `/chats/${id}/read`, { last_id: lastId }),
+  /** Post as the owner; with images it goes as multipart. */
+  postChatMessage: async (id: string, text: string, replyTo: number, images: File[]): Promise<ChatMessage> => {
+    if (!images.length) return request<ChatMessage>("POST", `/chats/${id}/messages`, { text, reply_to: replyTo || 0 });
+    const form = new FormData();
+    form.set("text", text);
+    if (replyTo) form.set("reply_to", String(replyTo));
+    for (const f of images) form.append("images", f, f.name || "image");
+    const res = await fetch(`/api/v1/chats/${id}/messages`, {
+      method: "POST",
+      headers: csrf ? { "X-CSRF-Token": csrf, Accept: "application/json" } : { Accept: "application/json" },
+      credentials: "same-origin",
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, data.error || res.statusText);
+    return data as ChatMessage;
+  },
 };
+
+export interface ChatMember {
+  session_id: string;
+  name: string;
+  handle: string;
+  agent: string;
+  persona: string;
+  state: SessionState;
+  /** What the agent is doing right now (hook activity), when known. */
+  activity?: string;
+  muted: boolean;
+}
+
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  content_type: string;
+  size: number;
+  url: string;
+}
+
+export interface ChatMessage {
+  id: number;
+  chat_id: string;
+  author: { kind: "owner" | "session"; session_id?: string; name: string; handle?: string; deleted?: boolean };
+  text: string;
+  /** Session ids mentioned (or replied to). */
+  mentions: string[];
+  everyone: boolean;
+  reply_to?: number;
+  attachments: ChatAttachment[];
+  /** Recipient session id -> "queued" | "delivered". */
+  deliveries: Record<string, string>;
+  created_at: string;
+}
+
+export interface Chat {
+  id: string;
+  name: string;
+  description: string;
+  muted: boolean;
+  members: ChatMember[];
+  last_message?: ChatMessage;
+  unread: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Chat events from the shared event stream: a chat changed (null: deleted) or a message arrived or changed. */
+export function subscribeChats(onChat: (id: string, chat: Chat | null) => void, onMessage: (msg: ChatMessage) => void, onOpen?: () => void): () => void {
+  let es: EventSource | null = null;
+  let stopped = false;
+  let retry = 1000;
+  const connect = () => {
+    if (stopped) return;
+    es = new EventSource("/api/v1/sessions/events");
+    es.onopen = () => {
+      retry = 1000;
+      onOpen?.();
+    };
+    es.addEventListener("chat", (ev: MessageEvent) => {
+      try {
+        const d = JSON.parse(ev.data) as { id: string; chat?: Chat };
+        onChat(d.id, d.chat ?? null);
+      } catch {
+        /* ignore malformed frames */
+      }
+    });
+    es.addEventListener("chat_message", (ev: MessageEvent) => {
+      try {
+        const d = JSON.parse(ev.data) as { message?: ChatMessage };
+        if (d.message) onMessage(d.message);
+      } catch {
+        /* ignore malformed frames */
+      }
+    });
+    es.onerror = () => {
+      es?.close();
+      es = null;
+      if (!stopped) {
+        setTimeout(connect, retry);
+        retry = Math.min(retry * 2, 30000);
+      }
+    };
+  };
+  connect();
+  return () => {
+    stopped = true;
+    es?.close();
+  };
+}
 
 /** Subscribe to session state changes over SSE. Returns a stop function. */
 export function subscribeSessions(
