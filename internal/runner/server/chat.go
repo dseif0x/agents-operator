@@ -34,7 +34,10 @@ type Chat struct {
 	Home string
 	// Roots are the directories the agent may send images from.
 	Roots []string
-	Log   *slog.Logger
+	// QuietIdle is how long an agent without hooks must print nothing to
+	// count as idle (default 20s; 3s when its last line looks like a prompt).
+	QuietIdle time.Duration
+	Log       *slog.Logger
 
 	mu      sync.Mutex
 	conn    *websocket.Conn
@@ -286,10 +289,14 @@ func (c *Chat) idle(now time.Time) bool {
 			return quiet > 1500*time.Millisecond
 		}
 	}
-	if quiet > 20*time.Second {
+	long := c.QuietIdle
+	if long <= 0 {
+		long = 20 * time.Second
+	}
+	if quiet > long {
 		return true
 	}
-	return quiet > 3*time.Second && c.Proc.Status(c.Agent, 0).NeedsAttention
+	return quiet > min(3*time.Second, long) && c.Proc.Status(c.Agent, 0).NeedsAttention
 }
 
 // controlRE matches what must never be typed into the terminal from a

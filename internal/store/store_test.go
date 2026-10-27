@@ -23,7 +23,7 @@ func stores(t *testing.T) map[string]Store {
 			t.Fatalf("open postgres: %v", err)
 		}
 		// Start from a clean slate; tests share one database.
-		_, _ = pg.pool.Exec(ctx, "TRUNCATE session_events, sessions, user_credentials, accounts, user_profiles, repo_usage, users")
+		_, _ = pg.pool.Exec(ctx, "TRUNCATE chat_reads, chat_deliveries, chat_attachments, chat_messages, chat_members, chats, session_events, sessions, user_credentials, accounts, user_profiles, repo_usage, users")
 		t.Cleanup(pg.Close)
 		out["postgres"] = pg
 	} else {
@@ -268,6 +268,128 @@ func exercise(t *testing.T, st Store) {
 	sa.AIAccount = ""
 	if got, err := st.Sessions().Update(ctx, sa); err != nil || got.AIAccount != "" {
 		t.Fatalf("ai account after update = %+v, %v", got, err)
+	}
+
+	// handles
+	h1 := &Session{OwnerID: u.ID, Name: "h1", Agent: "claude", State: StateCreating, Handle: "eager_turing"}
+	if err := st.Sessions().Create(ctx, h1); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Sessions().Create(ctx, &Session{OwnerID: u.ID, Name: "h2", Agent: "claude", State: StateCreating, Handle: "eager_turing"}); err != ErrConflict {
+		t.Fatalf("duplicate handle err = %v", err)
+	}
+	if err := st.Sessions().Create(ctx, &Session{OwnerID: adm.ID, Name: "h3", Agent: "claude", State: StateCreating, Handle: "eager_turing"}); err != nil {
+		t.Fatalf("same handle for another owner: %v", err)
+	}
+	if err := st.Sessions().SetHandle(ctx, sa.ID, "brave_curie"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Sessions().SetHandle(ctx, sa.ID, "calm_bohr"); err != ErrNotFound {
+		t.Fatalf("second SetHandle err = %v", err)
+	}
+	h1.Persona = "Be blunt."
+	if got, err := st.Sessions().Update(ctx, h1); err != nil || got.Handle != "eager_turing" || got.Persona != "Be blunt." {
+		t.Fatalf("update kept handle = %+v, %v", got, err)
+	}
+
+	// chats
+	chat := &Chat{OwnerID: u.ID, Name: "launch", Description: "ship it"}
+	if err := st.Chats().Create(ctx, chat); err != nil || chat.ID == "" {
+		t.Fatalf("create chat: %v", err)
+	}
+	for _, sid := range []string{sa.ID, h1.ID} {
+		if err := st.Chats().AddMember(ctx, chat.ID, sid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.Chats().AddMember(ctx, chat.ID, sa.ID); err != ErrConflict {
+		t.Fatalf("duplicate member err = %v", err)
+	}
+	if ids, _ := st.Chats().ChatsOf(ctx, h1.ID); len(ids) != 1 || ids[0] != chat.ID {
+		t.Fatalf("chats of = %v", ids)
+	}
+	m1 := &ChatMessage{ChatID: chat.ID, Text: "hello", Mentions: []string{h1.ID}}
+	if err := st.Chats().Post(ctx, m1, []NewAttachment{{Name: "a.png", ContentType: "image/png", Data: []byte("png")}}, []string{sa.ID, h1.ID}); err != nil || m1.ID == 0 || len(m1.Attachments) != 1 {
+		t.Fatalf("post = %+v, %v", m1, err)
+	}
+	m2 := &ChatMessage{ChatID: chat.ID, AuthorSession: h1.ID, AuthorName: "h1", Text: "hi back", ReplyTo: m1.ID, Everyone: true}
+	if err := st.Chats().Post(ctx, m2, nil, []string{sa.ID}); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := st.Chats().Messages(ctx, chat.ID, 0, 0, 10)
+	if err != nil || len(msgs) != 2 || msgs[0].ID != m1.ID || len(msgs[0].Attachments) != 1 || msgs[1].AuthorSession != h1.ID || msgs[1].ReplyTo != m1.ID || !msgs[1].Everyone || msgs[0].Mentions[0] != h1.ID {
+		t.Fatalf("messages = %+v, %v", msgs, err)
+	}
+	if older, _ := st.Chats().Messages(ctx, chat.ID, m2.ID, 0, 10); len(older) != 1 || older[0].ID != m1.ID {
+		t.Fatalf("before = %+v", older)
+	}
+	if newer, _ := st.Chats().Messages(ctx, chat.ID, 0, m1.ID, 10); len(newer) != 1 || newer[0].ID != m2.ID {
+		t.Fatalf("after = %+v", newer)
+	}
+	a, inChat, data, err := st.Chats().Attachment(ctx, m1.Attachments[0].ID)
+	if err != nil || inChat != chat.ID || string(data) != "png" || a.ContentType != "image/png" {
+		t.Fatalf("attachment = %+v %s %v", a, inChat, err)
+	}
+	if n, _ := st.Chats().AttachmentBytes(ctx, u.ID); n != 3 {
+		t.Fatalf("attachment bytes = %d", n)
+	}
+	if q, _ := st.Chats().Queued(ctx, sa.ID); len(q) != 2 {
+		t.Fatalf("queued = %d", len(q))
+	}
+	if err := st.Chats().MarkDelivered(ctx, sa.ID, []int64{m1.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if q, _ := st.Chats().Queued(ctx, sa.ID); len(q) != 1 || q[0].ID != m2.ID {
+		t.Fatalf("queued after delivery = %+v", q)
+	}
+	if ds, _ := st.Chats().Deliveries(ctx, []int64{m1.ID}); len(ds) != 2 {
+		t.Fatalf("deliveries = %+v", ds)
+	}
+	if n, _ := st.Chats().Unread(ctx, chat.ID, OwnerReader); n != 1 { // the agent's message
+		t.Fatalf("owner unread = %d", n)
+	}
+	if n, _ := st.Chats().Unread(ctx, chat.ID, h1.ID); n != 1 { // the owner's message
+		t.Fatalf("h1 unread = %d", n)
+	}
+	_ = st.Chats().SetRead(ctx, chat.ID, OwnerReader, m2.ID)
+	_ = st.Chats().SetRead(ctx, chat.ID, OwnerReader, m1.ID) // never back
+	if n, _ := st.Chats().Unread(ctx, chat.ID, OwnerReader); n != 0 {
+		t.Fatalf("owner unread after reading = %d", n)
+	}
+	if err := st.Chats().SetMemberMuted(ctx, chat.ID, h1.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if ms, _ := st.Chats().Members(ctx, chat.ID); len(ms) != 2 || !ms[1].Muted {
+		t.Fatalf("members = %+v", ms)
+	}
+	if err := st.Chats().RemoveMember(ctx, chat.ID, sa.ID); err != nil {
+		t.Fatal(err)
+	}
+	if q, _ := st.Chats().Queued(ctx, sa.ID); len(q) != 0 {
+		t.Fatal("a removed member kept its queue")
+	}
+	chat.Name, chat.Muted = "renamed", true
+	if err := st.Chats().Update(ctx, chat); err != nil || chat.Name != "renamed" || !chat.Muted {
+		t.Fatalf("update chat = %+v, %v", chat, err)
+	}
+	if list, _ := st.Chats().List(ctx, u.ID); len(list) != 1 {
+		t.Fatalf("list = %+v", list)
+	}
+	// A deleted session leaves the chat but its messages stay.
+	if err := st.Sessions().Delete(ctx, h1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ms, _ := st.Chats().Members(ctx, chat.ID); len(ms) != 0 {
+		t.Fatalf("members after delete = %+v", ms)
+	}
+	if msgs, _ := st.Chats().Messages(ctx, chat.ID, 0, 0, 10); len(msgs) != 2 || msgs[1].AuthorName != "h1" {
+		t.Fatalf("messages after delete = %+v", msgs)
+	}
+	if err := st.Chats().Delete(ctx, chat.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Chats().Get(ctx, chat.ID); err != ErrNotFound {
+		t.Fatalf("get deleted chat err = %v", err)
 	}
 
 	// repo usage
