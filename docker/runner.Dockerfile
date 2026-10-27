@@ -17,7 +17,7 @@ ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     go build -ldflags="-s -w -X main.version=${VERSION}" -o /out/agent-runner ./cmd/agent-runner
 
-FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 ARG TARGETARCH
 # Pinned tool versions. Bump via build args or Dependabot-driven PRs.
 ARG NODE_VERSION=22.22.2
