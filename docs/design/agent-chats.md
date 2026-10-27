@@ -9,7 +9,7 @@ Today every session is an island. To get an implementer, a reviewer and a tester
 - **Chats:** the owner creates any number of chats and adds sessions to them. A session can be in several chats. Each chat looks and works like a group chat: a message list, an input box, images, `@mentions` and replies.
 - **Personas:** each session gets a **persona**, free-text notes on personality and role ("You are the reviewer. Be blunt, ask for tests."). It is applied as a system prompt for every agent type.
 - **Who answers:** a message without mentions reaches every agent in the chat, and each decides for itself whether it has something to say. `@reviewer` or a **reply** to one of its messages addresses one agent; `@everyone` asks all of them to answer.
-- **Agents talk to agents** the same way: they post, mention and reply like the owner does, within a loop guard.
+- **Agents talk to agents** the same way: they post, mention and reply like the owner does.
 
 **Non-goals:**
 - **No shared filesystem.** Work moves through git branches; chats carry the conversation, images and short notes.
@@ -24,7 +24,7 @@ xAI's Grok Bots (also in Cursor) are the closest existing product:
 - "Reply" on a bot's message directs the answer to it.
 - Bots hand work to each other inside the group.
 
-Its weak spot is a lesson. There is no automatic loop protection. A reported bug had bots that should have stayed quiet replying with a bare "." instead, and in a group each "." woke the other bots. Here, staying silent is simply not posting (there is no auto-reply), and the hub has a loop guard.
+Its weak spot is a lesson. A reported bug had bots that should have stayed quiet replying with a bare "." instead, and in a group each "." woke the other bots. Here, staying silent is simply not posting (there is no auto-reply). Grok has no automatic loop protection either; neither does this design at first (see "Loops").
 
 ## Constraints from what exists
 
@@ -106,12 +106,12 @@ That's all for the first version. The task board and session-control tools from 
 - **Needs permission or error:** nothing is typed. The message waits, and the chat shows it as "queued" for that agent.
 - **Stopped session:** messages wait in the hub and are delivered after the next start, as one summary prompt ("5 new messages in "launch", 1 addressed to you").
 
-**Loop guard.** Agents trigger each other: A posts, B answers, A replies, and so on. Every untagged agent message reaches all the others, so a chat of a few agents could keep itself busy for hours. The hub counts the messages agents have written since the owner last wrote in the chat. After 20 (configurable per chat), agent messages are still posted and visible, but they are no longer delivered to other agents, and the chat shows "paused: agents waiting for you". The next message from the owner resets the count. The owner can also mute a chat or a single member.
+**Loops.** Agents can trigger each other: A posts, B answers, A replies. Every untagged agent message reaches all the others. For now, the generated AGENTS.md section asks agents to post only when they add something, and the owner has two manual brakes: **mute a member** (its messages are posted but not delivered to other agents, and nothing is delivered to it) or **mute the chat** (nothing is delivered to anyone). An automatic guard (for example, holding agent-to-agent delivery after N agent messages without the owner) can be added later if loops turn out to be a real problem.
 
 ### 6. Web UI
 
 - **Layout,** like Discord or WhatsApp:
-  - **Chat list** (left, or the first screen on a phone): chats with the last message, an unread badge, and a "needs you" marker when a member waits for permission or the loop guard paused the chat.
+  - **Chat list** (left, or the first screen on a phone): chats with the last message, an unread badge, and a "needs you" marker when a member waits for permission.
   - **Chat view:** messages grouped by author with avatar, handle and time.
     - **Replies** show a quote of the message they answer; tapping it scrolls to the original.
     - **Markdown** is rendered with code blocks, tables, lists and links, using `marked` plus `DOMPurify`, with syntax highlighting for code.
@@ -123,7 +123,7 @@ That's all for the first version. The task board and session-control tools from 
     - A hint under the box says who the message goes to: "to everyone, whoever has something to say", "to @reviewer", or "everyone must answer".
     - Images by paste, drag and drop, or the file picker (phone camera included).
     - Enter sends; Shift+Enter starts a new line.
-  - **Info panel:** the description (editable), members with persona (link to edit it), current activity and a link to the terminal, add/remove members, loop guard and mute settings.
+  - **Info panel:** the description (editable), members with persona (link to edit it), current activity and a link to the terminal, add/remove members, mute the chat or a member.
 - **Navigation:** clicking an agent's handle opens its terminal. The session page gets a "Chats" drawer tab listing the session's chats.
 - **Live updates** come over the existing SSE stream (new messages, read state, member activity).
 - **Images** are served by the hub from `/api/v1/chats/{id}/attachments/{aid}`, behind the usual login cookie.
@@ -132,11 +132,11 @@ That's all for the first version. The task board and session-control tools from 
 
 ```sql
 sessions           + persona text, handle text, avatar text           -- handle unique per owner
-chats              (id, owner_id, name, description, agent_message_limit, muted, created_at)
+chats              (id, owner_id, name, description, muted, created_at)
 chat_members       (chat_id, session_id, muted, added_at)
 chat_messages      (id, chat_id, author_session /* null = owner */, text, mentions jsonb /* session ids, or ["everyone"] */, reply_to, created_at)
 chat_attachments   (id, message_id, content_type, size, data bytea)   -- Postgres, see below
-chat_deliveries    (message_id, session_id, state /* queued|delivered|held */, delivered_at)
+chat_deliveries    (message_id, session_id, state /* queued|delivered|muted */, delivered_at)
 chat_reads         (chat_id, reader /* owner or session */, last_message_id)
 ```
 
@@ -163,10 +163,10 @@ Messages are kept until the chat is deleted. Deleting a session removes it from 
 ## Phases
 
 1. **Personas and handles:** the session form field, applied to Claude Code, Codex and OpenCode. Useful on its own.
-2. **Chats with text:** data model, API, chat UI with Markdown, mentions, replies and `@everyone`, uplink, `agent-runner mcp` (`chats_list`, `chat_info`, `chat_read`, `chat_send`), idle delivery, loop guard.
+2. **Chats with text:** data model, API, chat UI with Markdown, mentions, replies and `@everyone`, uplink, `agent-runner mcp` (`chats_list`, `chat_info`, `chat_read`, `chat_send`), idle delivery, muting.
 3. **Images:** upload and inline display in the UI, attachments over the uplink, image paths both ways.
-4. **Polish:** Claude Code `Stop`-hook delivery while busy, unread badges and browser notifications, chat templates ("implementer + reviewer + tester" with personas and a description), muting.
-5. **Later, if wanted:** a shared task list per chat, or a tool for an agent to start helper sessions into a chat (never with wider settings than its own).
+4. **Polish:** Claude Code `Stop`-hook delivery while busy, unread badges and browser notifications, chat templates ("implementer + reviewer + tester" with personas and a description).
+5. **Later, if wanted:** an automatic loop guard, a shared task list per chat, or a tool for an agent to start helper sessions into a chat (never with wider settings than its own).
 
 Each phase ships on its own. Sessions that are in no chat behave exactly as today.
 
@@ -179,7 +179,7 @@ Each phase ships on its own. Sessions that are in no chat behave exactly as toda
 - **Hub:**
   - addressing: untagged → everyone with "decide yourself", mentions and replies → only those, `@everyone` → everyone with "answer", never to the author, unknown handles left as text;
   - the delivery queue for stopped sessions;
-  - the loop guard (count, hold, reset on the owner's message);
+  - muting: a muted member's messages are not delivered and it receives nothing; a muted chat delivers nothing;
   - membership checks on the uplink;
   - attachment quota;
   - Markdown sanitizing (a test corpus of XSS payloads rendered through the UI's pipeline).
@@ -190,10 +190,9 @@ Each phase ships on its own. Sessions that are in no chat behave exactly as toda
   - `@everyone`.
   - One agent handing work to the other with a mention.
   - An image round trip.
-  - The loop guard tripping with a low limit.
+  - Muting a member mid-conversation.
 
 ## Open questions
 
 1. **Handles:** session name by default, editable. Or should handles be fixed once set, so old messages keep pointing at the right agent after a rename?
-2. **Loop guard:** is 20 agent messages without the owner a sensible default?
-3. **Persona vs. system prompt:** fold the existing OpenCode system prompt and its "replace" mode into the persona, or keep "replace" as an advanced OpenCode-only option?
+2. **Persona vs. system prompt:** fold the existing OpenCode system prompt and its "replace" mode into the persona, or keep "replace" as an advanced OpenCode-only option?
