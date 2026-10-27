@@ -14,13 +14,13 @@ import (
 
 func TestSplitPrivateEnv(t *testing.T) {
 	clean, private := splitPrivateEnv([]string{
-		"RUNNER_TOKEN=tok", "GIT_SSH_KEY=-----BEGIN\nx", "AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN=e30=",
+		"RUNNER_TOKEN=tok", "AGENTS_OPERATOR_GIT_SSH=-----BEGIN\nx", "AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN=e30=",
 		"GH_TOKEN=ghp_x", "ANTHROPIC_API_KEY=sk", "PATH=/bin", "EMPTY=",
 	})
 	if !slices.Equal(clean, []string{"GH_TOKEN=ghp_x", "ANTHROPIC_API_KEY=sk", "PATH=/bin", "EMPTY="}) {
 		t.Fatalf("clean = %q", clean)
 	}
-	if len(private) != 3 || private["RUNNER_TOKEN"] != "tok" || private["GIT_SSH_KEY"] != "-----BEGIN\nx" || private["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"] != "e30=" {
+	if len(private) != 3 || private["RUNNER_TOKEN"] != "tok" || private["AGENTS_OPERATOR_GIT_SSH"] != "-----BEGIN\nx" || private["AGENTS_OPERATOR_LOGIN_CLAUDE_LOGIN"] != "e30=" {
 		t.Fatalf("private = %q", private)
 	}
 }
@@ -31,7 +31,7 @@ func TestPrivateFileRoundTrip(t *testing.T) {
 	if err := os.WriteFile(stale, []byte(`{"RUNNER_TOKEN":"old"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	path, err := writePrivateFile(dir, map[string]string{"RUNNER_TOKEN": "tok", "GIT_SSH_KEY": "key", "PATH": "/evil"})
+	path, err := writePrivateFile(dir, map[string]string{"RUNNER_TOKEN": "tok", "AGENTS_OPERATOR_GIT_SSH": "key", "PATH": "/evil"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,13 +44,13 @@ func TestPrivateFileRoundTrip(t *testing.T) {
 
 	t.Setenv(runner.EnvPrivateFile, path)
 	t.Setenv("RUNNER_TOKEN", "")
-	t.Setenv("GIT_SSH_KEY", "")
+	t.Setenv("AGENTS_OPERATOR_GIT_SSH", "")
 	t.Setenv("PATH", os.Getenv("PATH"))
 	if err := loadPrivateEnv(); err != nil {
 		t.Fatal(err)
 	}
-	if os.Getenv("RUNNER_TOKEN") != "tok" || os.Getenv("GIT_SSH_KEY") != "key" {
-		t.Fatalf("not restored: %q %q", os.Getenv("RUNNER_TOKEN"), os.Getenv("GIT_SSH_KEY"))
+	if os.Getenv("RUNNER_TOKEN") != "tok" || os.Getenv("AGENTS_OPERATOR_GIT_SSH") != "key" {
+		t.Fatalf("not restored: %q %q", os.Getenv("RUNNER_TOKEN"), os.Getenv("AGENTS_OPERATOR_GIT_SSH"))
 	}
 	if os.Getenv("PATH") == "/evil" {
 		t.Fatal("a variable that is not runner-private was taken from the file")
@@ -75,7 +75,7 @@ func TestPrivateFileRoundTrip(t *testing.T) {
 
 func TestEnvDropsRunnerPrivate(t *testing.T) {
 	t.Setenv("RUNNER_TOKEN", "tok")
-	t.Setenv("GIT_SSH_KEY", "key")
+	t.Setenv("AGENTS_OPERATOR_GIT_SSH", "key")
 	t.Setenv("AGENTS_OPERATOR_LOGIN_CODEX_LOGIN", "e30=")
 	ws := &Workspace{Root: t.TempDir()}
 	for _, kv := range ws.Env() {

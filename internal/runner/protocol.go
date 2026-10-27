@@ -212,6 +212,31 @@ func DecodeLoginBundle(kind string, data []byte) LoginBundle {
 	return LoginBundle{Files: map[string][]byte{LoginFile[kind]: data}}
 }
 
+// GitHTTPSCredential is one HTTPS git account: the token git gets for Host
+// (a host name, a pattern such as *.example.com, or "*" for any other).
+type GitHTTPSCredential struct {
+	Host     string `json:"host"`
+	Username string `json:"username,omitempty"`
+	Token    string `json:"token"`
+}
+
+// GitSSHKey is one SSH git account: the private key ssh uses for Host.
+type GitSSHKey struct {
+	Host string `json:"host"`
+	Key  string `json:"key"`
+}
+
+// AIAccount describes an AI account a session gets, without its key: that
+// is in the variable KeyEnv. Kind is a store.Acct* kind.
+type AIAccount struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Kind    string   `json:"kind"`
+	BaseURL string   `json:"base_url,omitempty"`
+	Models  []string `json:"models,omitempty"`
+	KeyEnv  string   `json:"key_env"`
+}
+
 // Environment variables the runner reads. All of them are injected by the
 // hub through the per-session Secret or the pod spec.
 const (
@@ -219,7 +244,7 @@ const (
 	EnvAgent       = "AGENT"
 	EnvAutonomous  = "AUTONOMOUS"
 	// EnvAgentGitCredentials is "false" when the agent must not get the git
-	// credentials (GIT_SSH_KEY, GIT_HTTPS_TOKEN, GH_TOKEN): the runner then
+	// credentials (EnvGitSSH, EnvGitHTTPS, GH_TOKEN): the runner then
 	// keeps them to itself and uses them only to clone. Absent means true.
 	EnvAgentGitCredentials = "AGENT_GIT_CREDENTIALS"
 	// EnvEgress lists, comma-separated, the local network destinations the
@@ -239,11 +264,23 @@ const (
 	EnvGitHubToken         = "GH_TOKEN" // GitHub token for gh and https clones of github.com
 	EnvGitUserName         = "GIT_USER_NAME"
 	EnvGitUserEmail        = "GIT_USER_EMAIL"
-	EnvGitSSHKey           = "GIT_SSH_KEY"            // private key contents
-	EnvGitHTTPSToken       = "GIT_HTTPS_TOKEN"        // token for https clones
-	EnvSeedPrefix          = "AGENTS_OPERATOR_LOGIN_" // + upper(kind): base64 credential file to seed
+	// EnvGitHTTPS is the owner's HTTPS git accounts, JSON []GitHTTPSCredential,
+	// answered per host by `agent-runner git-credential`.
+	EnvGitHTTPS = "AGENTS_OPERATOR_GIT_HTTPS"
+	// EnvGitSSH is the owner's SSH keys, JSON []GitSSHKey. Runner-only: it
+	// writes them to files and an ssh config with one Host block per key.
+	EnvGitSSH     = "AGENTS_OPERATOR_GIT_SSH"
+	EnvSeedPrefix = "AGENTS_OPERATOR_LOGIN_" // + upper(kind): base64 credential file to seed
+	// EnvSeedAccountPrefix + upper(kind) is the id of the account the seed
+	// above comes from; a session switched to another account is re-seeded.
+	EnvSeedAccountPrefix = "AGENTS_OPERATOR_SEED_ACCOUNT_"
+	// EnvAIAccounts describes the AI accounts an OpenCode or shell session
+	// gets, JSON []AIAccount; each key is in its own variable (KeyEnv).
+	EnvAIAccounts = "AGENTS_OPERATOR_AI_ACCOUNTS"
+	// EnvAIKeyPrefix starts the variables holding those keys.
+	EnvAIKeyPrefix = "AGENTS_OPERATOR_KEY_"
 	// EnvPrivateFile is set by `agent-runner init`: the file holding the
-	// runner-only variables above (RUNNER_TOKEN, GIT_SSH_KEY, the login
+	// runner-only variables above (RUNNER_TOKEN, the SSH keys, the login
 	// seeds), moved out of the environment so PID 1 does not carry them.
 	EnvPrivateFile = "AGENTS_OPERATOR_PRIVATE_FILE"
 	// EnvClaudeOAuthToken is Claude Code's own long-lived token variable (the
@@ -251,10 +288,8 @@ const (
 	// runner only looks at them to skip the CLI's onboarding prompts.
 	EnvClaudeOAuthToken = "CLAUDE_CODE_OAUTH_TOKEN"
 	EnvAnthropicAPIKey  = "ANTHROPIC_API_KEY"
-	// The account's Unjailed (OpenAI-compatible) endpoint, which OpenCode
-	// sessions get as an "unjailed" provider (cmd/agent-runner/opencode.go).
-	EnvUnjailedAPIKey   = "UNJAILED_API_KEY"
-	EnvUnjailedBaseURL  = "UNJAILED_BASE_URL"
+	EnvAnthropicBaseURL = "ANTHROPIC_BASE_URL"
+	EnvOpenAIAPIKey     = "OPENAI_API_KEY"
 	EnvWorkspace        = "WORKSPACE"               // defaults to /workspace
 	EnvListen           = "RUNNER_LISTEN"           // defaults to :7681
 	EnvHookListen       = "RUNNER_HOOK_LISTEN"      // defaults to 127.0.0.1:7682

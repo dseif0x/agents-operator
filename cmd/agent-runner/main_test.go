@@ -54,51 +54,57 @@ func TestReposAndWorkDir(t *testing.T) {
 }
 
 func TestEnvHidesSecretsAndAddsGitHubToken(t *testing.T) {
+	clearGitConfigEnv(t)
+	t.Setenv(runner.EnvAgentGitCredentials, "true")
 	t.Setenv(runner.EnvRunnerToken, "secret")
-	t.Setenv(runner.EnvGitSSHKey, "KEY")
+	t.Setenv(runner.EnvGitSSH, jsonEnv(t, []runner.GitSSHKey{{Host: "*", Key: testKey}}))
 	t.Setenv(runner.EnvSeedPrefix+"CLAUDE_LOGIN", "abc")
 	t.Setenv(runner.EnvGitHubToken, "ghp_x")
+	t.Setenv(runner.EnvGitHTTPS, jsonEnv(t, []runner.GitHTTPSCredential{{Host: "github.com", Token: "ghp_x"}}))
 	t.Setenv("GITHUB_TOKEN", "")
 	os.Unsetenv("GITHUB_TOKEN")
 	ws := &Workspace{Root: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	env := map[string]string{}
-	for _, kv := range ws.Env() {
-		k, v, _ := strings.Cut(kv, "=")
-		env[k] = v
+	if err := ws.installGitCredentials(); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := env[runner.EnvRunnerToken]; ok {
-		t.Fatal("runner token leaked into the agent env")
-	}
-	if _, ok := env[runner.EnvGitSSHKey]; ok {
-		t.Fatal("ssh key leaked into the agent env")
-	}
-	if _, ok := env[runner.EnvSeedPrefix+"CLAUDE_LOGIN"]; ok {
-		t.Fatal("login seed leaked into the agent env")
+	env := envMap(ws.Env())
+	for _, k := range []string{runner.EnvRunnerToken, runner.EnvGitSSH, runner.EnvSeedPrefix + "CLAUDE_LOGIN"} {
+		if _, ok := env[k]; ok {
+			t.Fatalf("%s leaked into the agent env", k)
+		}
 	}
 	if env["GITHUB_TOKEN"] != "ghp_x" || env["GH_TOKEN"] != "ghp_x" {
 		t.Fatalf("github token env = %q / %q", env["GH_TOKEN"], env["GITHUB_TOKEN"])
 	}
-	if env["HOME"] != ws.HomeDir() || env["GIT_SSH_COMMAND"] == "" || env["TMPDIR"] != ws.TempDir() {
+	if env["HOME"] != ws.HomeDir() || !strings.HasPrefix(env["GIT_SSH_COMMAND"], "ssh -F ") || env["TMPDIR"] != ws.TempDir() {
 		t.Fatalf("env = %v", env)
 	}
-	// With an SSH key present, remotes are not rewritten but the helper is on.
+	// With an SSH key for github.com, remotes are not rewritten but the helper is on.
 	if env["GIT_CONFIG_COUNT"] != "1" || env["GIT_CONFIG_KEY_0"] != "credential.helper" {
 		t.Fatalf("git config env = %v", env)
 	}
 
 	// Token only: git@github.com: remotes go over HTTPS.
-	t.Setenv(runner.EnvGitSSHKey, "")
-	env = map[string]string{}
-	for _, kv := range ws.Env() {
-		k, v, _ := strings.Cut(kv, "=")
-		env[k] = v
+	t.Setenv(runner.EnvGitSSH, "")
+	if err := ws.installGitCredentials(); err != nil {
+		t.Fatal(err)
 	}
+	env = envMap(ws.Env())
 	if env["GIT_CONFIG_COUNT"] != "3" || env["GIT_CONFIG_KEY_1"] != "url.https://github.com/.insteadOf" || env["GIT_CONFIG_VALUE_1"] != "git@github.com:" {
 		t.Fatalf("rewrite config env = %v", env)
 	}
 	// The test host may carry its own GIT_SSH_COMMAND; ours must not be there.
-	if v := env["GIT_SSH_COMMAND"]; strings.Contains(v, ws.sshKeyPath()) {
-		t.Fatal("GIT_SSH_COMMAND points at a key that was not installed")
+	if v := env["GIT_SSH_COMMAND"]; strings.Contains(v, "agents-operator") {
+		t.Fatal("GIT_SSH_COMMAND points at keys that were not installed")
+	}
+
+	// A key for another host only: github.com still goes over HTTPS.
+	t.Setenv(runner.EnvGitSSH, jsonEnv(t, []runner.GitSSHKey{{Host: "gitlab.com", Key: testKey}}))
+	if err := ws.installGitCredentials(); err != nil {
+		t.Fatal(err)
+	}
+	if env = envMap(ws.Env()); env["GIT_CONFIG_COUNT"] != "3" {
+		t.Fatalf("rewrite config env with a gitlab.com key = %v", env)
 	}
 }
 
@@ -111,7 +117,7 @@ func TestAgentsFile(t *testing.T) {
 	}
 	root := t.TempDir()
 	t.Setenv(runner.EnvGitHubToken, "ghp_x")
-	t.Setenv(runner.EnvGitSSHKey, "")
+	t.Setenv(runner.EnvGitSSH, "")
 	t.Setenv(runner.EnvGitUserName, "Alice")
 	t.Setenv(runner.EnvGitUserEmail, "a@b.c")
 	ws := &Workspace{Root: root, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -236,6 +242,29 @@ func TestSeedLogins(t *testing.T) {
 	ws.seedLogins()
 	if got, _ := os.ReadFile(filepath.Join(ws.HomeDir(), ".claude", ".credentials.json")); string(got) != `{"tok":"newer"}` {
 		t.Fatal("seed overwrote an existing file")
+	}
+
+	// Files that predate account markers are adopted for the account.
+	t.Setenv(runner.EnvSeedAccountPrefix+"CLAUDE_LOGIN", "acct-1")
+	ws.seedLogins()
+	if got, _ := os.ReadFile(filepath.Join(ws.HomeDir(), ".claude", ".credentials.json")); string(got) != `{"tok":"newer"}` {
+		t.Fatal("seed overwrote the session's files on adopting them")
+	}
+	// The same account again: still the session's own copy.
+	ws.seedLogins()
+	if got, _ := os.ReadFile(filepath.Join(ws.HomeDir(), ".claude", ".credentials.json")); string(got) != `{"tok":"newer"}` {
+		t.Fatal("seed overwrote the files of the same account")
+	}
+	// Switched to another login account: its files replace the old ones.
+	other, _ := runner.EncodeLoginBundle(runner.LoginBundle{Files: map[string][]byte{".claude/.credentials.json": []byte(`{"tok":"other"}`)}})
+	t.Setenv(runner.EnvSeedPrefix+"CLAUDE_LOGIN", base64.StdEncoding.EncodeToString(other))
+	t.Setenv(runner.EnvSeedAccountPrefix+"CLAUDE_LOGIN", "acct-2")
+	ws.seedLogins()
+	if got, _ := os.ReadFile(filepath.Join(ws.HomeDir(), ".claude", ".credentials.json")); string(got) != `{"tok":"other"}` {
+		t.Fatalf("switched account not seeded: %s", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(ws.HomeDir(), ".config", "agents-operator", "login-claude_login")); string(got) != "acct-2\n" {
+		t.Fatalf("marker = %q", got)
 	}
 }
 

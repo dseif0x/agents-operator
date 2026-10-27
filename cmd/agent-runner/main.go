@@ -217,9 +217,12 @@ type Workspace struct {
 	Agent string
 	Log   *slog.Logger
 	repos []store.Repo
-	// cloneKey is the SSH key file the clones use when the agent must not
-	// have the key; it exists only during Bootstrap.
-	cloneKey string
+	// sshConfig is the ssh config with the owner's SSH keys that git uses
+	// (GIT_SSH_COMMAND), "" without keys. When the agent must not have the
+	// keys it lies in cloneSSHDir outside HOME, which exists only during
+	// Bootstrap.
+	sshConfig   string
+	cloneSSHDir string
 }
 
 // HomeDir is the agent's HOME on the PVC.

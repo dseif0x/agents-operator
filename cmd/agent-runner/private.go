@@ -16,7 +16,7 @@ import (
 // pod, so whatever sits in another process's environment or memory there is
 // the agent's to read through /proc, unless that process is non-dumpable.
 // The runner keeps a few values from the agent (its own bearer token, the
-// SSH key it writes to disk, the saved logins it seeds), and two steps keep
+// SSH keys it writes to disk, the saved logins it seeds), and two steps keep
 // them out of reach:
 //
 //   - `agent-runner init <command>` is the container entrypoint. Before
@@ -37,13 +37,13 @@ const privateFilePattern = "agents-operator-private-*"
 // alone and must never reach the agent. The git tokens join them when the
 // session keeps git credentials from the agent.
 func runnerPrivate(key string) bool {
-	return key == runner.EnvRunnerToken || key == runner.EnvGitSSHKey || strings.HasPrefix(key, runner.EnvSeedPrefix) ||
+	return key == runner.EnvRunnerToken || key == runner.EnvGitSSH || strings.HasPrefix(key, runner.EnvSeedPrefix) ||
 		(gitToken(key) && !agentGitCredentials())
 }
 
 // gitToken reports whether key carries a git or GitHub token.
 func gitToken(key string) bool {
-	return key == runner.EnvGitHTTPSToken || key == runner.EnvGitHubToken || key == "GITHUB_TOKEN"
+	return key == runner.EnvGitHTTPS || key == runner.EnvGitHubToken || key == "GITHUB_TOKEN"
 }
 
 // agentGitCredentials reports whether the agent may use the owner's git

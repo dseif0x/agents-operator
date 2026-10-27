@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -55,57 +56,106 @@ type User struct {
 	Disabled     bool
 }
 
-// Credential kinds. Values live in the per-user Kubernetes Secret, never
-// here; the row only records which kinds are set.
+// Account kinds. An account is one credential with a name: AI accounts
+// sign in to a model provider, git accounts to a git host. Values live in
+// the per-user Kubernetes Secret under AccountSecretKey, never here.
+const (
+	// AcctAnthropicAPIKey is an Anthropic API key, with an optional base URL
+	// (a gateway such as LiteLLM).
+	AcctAnthropicAPIKey = "anthropic_api_key"
+	// AcctClaudeOAuthToken is a long-lived Claude Code token from
+	// `claude setup-token`, projected as CLAUDE_CODE_OAUTH_TOKEN. Unlike a
+	// saved login it never rotates, so any number of sessions can share it.
+	AcctClaudeOAuthToken = "claude_oauth_token"
+	// AcctClaudeLogin and AcctCodexLogin are a CLI's saved login files
+	// (runner.LoginBundle), saved from a session.
+	AcctClaudeLogin = "claude_login"
+	AcctCodexLogin  = "codex_login"
+	// AcctOpenAIAPIKey is an OpenAI API key.
+	AcctOpenAIAPIKey = "openai_api_key"
+	// AcctOpenAICompatible is any OpenAI-compatible endpoint: base URL, key
+	// and optionally the models to offer (else the endpoint's model list).
+	AcctOpenAICompatible = "openai_compatible"
+	// AcctUnjailed is an unjailedai.com key (base URL optional): an
+	// OpenAI-compatible endpoint whose models OpenCode is told the limits of.
+	AcctUnjailed = "unjailed"
+	// AcctGitHTTPS is a token for one git host over HTTPS (username
+	// optional); the one for github.com is also the GitHub CLI's token.
+	AcctGitHTTPS = "git_https"
+	// AcctGitSSH is an SSH private key for one git host.
+	AcctGitSSH = "git_ssh"
+)
+
+// AccountKinds lists every accepted kind, in the order the UI offers them.
+var AccountKinds = []string{
+	AcctAnthropicAPIKey, AcctClaudeOAuthToken, AcctClaudeLogin, AcctOpenAIAPIKey, AcctCodexLogin,
+	AcctOpenAICompatible, AcctUnjailed, AcctGitHTTPS, AcctGitSSH,
+}
+
+// ValidAccountKind reports whether kind is known.
+func ValidAccountKind(kind string) bool { return slices.Contains(AccountKinds, kind) }
+
+// GitAccountKind reports whether kind is a git account (one per host).
+func GitAccountKind(kind string) bool { return kind == AcctGitHTTPS || kind == AcctGitSSH }
+
+// AnyHost is the host of a git account that serves every host no other
+// account of its kind names.
+const AnyHost = "*"
+
+// Account is one row of the accounts table.
+type Account struct {
+	ID     string
+	UserID string
+	Kind   string
+	Name   string
+	// Host is the git host (git accounts only): "github.com", a pattern
+	// such as "*.example.com", or AnyHost.
+	Host string
+	// BaseURL is the endpoint (Anthropic key, OpenAI-compatible, Unjailed).
+	BaseURL string
+	// Username is the HTTPS username (git_https; empty = x-access-token).
+	Username string
+	// Models is the model list of an OpenAI-compatible endpoint; empty =
+	// ask the endpoint.
+	Models    []string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// AccountSecretKey is the key of an account's value in the user's Secret.
+func AccountSecretKey(id string) string { return "acct-" + id }
+
+// Profile is a user's settings that are not credentials.
+type Profile struct {
+	UserID   string
+	GitName  string
+	GitEmail string
+	// Defaults maps an agent (claude, codex) to the account its sessions
+	// use when they do not pick one.
+	Defaults  map[string]string
+	UpdatedAt time.Time
+}
+
+// Legacy credential kinds: the fixed slots of user_credentials before
+// accounts. Only the migration (session.MigrateCredentials) reads them.
 const (
 	CredAnthropicAPIKey  = "anthropic_api_key"
 	CredAnthropicBaseURL = "anthropic_base_url"
 	CredOpenAIAPIKey     = "openai_api_key"
-	// The Unjailed (OpenAI-compatible) endpoint OpenCode sessions use: its
-	// key and base URL, stored under the names they had when the Unjailed
-	// CLI and then OpenClaude used them. The model is chosen in OpenCode.
-	CredUnjailedAPIKey  = "unjailed_api_key"
-	CredUnjailedBaseURL = "openclaude_base_url"
-	CredGitSSHKey       = "git_ssh_key"
-	CredGitHTTPSToken   = "git_https_token"
-	CredGitHubToken     = "github_token"
-	CredGitUserName     = "git_user_name"
-	CredGitUserEmail    = "git_user_email"
-	// CredClaudeOAuthToken is a long-lived Claude Code token from
-	// `claude setup-token`, projected as CLAUDE_CODE_OAUTH_TOKEN. Unlike a
-	// saved login it never rotates, so any number of sessions can share it.
+	CredUnjailedAPIKey   = "unjailed_api_key"
+	CredUnjailedBaseURL  = "openclaude_base_url"
+	CredGitSSHKey        = "git_ssh_key"
+	CredGitHTTPSToken    = "git_https_token"
+	CredGitHubToken      = "github_token"
+	CredGitUserName      = "git_user_name"
+	CredGitUserEmail     = "git_user_email"
 	CredClaudeOAuthToken = "claude_oauth_token"
 	CredClaudeLogin      = "claude_login"
 	CredCodexLogin       = "codex_login"
 )
 
-// CredentialKinds lists every accepted kind.
-var CredentialKinds = []string{
-	CredAnthropicAPIKey, CredAnthropicBaseURL, CredClaudeOAuthToken, CredOpenAIAPIKey,
-	CredUnjailedAPIKey, CredUnjailedBaseURL,
-	CredGitSSHKey, CredGitHTTPSToken, CredGitHubToken, CredGitUserName, CredGitUserEmail,
-	CredClaudeLogin, CredCodexLogin,
-}
-
-// SecretKinds are the credential kinds whose values must never be echoed
-// back by the API. The others (base URL, git identity) are plain settings.
-var SecretKinds = map[string]bool{
-	CredAnthropicAPIKey: true, CredClaudeOAuthToken: true, CredOpenAIAPIKey: true, CredUnjailedAPIKey: true, CredGitSSHKey: true,
-	CredGitHTTPSToken: true, CredGitHubToken: true, CredClaudeLogin: true, CredCodexLogin: true,
-}
-
-// ValidCredentialKind reports whether kind is known.
-func ValidCredentialKind(kind string) bool {
-	for _, k := range CredentialKinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
-}
-
-// Credential records that a user has a value of a given kind stored in
-// their Kubernetes Secret under SecretRef.
+// Credential is a legacy user_credentials row: the user has a value of a
+// given kind in their Kubernetes Secret under SecretRef.
 type Credential struct {
 	UserID    string
 	Kind      string
@@ -160,14 +210,17 @@ type Session struct {
 	// AgentDefinition is an OpenClaude agent definition (Markdown with
 	// front matter, see internal/agentdef) the session starts with --agent.
 	AgentDefinition string
-	State           string
-	StateReason     string
-	Generation      int
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	LastAttachedAt  *time.Time
-	LastOutputAt    *time.Time
-	DeletedAt       *time.Time
+	// AIAccount is the account a Claude Code or Codex session signs in
+	// with; empty = the owner's default for the agent.
+	AIAccount      string
+	State          string
+	StateReason    string
+	Generation     int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastAttachedAt *time.Time
+	LastOutputAt   *time.Time
+	DeletedAt      *time.Time
 }
 
 // Event is one row of session_events.
@@ -209,11 +262,35 @@ type Sessions interface {
 	CountByState(ctx context.Context) (map[string]int, error)
 }
 
-// Credentials is the user_credentials aggregate.
+// Credentials is the legacy user_credentials aggregate, kept for the
+// migration to accounts.
 type Credentials interface {
 	Upsert(ctx context.Context, c *Credential) error
 	Delete(ctx context.Context, userID, kind string) error
 	List(ctx context.Context, userID string) ([]*Credential, error)
+	// UserIDs lists the users that still have rows.
+	UserIDs(ctx context.Context) ([]string, error)
+}
+
+// Accounts is the accounts aggregate.
+type Accounts interface {
+	// Create inserts a, filling ID and timestamps. ErrConflict when the user
+	// has an AI account of that name or a git account of that kind and host.
+	Create(ctx context.Context, a *Account) error
+	// Update replaces name, host, base URL, username and models and bumps
+	// updated_at (also the way to record that the value changed).
+	Update(ctx context.Context, a *Account) error
+	Get(ctx context.Context, userID, id string) (*Account, error)
+	// List returns the user's accounts, oldest first.
+	List(ctx context.Context, userID string) ([]*Account, error)
+	Delete(ctx context.Context, userID, id string) error
+}
+
+// Profiles is the user_profiles aggregate.
+type Profiles interface {
+	// Get returns the profile, or an empty one when none is stored.
+	Get(ctx context.Context, userID string) (*Profile, error)
+	Put(ctx context.Context, p *Profile) error
 }
 
 // Events is the session_events aggregate.
@@ -252,6 +329,8 @@ type Store interface {
 	Users() Users
 	Sessions() Sessions
 	Credentials() Credentials
+	Accounts() Accounts
+	Profiles() Profiles
 	Events() Events
 	RepoUsage() RepoUsage
 	Ping(ctx context.Context) error

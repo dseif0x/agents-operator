@@ -669,15 +669,70 @@ kbd {
   padding: 1px 5px;
 }
 
-table.creds {
-  width: 100%;
-  border-collapse: collapse;
+/* Account page */
+.page section.card + section.card,
+.page section.card + form.card {
+  margin-top: 14px;
 }
 
-table.creds td {
-  padding: 8px 6px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
+.account-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+
+.account-main {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.account-sub {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.account-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.pill {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 18px;
+  vertical-align: 1px;
+}
+
+.error-text {
+  color: var(--danger);
+}
+
+.account-form {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 12px 12px;
+  margin: 0 0 12px;
+  background: var(--bg);
+}
+
+.account-form input,
+.account-form select,
+.account-form textarea {
+  margin-top: 5px;
+  background: var(--bg-elev);
+}
+
+.inline-select select {
+  margin-top: 5px;
 }
 
 .mono {

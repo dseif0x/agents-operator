@@ -131,10 +131,13 @@ func newSession(h *harness) *store.Session {
 
 func TestCreateStartsPod(t *testing.T) {
 	h := newHarness(t)
-	// A per-user secret with an API key gets projected.
+	// The owner's API key account gets projected.
+	if err := h.st.Accounts().Create(h.ctx, &store.Account{ID: "a1", UserID: "u1", Kind: store.AcctAnthropicAPIKey, Name: "Anthropic"}); err != nil {
+		t.Fatal(err)
+	}
 	_, _ = h.cs.CoreV1().Secrets(h.ns).Create(h.ctx, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: UserSecretName("u1"), Namespace: h.ns},
-		Data:       map[string][]byte{store.CredAnthropicAPIKey: []byte("sk-ant")},
+		Data:       map[string][]byte{store.AccountSecretKey("a1"): []byte("sk-ant")},
 	}, metav1.CreateOptions{})
 	s := newSession(h)
 	h.converge(s.ID)

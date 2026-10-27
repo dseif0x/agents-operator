@@ -289,11 +289,11 @@ func (r *Reconciler) reconcileCreating(ctx context.Context, sess *store.Session,
 		if err != nil {
 			return err
 		}
-		userSecret, err := r.userSecret(ctx, sess.OwnerID)
+		uc, err := r.userCredentials(ctx, sess.OwnerID)
 		if err != nil {
 			return err
 		}
-		secret := BuildSecret(sess, r.cfg, token, userSecret)
+		secret := BuildSecret(sess, r.cfg, token, uc)
 		if o.secret == nil {
 			if _, err := r.cs.CoreV1().Secrets(r.cfg.Namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 				return r.fail(ctx, sess, "create secret: "+err.Error())
@@ -487,16 +487,26 @@ func (r *Reconciler) deletePod(ctx context.Context, id string) error {
 	return ignoreNotFound(err)
 }
 
-// userSecret loads the per-user credential Secret's data, or nil.
-func (r *Reconciler) userSecret(ctx context.Context, userID string) (map[string][]byte, error) {
+// userCredentials loads the owner's accounts, profile and the data of
+// their credential Secret (nil when it does not exist).
+func (r *Reconciler) userCredentials(ctx context.Context, userID string) (UserCredentials, error) {
+	var uc UserCredentials
+	var err error
+	if uc.Accounts, err = r.store.Accounts().List(ctx, userID); err != nil {
+		return uc, fmt.Errorf("list accounts: %w", err)
+	}
+	if uc.Profile, err = r.store.Profiles().Get(ctx, userID); err != nil {
+		return uc, fmt.Errorf("read profile: %w", err)
+	}
 	s, err := r.cs.CoreV1().Secrets(r.cfg.Namespace).Get(ctx, UserSecretName(userID), metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, nil
+			return uc, nil
 		}
-		return nil, fmt.Errorf("read user secret: %w", err)
+		return uc, fmt.Errorf("read user secret: %w", err)
 	}
-	return s.Data, nil
+	uc.Values = s.Data
+	return uc, nil
 }
 
 func (r *Reconciler) fail(ctx context.Context, sess *store.Session, reason string) error {

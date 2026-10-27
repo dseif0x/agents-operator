@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -250,37 +251,64 @@ func TestSessionCRUD(t *testing.T) {
 	}
 }
 
-func TestCredentialsAPI(t *testing.T) {
+func TestAccountsAPI(t *testing.T) {
 	e := newEnv(t)
 	e.login(t)
-	resp, body := e.do(t, http.MethodPut, "/api/v1/me/credentials", map[string]any{"values": map[string]string{"anthropic_api_key": "sk", "git_user_email": "a@b.c", "openai_api_key": ""}}, "hub.test")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("put = %d %v", resp.StatusCode, body)
+	resp, body := e.do(t, http.MethodPost, "/api/v1/me/accounts", map[string]any{"kind": "anthropic_api_key", "name": "Work", "base_url": "http://litellm:4000", "value": "sk-secret"}, "hub.test")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d %v", resp.StatusCode, body)
 	}
-	creds := body["credentials"].([]any)
-	if len(creds) != 2 {
-		t.Fatalf("credentials = %v", creds)
+	accounts := body["accounts"].([]any)
+	if len(accounts) != 1 || len(body["kinds"].([]any)) == 0 {
+		t.Fatalf("accounts = %v", body)
 	}
-	for _, c := range creds {
-		m := c.(map[string]any)
-		if m["kind"] == "anthropic_api_key" && (m["secret"] != true || m["value"] != nil) {
-			t.Fatalf("secret leaked: %v", m)
-		}
-		if m["kind"] == "git_user_email" && m["value"] != "a@b.c" {
-			t.Fatalf("plain value missing: %v", m)
-		}
+	a := accounts[0].(map[string]any)
+	if a["name"] != "Work" || a["base_url"] != "http://litellm:4000" || a["has_value"] != true || a["value"] != nil {
+		t.Fatalf("account = %v", a)
 	}
-	resp, _ = e.do(t, http.MethodPut, "/api/v1/me/credentials", map[string]any{"values": map[string]string{"bogus": "x"}}, "hub.test")
+	id := a["id"].(string)
+	if _, raw := e.do(t, http.MethodGet, "/api/v1/me/accounts", nil, "hub.test"); strings.Contains(fmt.Sprint(raw), "sk-secret") {
+		t.Fatal("value returned by the API")
+	}
+	resp, _ = e.do(t, http.MethodPost, "/api/v1/me/accounts", map[string]any{"kind": "bogus", "name": "x", "value": "x"}, "hub.test")
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("bogus kind = %d", resp.StatusCode)
 	}
-	resp, _ = e.do(t, http.MethodDelete, "/api/v1/me/credentials/anthropic_api_key", nil, "hub.test")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("delete = %d", resp.StatusCode)
+	resp, body = e.do(t, http.MethodPut, "/api/v1/me/accounts/"+id, map[string]any{"name": "Renamed"}, "hub.test")
+	if resp.StatusCode != http.StatusOK || body["accounts"].([]any)[0].(map[string]any)["name"] != "Renamed" {
+		t.Fatalf("update = %d %v", resp.StatusCode, body)
 	}
-	resp, body = e.do(t, http.MethodGet, "/api/v1/me/credentials", nil, "hub.test")
-	if resp.StatusCode != http.StatusOK || len(body["credentials"].([]any)) != 1 {
-		t.Fatalf("list = %d %v", resp.StatusCode, body)
+
+	// The profile: identity and the default Claude Code account.
+	resp, body = e.do(t, http.MethodPut, "/api/v1/me/profile", map[string]any{"git_name": "Alice", "git_email": "a@b.c", "defaults": map[string]string{"claude": id}}, "hub.test")
+	if resp.StatusCode != http.StatusOK || body["git_email"] != "a@b.c" || body["defaults"].(map[string]any)["claude"] != id {
+		t.Fatalf("profile = %d %v", resp.StatusCode, body)
+	}
+	resp, body = e.do(t, http.MethodPut, "/api/v1/me/profile", map[string]any{"defaults": map[string]string{"codex": id}}, "hub.test")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("an Anthropic key as Codex's default = %d %v", resp.StatusCode, body)
+	}
+
+	// A Claude Code session may pick it; a shell session may not pick anything.
+	resp, body = e.do(t, http.MethodPost, "/api/v1/sessions", map[string]any{"name": "c", "agent": "claude", "ai_account": id}, "hub.test")
+	if resp.StatusCode != http.StatusCreated || body["ai_account"] != id {
+		t.Fatalf("session with account = %d %v", resp.StatusCode, body)
+	}
+	resp, _ = e.do(t, http.MethodPost, "/api/v1/sessions", map[string]any{"name": "s", "agent": "shell", "ai_account": id}, "hub.test")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("shell session with account = %d", resp.StatusCode)
+	}
+
+	resp, body = e.do(t, http.MethodDelete, "/api/v1/me/accounts/"+id, nil, "hub.test")
+	if resp.StatusCode != http.StatusOK || len(body["accounts"].([]any)) != 0 {
+		t.Fatalf("delete = %d %v", resp.StatusCode, body)
+	}
+	resp, _ = e.do(t, http.MethodDelete, "/api/v1/me/accounts/"+id, nil, "hub.test")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("second delete = %d", resp.StatusCode)
+	}
+	if _, body = e.do(t, http.MethodGet, "/api/v1/me/profile", nil, "hub.test"); len(body["defaults"].(map[string]any)) != 0 {
+		t.Fatalf("default of a deleted account kept: %v", body)
 	}
 }
 
