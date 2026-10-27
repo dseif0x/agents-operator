@@ -34,6 +34,8 @@ function match(path: string): Route {
   if (parts[0] === "login") return { path: "/login", params: {} };
   if (parts[0] === "account") return { path: "/account", params: {} };
   if (parts[0] === "new") return { path: "/new", params: {} };
+  if (parts[0] === "chats" && parts[1]) return { path: "/chats/:id", params: { id: parts[1] } };
+  if (parts[0] === "chats") return { path: "/chats", params: {} };
   if (parts[0] === "sessions" && parts[1] && parts[2] === "edit") return { path: "/sessions/:id/edit", params: { id: parts[1] } };
   if (parts[0] === "sessions" && parts[1]) return { path: "/sessions/:id", params: { id: parts[1] } };
   return { path: "/", params: {} };
