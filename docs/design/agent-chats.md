@@ -8,7 +8,7 @@ Today every session is an island. To get an implementer, a reviewer and a tester
 
 - **Chats:** the owner creates any number of chats and adds sessions to them. A session can be in several chats. Each chat looks and works like a group chat: a message list, an input box, images, and `@mentions`.
 - **Personas:** each session gets a **persona**, free-text notes on personality and role ("You are the reviewer. Be blunt, ask for tests."). It is applied as a system prompt for every agent type.
-- **Mentions:** `@reviewer` addresses one agent and `@everyone` addresses every agent in the chat. A mentioned agent receives the message, works on it in its own session, and answers in the chat.
+- **Addressing:** a message without mentions goes to every agent in the chat; `@reviewer` (or several mentions) narrows it to those agents. An addressed agent receives the message, works on it in its own session, and answers in the chat.
 - **Agents talk to agents** the same way. They can mention each other, so one agent can hand work to another, with a loop guard.
 
 **Non-goals:**
@@ -43,7 +43,7 @@ Today every session is an island. To get an implementer, a reviewer and a tester
   - **author:** the owner or a session;
   - **text:** Markdown, at most 32 KB;
   - **attachments:** images, at most 10 MB each and 5 per message;
-  - **mentions:** session ids, or everyone, resolved by the hub from `@handle` and `@everyone`.
+  - **mentions:** session ids resolved by the hub from `@handle`; an empty list means the whole chat.
 
 ### 3. Uplink: runner → hub requests over a hub-opened WebSocket
 
@@ -62,7 +62,7 @@ A stdio MCP server, registered by the runner with the session's CLI:
 |---|---|
 | `chats_list` | the chats this session is in, with members (handle, persona summary, state) and unread counts |
 | `chat_read(chat, since?, limit?)` | messages, oldest first; images come as file paths (see below) |
-| `chat_send(chat, text, images?)` | post Markdown, optionally with images given as paths in the workspace; `@handle` and `@everyone` in the text mention |
+| `chat_send(chat, text, images?)` | post Markdown, optionally with images given as paths in the workspace; `@handle` in the text wakes that agent |
 | `chat_members(chat)` | who is in the chat and what they are doing right now (activity) |
 
 That's all for phase 1. The task board and session-control tools from the earlier draft can come back later as extra tools if chats alone are not enough (see phases).
@@ -71,9 +71,18 @@ That's all for phase 1. The task board and session-control tools from the earlie
 - **Received images** are written by the runner to `~/chats/<chat>/<message>-<n>.<ext>`, and the message text carries the path. Claude Code, Codex and OpenCode all read images from paths.
 - **Sending:** an agent sends an image by passing a path, such as a screenshot it took or a chart it rendered. The runner accepts only files inside `/workspace` and the agent's temp directory, at most 10 MB, PNG, JPEG, GIF or WebP.
 
-### 5. Delivery: how a mentioned agent gets the message
+### 5. Delivery: who gets a message, and how
 
-Agents are woken by mentions, not by every message. Otherwise a busy group would keep every agent typing.
+**Who is addressed:**
+
+| Author | No mentions | With `@handle`s |
+|---|---|---|
+| Owner | every agent in the chat | only the mentioned agents |
+| Agent | nobody is woken (the message is posted and readable) | only the mentioned agents |
+
+An agent's untagged message is deliberately not delivered to everyone: every reply would otherwise wake every other agent, and a chat of four agents would never go quiet. Agents hand work to each other by mentioning; the generated AGENTS.md section tells them so.
+
+**How an addressed agent gets it:**
 
 - **Idle agent** (activity "waiting for input"): the runner types the message into the terminal as a prompt, for example:
   ```
@@ -83,10 +92,10 @@ Agents are woken by mentions, not by every message. Otherwise a busy group would
 - **Busy agent:** the message is queued. For Claude Code, the `Stop` hook the runner already installs blocks the end of the turn with "1 new mention in "launch"; read it with chat_read" so the agent picks it up straight away. Codex and OpenCode get it once they go idle.
 - **Needs permission or error:** nothing is typed. The mention waits, and the chat shows it as "queued".
 - **Stopped session:** mentions wait in the hub and are delivered after the next start.
-- **Answering:** the agent normally answers with `chat_send`. If a turn that started from a mention ends without one, the runner posts the turn's last assistant message (which the `Stop` hook already reports) as the reply, marked "auto-reply", so a chat never silently swallows a request. This can be turned off per chat.
-- **Unmentioned messages** are not delivered, but the agent can read them with `chat_read`. The typed prompt says how many unread messages came before the mention, so the agent knows when context is worth fetching.
+- **Answering:** the agent normally answers with `chat_send`. If a turn that started from a chat message ends without one, the runner posts the turn's last assistant message (which the `Stop` hook already reports) as the reply, marked "auto-reply", so a chat never silently swallows a request. This can be turned off per chat.
+- **Messages not addressed to an agent** (the owner talking to someone else, agents talking among themselves) are not delivered to it, but it can read them with `chat_read`. The typed prompt says how many unread messages came before this one, so the agent knows when context is worth fetching.
 
-**Loop guard:** agents mentioning agents could ping-pong forever. The hub counts agent-authored messages since the owner last wrote in the chat. After 20 (configurable per chat), mentions from agents are stored but not delivered, and the chat shows "paused: agents waiting for you" until the owner writes something. The owner can also mute a chat or a single member.
+**Loop guard:** agents mentioning each other could still ping-pong forever. The hub counts agent-authored messages since the owner last wrote in the chat. After 20 (configurable per chat), mentions from agents are stored but not delivered, and the chat shows "paused: agents waiting for you" until the owner writes something. The owner can also mute a chat or a single member.
 
 ### 6. Web UI
 
@@ -97,7 +106,7 @@ Agents are woken by mentions, not by every message. Otherwise a busy group would
     - **Images** appear inline and open full size on tap.
     - **Activity:** "@reviewer is working…" appears while a mentioned agent is busy, and "queued" shows on mentions not yet delivered.
   - **Input:**
-    - Markdown text with `@` autocomplete over the chat's handles and `@everyone`.
+    - Markdown text with `@` autocomplete over the chat's handles. A hint under the box says who the message goes to ("to everyone" or "to @reviewer, @tester").
     - Images by paste, drag and drop, or the file picker (phone camera included).
     - Enter sends; Shift+Enter starts a new line.
   - **Member panel:** add and remove sessions, each member's persona (with a link to edit it), current activity, and a link to its terminal.
@@ -111,7 +120,7 @@ Agents are woken by mentions, not by every message. Otherwise a busy group would
 sessions           + persona text, handle text, avatar text           -- handle unique per owner
 chats              (id, owner_id, name, agent_message_limit, auto_reply, muted, created_at)
 chat_members       (chat_id, session_id, muted, added_at)
-chat_messages      (id, chat_id, author_session /* null = owner */, text, mentions jsonb /* session ids or ["*"] */, auto_reply bool, created_at)
+chat_messages      (id, chat_id, author_session /* null = owner */, text, mentions jsonb /* session ids; [] = whole chat */, auto_reply bool, created_at)
 chat_attachments   (id, message_id, content_type, size, data bytea)   -- Postgres, see below
 chat_deliveries    (message_id, session_id, state /* queued|delivered|skipped */, delivered_at)
 chat_reads         (chat_id, reader /* owner or session */, last_message_id)
@@ -155,19 +164,19 @@ Each phase ships on its own. Sessions that are in no chat behave exactly as toda
   - auto-reply when a turn ends without `chat_send`;
   - image path checks: outside the workspace refused, wrong type refused.
 - **Hub:**
-  - mention parsing (`@handle`, `@everyone`, unknown handles left as text);
+  - addressing: the owner's untagged message goes to all members, mentions narrow it, an agent's untagged message wakes nobody, unknown handles are left as text;
   - the delivery queue for stopped sessions;
   - the loop guard;
   - membership checks on the uplink;
   - attachment quota;
   - Markdown sanitizing (a test corpus of XSS payloads rendered through the UI's pipeline).
 - **UI:** Playwright against the built UI with a mocked API: sending, `@` autocomplete, Markdown and image rendering, phone layout.
-- **End to end in `testing`:** two Claude Code sessions with personas in one chat. The owner mentions one, it mentions the other, both answer in the chat, and an image round-trips.
+- **End to end in `testing`:** two Claude Code sessions with personas in one chat. The owner writes to both, then mentions one; it mentions the other; both answer in the chat, and an image round-trips.
 
 ## Open questions
 
 1. **Handles:** session name by default, editable. Or should handles be fixed once set, so old messages keep pointing at the right agent after a rename?
-2. **Unmentioned messages:** "mentions only" as the delivery default. Do you want a per-chat switch for "agents see every message" (a small group where everyone listens)?
+2. **Agents' untagged messages:** they wake nobody (see the table in section 5). Is that right, or should a chat be able to switch on "agents hear each other too" (with the loop guard as the brake)?
 3. **Auto-reply:** on by default, or should agents have to use `chat_send` explicitly?
 4. **Loop guard:** is 20 agent messages without you a sensible default?
 5. **Persona vs. system prompt:** fold the existing OpenCode system prompt and its "replace" mode into the persona, or keep "replace" as an advanced OpenCode-only option?
