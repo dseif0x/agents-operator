@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, subscribeSessions, type Session, type SessionEvent } from "../api";
 import { Link, navigate } from "../router";
 import { Terminal, type TerminalHandle } from "../components/Terminal";
 import { KeyBar } from "../components/KeyBar";
 import { activityLabel, stateLabel, timeAgo } from "../util";
 import { toggleTheme } from "../theme";
+import { unwrapLines } from "../unwrap";
 
 export function SessionPage({ id }: { id: string }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -56,6 +57,21 @@ export function SessionPage({ id }: { id: string }) {
   const flash = (msg: string) => {
     setNotice(msg);
     setTimeout(() => setNotice(""), 1800);
+  };
+
+  // The select sheet shows a snapshot taken when it opens. Rendering the
+  // live screen instead replaced the text under the finger on every page
+  // render while a TUI was redrawing (a spinner is enough), which cancels a
+  // native selection: nothing could be selected until it went quiet. The
+  // terminal is blurred too, or iOS keeps routing the long-press to its
+  // focused textarea.
+  const [snapshot, setSnapshot] = useState({ text: "", cols: 0 });
+  const openSelect = () => {
+    if (sheet === "select") return setSheet(null);
+    const t = term.current;
+    setSnapshot({ text: t?.selection() || t?.screenText() || "", cols: t?.cols() ?? 0 });
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    setSheet("select");
   };
 
   const copy = async (text: string) => {
@@ -225,12 +241,7 @@ export function SessionPage({ id }: { id: string }) {
         )}
         {drawer && s && <Drawer session={s} tab={drawer} setTab={setDrawer} onClose={() => setDrawer(null)} />}
         {sheet === "select" && (
-          <TextSheet
-            title="Screen text"
-            text={term.current?.selection() || term.current?.screenText() || ""}
-            onCopy={copy}
-            onClose={() => setSheet(null)}
-          />
+          <TextSheet title="Screen text" text={snapshot.text} cols={snapshot.cols} onCopy={copy} onClose={() => setSheet(null)} />
         )}
         {sheet === "links" && <LinksSheet links={term.current?.links() ?? []} onCopy={copy} onClose={() => setSheet(null)} />}
         {sheet === "paste" && (
@@ -251,7 +262,7 @@ export function SessionPage({ id }: { id: string }) {
           ctrl={ctrl}
           onCtrl={() => term.current?.toggleCtrl()}
           onPaste={pasteFromClipboard}
-          onSelect={() => setSheet(sheet === "select" ? null : "select")}
+          onSelect={openSelect}
           onLinks={() => setSheet(sheet === "links" ? null : "links")}
         />
       )}
@@ -293,24 +304,46 @@ function PasteSheet(props: { onSend: (text: string) => void; onClose: () => void
 }
 
 // TextSheet shows terminal text in a natively selectable box, because xterm
-// swallows touch selection gestures on phones.
-function TextSheet(props: { title: string; text: string; onCopy: (t: string) => void; onClose: () => void }) {
+// swallows touch selection gestures on phones. Rows a TUI wrapped itself are
+// joined back (unwrapLines) unless "Raw rows" is picked; the choice is kept.
+function TextSheet(props: { title: string; text: string; cols: number; onCopy: (t: string) => void; onClose: () => void }) {
+  const [raw, setRaw] = useState(() => {
+    try {
+      return localStorage.getItem(rawKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggle = () => {
+    setRaw(!raw);
+    try {
+      localStorage.setItem(rawKey, raw ? "0" : "1");
+    } catch {
+      // per-device convenience only
+    }
+  };
+  const text = useMemo(() => (raw ? props.text : unwrapLines(props.text, props.cols)), [raw, props.text, props.cols]);
   return (
     <div class="sheet">
       <header>
         <b>{props.title}</b>
         <span style="flex:1" />
-        <button class="btn small" onClick={() => props.onCopy(props.text)}>
+        <button class="btn small" onClick={toggle} title="Join the rows a program wrapped itself, or show them as on screen">
+          {raw ? "Join rows" : "Raw rows"}
+        </button>
+        <button class="btn small" onClick={() => props.onCopy(text)}>
           Copy all
         </button>
         <button class="btn small" onClick={props.onClose}>
           ✕
         </button>
       </header>
-      <pre class="selectable">{props.text || "(nothing on screen)"}</pre>
+      <pre class="selectable">{text || "(nothing on screen)"}</pre>
     </div>
   );
 }
+
+const rawKey = "agents-operator.selectRaw";
 
 function LinksSheet(props: { links: string[]; onCopy: (t: string) => void; onClose: () => void }) {
   return (
