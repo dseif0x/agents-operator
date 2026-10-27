@@ -7,7 +7,7 @@ The same WebSocket protocol is spoken between browser and hub, and between hub a
 | Hop | URL | Auth |
 | --- | --- | --- |
 | browser → hub | `GET /api/v1/sessions/{id}/ws` | session cookie; `Origin` must match an allowed host |
-| hub → runner | `ws://<podIP>:7681/ws` | `Authorization: Bearer <RUNNER_TOKEN>` |
+| hub → runner | `ws://<podIP>:7681/ws?attach=1` (a browser), `ws://<podIP>:7681/ws` (the hub's own control calls) | `Authorization: Bearer <RUNNER_TOKEN>` |
 
 The runner also serves, with the same bearer token:
 
@@ -29,6 +29,7 @@ The hub exposes `GET /api/v1/sessions/{id}/scrollback` which proxies the latter.
 | server → client | text | `{"t":"exit","code":0}` — the agent process exited; the pod stays up |
 | runner → hub only | text | `{"t":"login","kind":"claude_login","data":"<base64>"}` — reply to `export_login`; `data` is a JSON bundle `{"files":{"<HOME-relative path>":<bytes>}}` with every file that makes up the login (for Claude Code: `.claude/.credentials.json` and `.claude.json`) |
 | server → client | text | `{"t":"error","message":"..."}` |
+| server → client | text | `{"t":"detached"}` — another browser attached; the connection is closed with code 4001 right after (see Single attach) |
 | both | ping/pong | every 20 s; a peer is dropped after 3 misses |
 
 The hub forwards binary frames untouched in both directions. From the browser it forwards only `resize` and `restart` control messages and silently drops anything else, so a browser can never ask a runner for a credential file.
@@ -40,10 +41,14 @@ The hub forwards binary frames untouched in both directions. From the browser it
    Then, when the agent has changed any of them, a second binary frame sets the terminal modes it is in now (mouse reporting and encoding, bracketed paste, cursor visibility, cursor keys, focus events): full-screen TUIs set these once at startup, long out of the buffer, and a fresh xterm.js would otherwise not report clicks.
    A full-screen TUI (one on the alternate screen) that draws only what changed does not repaint the rest for a new client. When a client's first `resize` keeps the PTY's size, the runner makes the PTY one row shorter for 250 ms and then restores it, so the TUI repaints the whole screen. A resize that changes the size makes it repaint anyway.
 3. If the agent has already exited, the server sends `exit` immediately.
-4. Live output follows as binary frames. Input from every attached client is written to the PTY; all clients receive all output.
+4. Live output follows as binary frames. Input from the client is written to the PTY.
 5. Slow clients miss chunks rather than stalling the PTY; a reconnect gets a fresh replay.
 
-The PTY defaults to 220×50 and follows the most recent `resize` from any client.
+The PTY defaults to 220×50 and follows the attached browser's `resize`.
+
+## Single attach
+
+One browser at a time drives a session, so two devices no longer fight over the PTY size. A connection to the runner's `/ws` with `attach=1` (the hub's proxy adds it for every browser) is an attachment: it takes over, and the previous attachment receives `{"t":"detached"}` and is closed with WebSocket code **4001**. The hub passes that code on to the browser, which then shows "Opened somewhere else" with a **Move back here** button and does not reconnect on its own (an automatic retry would take the session back, and two devices would trade it forever). Connections without the parameter, the hub's own control calls (`restart`, `export_login`), detach nobody.
 
 ## Status document (`GET /status`)
 

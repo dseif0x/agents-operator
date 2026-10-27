@@ -77,7 +77,9 @@ func (p *Proxy) ServeWS(w http.ResponseWriter, r *http.Request, sessionID string
 		return
 	}
 	dctx, dcancel := context.WithTimeout(ctx, 10*time.Second)
-	rc, _, err := websocket.Dial(dctx, "ws://"+net.JoinHostPort(ep.IP, strconv.Itoa(ep.Port))+"/ws", &websocket.DialOptions{ //nolint:bodyclose // handshake response body is owned by coder/websocket
+	// attach=1: this browser takes the session over from any other one (see
+	// runner.AttachParam). The hub's own Control connections omit it.
+	rc, _, err := websocket.Dial(dctx, "ws://"+net.JoinHostPort(ep.IP, strconv.Itoa(ep.Port))+"/ws?"+runner.AttachParam+"=1", &websocket.DialOptions{ //nolint:bodyclose // handshake response body is owned by coder/websocket
 		HTTPHeader:      ep.header(),
 		CompressionMode: websocket.CompressionDisabled,
 	})
@@ -169,6 +171,11 @@ func (p *Proxy) ServeWS(w http.ResponseWriter, r *http.Request, sessionID string
 	err = <-errc
 	var ce websocket.CloseError
 	switch {
+	case errors.As(err, &ce) && ce.Code == websocket.StatusCode(runner.CloseDetached):
+		// Another browser attached. Pass the code on: the browser must not
+		// reconnect on its own, or two devices would take turns forever.
+		_ = bc.Close(websocket.StatusCode(runner.CloseDetached), "attached elsewhere")
+		return
 	case errors.As(err, &ce) && (ce.Code == websocket.StatusNormalClosure || ce.Code == websocket.StatusGoingAway):
 		// Browser closed the tab, or the runner shut down cleanly.
 	case errors.Is(err, context.Canceled):

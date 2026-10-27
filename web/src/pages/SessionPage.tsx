@@ -11,8 +11,9 @@ export function SessionPage({ id }: { id: string }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [drawer, setDrawer] = useState<null | "events" | "logs" | "info">(null);
-  const [sheet, setSheet] = useState<null | "select" | "links">(null);
+  const [sheet, setSheet] = useState<null | "select" | "links" | "paste">(null);
   const [notice, setNotice] = useState("");
+  const [ctrl, setCtrl] = useState(false);
   const term = useRef<TerminalHandle>(null);
   const page = useRef<HTMLDivElement>(null);
 
@@ -66,18 +67,27 @@ export function SessionPage({ id }: { id: string }) {
     }
   };
 
-  const pasteFromClipboard = async () => {
+  // Paste button. readText() is started synchronously inside the tap (no
+  // await before it), which is what iOS requires. iOS still refuses it at
+  // times: the next touch dismissed its "Paste" callout, or the clipboard
+  // holds no plain text. Then the paste sheet opens: a text field the
+  // phone's own long-press → Paste fills, which needs no permission at all.
+  // The terminal is not re-focused afterwards: a focus outside the tap
+  // leaves iOS with a focused field and a hidden keyboard.
+  const pasteFromClipboard = () => {
+    let read: Promise<string>;
     try {
-      const text = await navigator.clipboard.readText();
-      if (text) {
-        term.current?.paste(text);
-        term.current?.focus();
-      } else {
-        flash("Clipboard is empty");
-      }
+      read = navigator.clipboard.readText();
     } catch {
-      flash("Clipboard access denied; allow paste for this site");
+      read = Promise.reject(new Error("no clipboard API"));
     }
+    read.then(
+      (text) => {
+        if (text) term.current?.paste(text);
+        else flash("Clipboard is empty");
+      },
+      () => setSheet("paste"),
+    );
   };
 
   const load = () =>
@@ -186,7 +196,7 @@ export function SessionPage({ id }: { id: string }) {
       <div class="term-wrap">
         {error && <div class="banner error">{error}</div>}
         {canAttach ? (
-          <Terminal ref={term} sessionId={id} />
+          <Terminal ref={term} sessionId={id} onCtrlChange={setCtrl} />
         ) : (
           <div class="overlay">
             {s ? (
@@ -223,19 +233,61 @@ export function SessionPage({ id }: { id: string }) {
           />
         )}
         {sheet === "links" && <LinksSheet links={term.current?.links() ?? []} onCopy={copy} onClose={() => setSheet(null)} />}
+        {sheet === "paste" && (
+          <PasteSheet
+            onSend={(text) => {
+              term.current?.paste(text);
+              setSheet(null);
+            }}
+            onClose={() => setSheet(null)}
+          />
+        )}
         {notice && <div class="toast">{notice}</div>}
       </div>
 
       {canAttach && (
         <KeyBar
-          onKey={(seq) => term.current?.send(seq)}
-          terminalFocused={() => term.current?.hasFocus() ?? false}
-          refocus={() => term.current?.focus()}
+          onKey={(seq) => term.current?.sendKey(seq)}
+          ctrl={ctrl}
+          onCtrl={() => term.current?.toggleCtrl()}
           onPaste={pasteFromClipboard}
           onSelect={() => setSheet(sheet === "select" ? null : "select")}
           onLinks={() => setSheet(sheet === "links" ? null : "links")}
         />
       )}
+    </div>
+  );
+}
+
+// PasteSheet: the fallback when the clipboard can't be read directly. The
+// field takes the phone's own long-press → Paste (no permission prompt);
+// Send hands the text to the session as a paste.
+function PasteSheet(props: { onSend: (text: string) => void; onClose: () => void }) {
+  const [text, setText] = useState("");
+  return (
+    <div class="sheet">
+      <header>
+        <b>Paste</b>
+        <span style="flex:1" />
+        <button class="btn small primary" disabled={!text} onClick={() => props.onSend(text)}>
+          Send
+        </button>
+        <button class="btn small" onClick={props.onClose}>
+          ✕
+        </button>
+      </header>
+      <p class="hint" style="margin:8px 12px">
+        The clipboard couldn't be read directly. Long-press the field below and choose Paste, then Send.
+      </p>
+      <textarea
+        class="paste-field"
+        value={text}
+        onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck={false}
+        placeholder="Long-press here → Paste"
+      />
     </div>
   );
 }
