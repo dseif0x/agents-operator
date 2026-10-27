@@ -186,12 +186,22 @@ func TestChatValidation(t *testing.T) {
 	svc, u, ss, c := chatFixture(t)
 	ctx := context.Background()
 	for name, f := range map[string]func() error{
-		"empty":       func() error { _, err := svc.PostChatMessage(ctx, u, c.ID, "  ", 0, nil); return err },
-		"too long":    func() error { _, err := svc.PostChatMessage(ctx, u, c.ID, strings.Repeat("x", MaxChatText+1), 0, nil); return err },
-		"not image":   func() error { _, err := svc.PostChatMessage(ctx, u, c.ID, "x", 0, []ChatImage{{Name: "a.txt", Data: []byte("hello")}}); return err },
-		"bad reply":   func() error { _, err := svc.PostChatMessage(ctx, u, c.ID, "x", 999, nil); return err },
-		"no name":     func() error { _, err := svc.CreateChat(ctx, u, ChatInput{}); return err },
-		"not my sess": func() error { n := "x"; _, err := svc.CreateChat(ctx, u, ChatInput{Name: &n, Members: []string{store.NewID()}}); return err },
+		"empty": func() error { _, err := svc.PostChatMessage(ctx, u, c.ID, "  ", 0, nil); return err },
+		"too long": func() error {
+			_, err := svc.PostChatMessage(ctx, u, c.ID, strings.Repeat("x", MaxChatText+1), 0, nil)
+			return err
+		},
+		"not image": func() error {
+			_, err := svc.PostChatMessage(ctx, u, c.ID, "x", 0, []ChatImage{{Name: "a.txt", Data: []byte("hello")}})
+			return err
+		},
+		"bad reply": func() error { _, err := svc.PostChatMessage(ctx, u, c.ID, "x", 999, nil); return err },
+		"no name":   func() error { _, err := svc.CreateChat(ctx, u, ChatInput{}); return err },
+		"not my sess": func() error {
+			n := "x"
+			_, err := svc.CreateChat(ctx, u, ChatInput{Name: &n, Members: []string{store.NewID()}})
+			return err
+		},
 	} {
 		if err := f(); err == nil {
 			t.Errorf("%s accepted", name)

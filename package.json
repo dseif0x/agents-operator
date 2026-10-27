@@ -1,0 +1,15 @@
+{
+  "name": "coordination-plan",
+  "version": "1.0.0",
+  "description": "Self-hosted mission control for AI coding agents on Kubernetes. Every session is its own pod with its own PersistentVolumeClaim, and the agent's real terminal (Claude Code, OpenCode, Codex) is streamed to the browser with full colour and keyboard. Close the tab, nothing dies; reopen it from your phone and the TUI is exactly where you left it.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

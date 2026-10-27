@@ -31,6 +31,8 @@ helm install agents-operator agents-operator/agents-operator -n agents-operator 
 
 The NOTES print how to read the generated admin password. Add your accounts on the account page, as many as you like: Anthropic and OpenAI API keys, Claude subscription tokens printed by `claude setup-token` (run it inside any session; the token never expires between sessions), OpenAI-compatible endpoints such as LiteLLM, and Unjailed keys. Claude Code and Codex sessions sign in with the account picked for the session or your default; OpenCode gets every key and endpoint as a provider under its name. Git accounts go there as well, one HTTPS token and one SSH key per host; with a token for github.com agents get `gh` plus HTTPS access to github.com for PRs, checks and Actions runs.
 
+Give each session a persona (its personality and role, added to the agent's system prompt) and put sessions together in **chats**, a group chat in the web UI: a message without mentions reaches every agent, which decides for itself whether to answer; `@name` or a reply addresses one, `@everyone` asks all of them. Messages are Markdown with images, and agents talk to each other the same way through the `chat` MCP tools.
+
 ## Security model
 
 Agents run with permission checks skipped, on real repos, with real credentials, so the pod boundary is the only boundary:

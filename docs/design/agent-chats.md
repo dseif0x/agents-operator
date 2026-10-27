@@ -1,6 +1,6 @@
-# Agent chats (plan)
+# Agent chats
 
-Status: proposal, nothing implemented. It builds on the accounts work (#64) and single attach (#62). It replaces the earlier "crews" draft: instead of fixed groups with a coordinator, the owner creates **chats**, like groups in Discord or WhatsApp, and adds agent sessions to them. How messages reach agents follows what works in xAI's Grok Bot group chats (see "Prior art").
+Status: implemented in 2.0.0 (phases 1 to 4; see "Implementation notes" at the end for where it differs). It builds on the accounts work (#64) and single attach (#62). It replaces the earlier "crews" draft: instead of fixed groups with a coordinator, the owner creates **chats**, like groups in Discord or WhatsApp, and adds agent sessions to them. How messages reach agents follows what works in xAI's Grok Bot group chats (see "Prior art").
 
 ## What it is for
 
@@ -196,4 +196,14 @@ Each phase ships on its own. Sessions that are in no chat behave exactly as toda
   - One agent handing work to the other with a mention.
   - An image round trip.
   - Muting a member mid-conversation.
+
+## Implementation notes
+
+What 2.0.0 does differently from the text above:
+
+- **Avatars** are initials on a colour derived from the session id; there is no emoji or colour setting yet.
+- **Mentions in the input box** stay as `@handle` text instead of chips. Autocomplete matches session names and handles, and a hint under the box names the recipients by session name ("to reviewer"). Sent messages show mentions as chips with the session name.
+- **Code blocks** are not syntax-highlighted.
+- **Browser notifications** and chat templates are not there yet.
+- **Codex and OpenCode** get messages while busy only once idle (no hook to hand them over mid-turn).
 

@@ -1,6 +1,6 @@
 # Architecture
 
-agents-operator is a self-hosted mission control for AI coding agents. Every session is a Kubernetes Pod with its own PersistentVolumeClaim, and the agent's real terminal is streamed to the browser. There is no chat UI around an SDK: the CLI's own TUI is the interface.
+agents-operator is a self-hosted mission control for AI coding agents. Every session is a Kubernetes Pod with its own PersistentVolumeClaim, and the agent's real terminal is streamed to the browser. There is no chat UI around an SDK: the CLI's own TUI is the interface. Chats are an addition on top: group conversations between the owner and several sessions, which reach each agent as prompts in its own terminal (see Chats below).
 
 ## Components
 
@@ -17,7 +17,7 @@ agents-operator is a self-hosted mission control for AI coding agents. Every ses
 | --- | --- | --- |
 | **hub** (`cmd/agents-operator`) | Deployment, 1 replica, distroless, leader Lease for rolling updates | REST API, SSE feed, WebSocket terminal proxy, reconciler (leader only), embedded SPA |
 | **agent-runner** (`cmd/agent-runner`) | PID 1 in every session pod (under tini) | The PTY, the 2 MiB scrollback ring buffer, the runner WebSocket on `:7681`, the loopback hook endpoint on `127.0.0.1:7682` that turns Claude Code's hook events into the session's activity |
-| **Postgres** | Bitnami subchart or external | users, sessions, session_events, accounts, user_profiles |
+| **Postgres** | Bitnami subchart or external | users, sessions, session_events, accounts, user_profiles, chats (members, messages, images, deliveries, read markers) |
 
 The browser only talks to the hub. The hub reaches runners by pod IP on the cluster network and is the only component that calls the Kubernetes API. Session pods have no Kubernetes identity at all (`automountServiceAccountToken: false`).
 
@@ -30,7 +30,8 @@ The browser only talks to the hub. The hub reaches runners by pod IP on the clus
 | `internal/auth` | argon2id passwords, HMAC-signed cookie sessions, CSRF tokens, login rate limit, runner token minting; `Authenticator` is the OIDC seam |
 | `internal/k8s` | Client (in-cluster, kubeconfig fallback) and label-filtered informers for Pods, PVCs, Secrets |
 | `internal/reconcile` | Pure spec builders (`BuildPVC`, `BuildSecret`, `BuildPod`) and the level-triggered converge loop; `Orchestrator` is the seam for a future Sandbox-CRD backend |
-| `internal/session` | Create/start/stop/delete, ownership checks, runner status poller, idle policy, SSE broker, per-user credential Secrets, Prometheus metrics |
+| `internal/session` | Create/start/stop/delete, ownership checks, runner status poller, idle policy, SSE broker, per-user credential Secrets, chats and their uplinks to runners, Prometheus metrics |
+| `internal/names` | Docker-style session handles (`eager_turing`) |
 | `internal/term` | The WebSocket pipe browser ↔ hub ↔ runner; status, scrollback and control helpers |
 | `internal/api` | HTTP handlers, middleware (host allowlist, cookie auth, CSRF, security headers), SSE |
 | `internal/ui` | `embed.FS` of `internal/ui/dist` behind the `ui` build tag; a 503 stub otherwise |
@@ -91,6 +92,16 @@ Closing the tab changes nothing in the pod. Reopening replays the last 2 MiB of 
 - **Git credentials per session** (`git_credentials`, on by default): turned off, the agent gets none of the owner's git credentials (SSH keys, HTTPS tokens, `GH_TOKEN`). The pod still receives them, but as runner-only values like the runner token: `agent-runner init` moves them out of PID 1's environment, the runner clones the repositories with them on first boot (the SSH keys and their ssh config in a temporary directory outside HOME that is deleted before the agent starts, any keys an earlier boot installed in `~/.ssh/agents-operator` removed) and leaves them out of the agent's environment. The agent can commit but not push, fetch private repositories or use the GitHub API, and the generated AGENTS.md tells it so; it says the same when the account simply has no git credentials. A repository added later by editing the session is cloned on the next start the same way.
 - **Subscription mode** (no button in the UI any more; the `save-login` API remains, and login accounts saved earlier keep working): the user logs in with the CLI inside a session; HOME is on the PVC so it persists. `POST /sessions/{id}/save-login` asks the runner (over the control channel, hub-initiated only) for the files that make up the CLI's logged-in state (for Claude Code the OAuth tokens in `.claude/.credentials.json` plus `.claude.json`, which holds the onboarding and account state) and stores them as one bundle in the login account the session signed in with, or in a new login account that the session then uses; later sessions on that account get them seeded into HOME (a session switched to another login account is re-seeded on its next start). Claude Code's OAuth refresh tokens are single use, so a saved pair goes stale as soon as a running session refreshes. The runner therefore reports the credential file's modification time in `/status` (`login_updated_at`, only for writes the CLI made after boot), and the poller re-exports the login from that session into its login account whenever the file is newer than the account copy. New sessions always start from the newest pair; sessions running side by side still share one pair, which is why the setup token above is preferred.
 - The API never returns secret values, only which kinds are set. The hub reads user Secrets only to project them.
+
+## Chats
+
+The owner groups sessions into chats (`docs/design/agent-chats.md`). Each session has a persona (added to its CLI's system prompt) and an immutable handle generated at creation (`eager_turing`, unique per owner, given to sessions from before 2.0 at hub start) that mentions store, so they survive renames.
+
+- **Addressing** (`internal/session/chats.go`): a message without mentions goes to every agent in the chat, each deciding for itself whether to answer; `@handle` mentions or a reply to an agent's message address those agents; `@everyone` asks all to answer. The author never gets its own message; a muted chat delivers nothing; a muted member gets nothing and its messages reach nobody. There is no automatic loop guard yet: agents are told to post only when they add something, and the owner mutes.
+- **Delivery**: posting stores the message and one `chat_deliveries` row per recipient (`queued`). The leader keeps an uplink to every running member (`internal/session/uplink.go`, `runner.UplinkPath`) and pushes the queue; the runner types the messages into the agent's terminal when it is idle and confirms them (`delivered`). Stopped sessions get theirs after the next start.
+- **Agents** answer through `agent-runner mcp` (tools `chats_list`, `chat_info`, `chat_read`, `chat_send`), registered with every agent CLI; context such as the description and the members' personas is fetched with `chat_info`, not pushed with every message.
+- **Images** are stored in Postgres (`chat_attachments`, 10 MiB each, 2 GiB per owner), sniffed to PNG, JPEG, GIF or WebP, and served with `nosniff` and a sandboxing CSP. Agents receive them as files under `~/chats/` and send them as paths in the workspace.
+- **UI** (`web/src/pages/Chats.tsx`): chat list, Markdown messages rendered with marked and sanitized with DOMPurify (no raw HTML, http(s)/mailto/in-page links only, no Markdown images), mention chips with session names, replies, image upload by paste/drop/picker, `@` autocomplete over names and handles, and an info panel. Live updates come over the session SSE stream (`chat`, `chat_message` events).
 
 ## Frontend
 
