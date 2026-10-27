@@ -151,6 +151,10 @@ func run() error {
 			Egress: egressPolicy, EgressAllowed: egressAllowed(egressPolicy),
 		},
 	}
+	// Sessions created before handles existed get one.
+	if err := svc.BackfillHandles(ctx); err != nil {
+		log.Error("giving sessions handles failed", "err", err)
+	}
 	rec := reconcile.New(rcfg, st, cs, inf, svc, cfg.ReconcileInterval, log)
 	svc.Orch = rec
 	var leading, shuttingDown atomic.Bool

@@ -146,10 +146,37 @@ func (r memSessions) Create(_ context.Context, s *Session) error {
 	if s.Generation == 0 {
 		s.Generation = 1
 	}
+	if s.Handle != "" && r.handleTaken(s.OwnerID, s.Handle) {
+		return ErrConflict
+	}
 	now := time.Now()
 	s.CreatedAt, s.UpdatedAt = now, now
 	normaliseK8s(s)
 	r.m.sessions[s.ID] = copySession(s)
+	return nil
+}
+
+// handleTaken mirrors the unique index on (owner_id, handle).
+func (r memSessions) handleTaken(ownerID, handle string) bool {
+	for _, o := range r.m.sessions {
+		if o.OwnerID == ownerID && o.Handle == handle {
+			return true
+		}
+	}
+	return false
+}
+
+func (r memSessions) SetHandle(_ context.Context, id, handle string) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	s, ok := r.m.sessions[id]
+	if !ok || s.Handle != "" {
+		return ErrNotFound
+	}
+	if r.handleTaken(s.OwnerID, handle) {
+		return ErrConflict
+	}
+	s.Handle = handle
 	return nil
 }
 
@@ -196,7 +223,7 @@ func (r memSessions) Update(_ context.Context, s *Session) (*Session, error) {
 	cur.Resources, cur.NodeSelector, cur.Tolerations, cur.Env, cur.Autonomous = s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous
 	cur.NoGitCredentials = s.NoGitCredentials
 	cur.Egress = append([]string{}, s.Egress...)
-	cur.SystemPrompt, cur.SystemPromptReplace, cur.AgentDefinition = s.SystemPrompt, s.SystemPromptReplace, s.AgentDefinition
+	cur.Persona, cur.AgentDefinition = s.Persona, s.AgentDefinition
 	cur.AIAccount = s.AIAccount
 	cur.UpdatedAt = time.Now()
 	return copySession(cur), nil

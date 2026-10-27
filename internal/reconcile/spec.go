@@ -302,13 +302,11 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 			corev1.EnvVar{Name: runner.EnvSandboxSecurity, Value: cfg.Sandbox.PodSecurity},
 		)
 	}
-	if s.SystemPrompt != "" {
-		mode := "append"
-		if s.SystemPromptReplace {
-			mode = "replace"
-		}
-		env = append(env, corev1.EnvVar{Name: runner.EnvSystemPrompt, Value: s.SystemPrompt},
-			corev1.EnvVar{Name: runner.EnvSystemPromptMode, Value: mode})
+	if s.Persona != "" {
+		env = append(env, corev1.EnvVar{Name: runner.EnvPersona, Value: s.Persona})
+	}
+	if s.Handle != "" {
+		env = append(env, corev1.EnvVar{Name: runner.EnvHandle, Value: s.Handle})
 	}
 	// The service checked the definition; one that no longer parses (a row
 	// edited by hand) is left out rather than started under a bad name.

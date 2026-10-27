@@ -107,8 +107,8 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
   const [autonomous, setAutonomous] = useState(true);
   const [gitCredentials, setGitCredentials] = useState(true);
   const [egress, setEgress] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [systemPromptReplace, setSystemPromptReplace] = useState(false);
+  const [persona, setPersona] = useState("");
+  const [handle, setHandle] = useState("");
   const [agentDefinition, setAgentDefinition] = useState("");
   const [aiAccount, setAIAccount] = useState("");
   const [accounts, setAccounts] = useState<Account[] | null>(null);
@@ -170,8 +170,8 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         setAutonomous(s.autonomous);
         setGitCredentials(s.git_credentials ?? true);
         setEgress((s.egress || []).join("\n"));
-        setSystemPrompt(s.system_prompt || "");
-        setSystemPromptReplace(!!s.system_prompt_replace);
+        setPersona(s.persona || "");
+        setHandle(s.handle || "");
         setAgentDefinition(s.agent_definition || "");
         setAIAccount(s.ai_account || "");
         setEditable(s.state === "stopped" || s.state === "failed");
@@ -229,11 +229,8 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         return;
       }
     }
-    if (agent === "opencode") {
-      req.system_prompt = systemPrompt;
-      req.system_prompt_replace = systemPromptReplace && !agentDefinition.trim();
-      req.agent_definition = agentDefinition;
-    }
+    if (agent !== "shell") req.persona = persona;
+    if (agent === "opencode") req.agent_definition = agentDefinition;
     req.egress = egress
       .split(/[\s,]+/)
       .map((d) => d.trim())
@@ -377,29 +374,26 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
             commit, not push or use <code>gh</code>
           </label>
         </div>
-        {agent === "opencode" && (
+        {agent !== "shell" && (
           <div>
-            <label for="sysprompt">System prompt</label>
+            <label for="persona">
+              Persona{handle && <span class="muted"> · chat handle @{handle}</span>}
+            </label>
             <textarea
-              id="sysprompt"
-              value={systemPrompt}
-              onInput={(e) => setSystemPrompt((e.target as HTMLTextAreaElement).value)}
-              placeholder="Extra instructions for every conversation in this session"
+              id="persona"
+              value={persona}
+              onInput={(e) => setPersona((e.target as HTMLTextAreaElement).value)}
+              placeholder="Personality and role, e.g. “You are the reviewer. Be blunt, ask for tests.”"
               rows={4}
             />
-            <div class="checkbox">
-              <input
-                id="spreplace"
-                type="checkbox"
-                checked={systemPromptReplace && !agentDefinition.trim()}
-                disabled={!!agentDefinition.trim()}
-                onChange={(e) => setSystemPromptReplace((e.target as HTMLInputElement).checked)}
-              />
-              <label for="spreplace" style="margin:0;color:inherit">
-                Replace the built-in prompt instead of adding to it (it tells the model how to use its tools and work; without it the agent may
-                code worse)
-              </label>
+            <div class="muted" style="font-size:12px;margin-top:3px">
+              Added to the agent's own system prompt from the next start. In chats, others see this persona and mention the session by its
+              handle.
             </div>
+          </div>
+        )}
+        {agent === "opencode" && (
+          <div>
             <label for="agentdef">Agent definition</label>
             <textarea
               id="agentdef"
@@ -412,7 +406,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
             <div class="muted" style="font-size:12px;margin-top:3px">
               Optional. An OpenCode agent: front matter with <code>name</code> and <code>description</code> (optionally OpenCode agent settings
               such as <code>model</code>, <code>temperature</code> or <code>permission</code>), then the agent's prompt. OpenCode starts as that
-              agent (<code>--agent</code>), whose prompt replaces the built-in one; the system prompt above is added after it. Both apply from the
+              agent (<code>--agent</code>), whose prompt replaces the built-in one; the persona above is added after it. Both apply from the
               next start.
             </div>
           </div>

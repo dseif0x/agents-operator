@@ -218,21 +218,19 @@ func TestProviderID(t *testing.T) {
 	}
 }
 
-func TestOpenCodeSystemPromptAndAgent(t *testing.T) {
+func TestOpenCodePersonaAndAgent(t *testing.T) {
 	home := t.TempDir()
 	stubModels(t, nil)
 
-	// Replace: the default agent's prompt.
-	_, cfg, vars := openCodeRun(t, false, "HOME="+home, runner.EnvSystemPrompt+"=You are Unjailed.", runner.EnvSystemPromptMode+"=replace")
-	if build := cfg["agent"].(map[string]any)["build"].(map[string]any); build["prompt"] != "You are Unjailed." {
-		t.Fatalf("replace agent = %v", cfg["agent"])
+	// The persona: an instructions file the runner writes, added to
+	// OpenCode's own prompt.
+	_, cfg, vars := openCodeRun(t, false, "HOME="+home, runner.EnvPersona+"=Be terse.")
+	if _, ok := vars[runner.EnvPersona]; ok {
+		t.Fatal("persona left in the CLI's environment")
 	}
-	if _, ok := vars[runner.EnvSystemPrompt]; ok {
-		t.Fatal("prompt left in the CLI's environment")
+	if cfg["agent"] != nil {
+		t.Fatalf("persona replaced an agent prompt: %v", cfg["agent"])
 	}
-
-	// Append: an instructions file the runner writes.
-	_, cfg, _ = openCodeRun(t, false, "HOME="+home, runner.EnvSystemPrompt+"=Be terse.")
 	files, _ := cfg["instructions"].([]any)
 	if len(files) != 1 {
 		t.Fatalf("instructions = %v", cfg["instructions"])

@@ -413,7 +413,8 @@ function Drawer(props: { session: Session; tab: "events" | "logs" | "info"; setT
                 : ["repos:         (none)"]),
               ...(s.egress?.length ? [`local network: ${s.egress.join(", ")}`] : []),
               ...(s.agent_definition ? [`agent def:     ${(s.agent_definition.match(/^name:\s*(\S+)/m) || [])[1] || "(set)"}`] : []),
-              ...(s.system_prompt ? [`system prompt: ${s.system_prompt_replace ? "replaces built-in" : "appended"} (${s.system_prompt.length} chars)`] : []),
+              `handle:        @${s.handle}`,
+              ...(s.persona ? [`persona:       ${s.persona.length} chars`] : []),
               `image tag:     ${s.image_tag || "(default)"}`,
               `pvc:           ${s.pvc_size} ${s.storage_class}`,
               `limits:        cpu ${s.resources?.limits?.cpu || "default"}, memory ${s.resources?.limits?.memory || "default"}${Object.entries(

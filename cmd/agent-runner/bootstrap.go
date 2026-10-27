@@ -359,7 +359,13 @@ func (w *Workspace) writeAgentsFile(repos []store.Repo) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		text := content
+		// Codex has no flag to add to its system prompt; its global
+		// instructions file carries the persona instead.
+		if persona := strings.TrimSpace(os.Getenv(runner.EnvPersona)); persona != "" && strings.HasSuffix(p, filepath.Join(".codex", "AGENTS.md")) {
+			text += "\n## Your persona\n\n" + persona + "\n"
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
 			return err
 		}
 	}

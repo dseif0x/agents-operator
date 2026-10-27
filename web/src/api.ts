@@ -45,9 +45,10 @@ export interface Session {
   git_credentials: boolean;
   /** Local network destinations the agent may reach: `192.168.1.10`, `192.168.1.0/24`, `192.168.1.10:8080`. */
   egress: string[];
-  /** OpenCode only: custom system prompt, appended to its own unless system_prompt_replace. */
-  system_prompt: string;
-  system_prompt_replace: boolean;
+  /** Personality and role, added to the agent's own system prompt (not for shell sessions). */
+  persona: string;
+  /** Immutable chat handle ("eager_turing"); mentions are @handle. */
+  handle: string;
   /** OpenCode only: agent definition (Markdown with front matter) started with --agent. */
   agent_definition: string;
   /** What kubectl in the pod may do: nothing, read the cluster, also write in k8s_namespaces, or own a sandbox cluster. */
@@ -178,8 +179,7 @@ export interface CreateSessionRequest {
   autonomous?: boolean;
   git_credentials?: boolean;
   egress?: string[];
-  system_prompt?: string;
-  system_prompt_replace?: boolean;
+  persona?: string;
   agent_definition?: string;
   k8s_access?: K8sAccess;
   k8s_namespaces?: string[];

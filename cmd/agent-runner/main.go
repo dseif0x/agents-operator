@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -172,13 +173,17 @@ func run() int {
 
 // AgentCommand is the one place that knows how to launch each agent CLI.
 func AgentCommand(agent string, autonomous bool, dir string, env []string) server.Command {
+	persona := strings.TrimSpace(envValue(env, runner.EnvPersona))
 	switch agent {
 	case runner.AgentClaude:
 		args := []string{}
 		if autonomous {
 			args = append(args, "--dangerously-skip-permissions")
 		}
-		return server.Command{Path: "claude", Args: args, Dir: dir, Env: env}
+		if persona != "" {
+			args = append(args, "--append-system-prompt", persona)
+		}
+		return server.Command{Path: "claude", Args: args, Dir: dir, Env: withoutEnv(env, runner.EnvPersona)}
 	case runner.AgentOpenCode:
 		args := []string{}
 		if autonomous {
@@ -188,10 +193,33 @@ func AgentCommand(agent string, autonomous bool, dir string, env []string) serve
 		args = append(args, agentArgs...)
 		return server.Command{Path: "opencode", Args: args, Dir: dir, Env: openCodeEnv(env, cfg)}
 	case runner.AgentCodex:
-		return server.Command{Path: "codex", Args: nil, Dir: dir, Env: env}
+		// The persona is in the generated ~/.codex/AGENTS.md (writeAgentsFile).
+		return server.Command{Path: "codex", Args: nil, Dir: dir, Env: withoutEnv(env, runner.EnvPersona)}
 	default:
-		return server.Command{Path: "bash", Args: []string{"-l"}, Dir: dir, Env: env}
+		return server.Command{Path: "bash", Args: []string{"-l"}, Dir: dir, Env: withoutEnv(env, runner.EnvPersona)}
 	}
+}
+
+// envValue is the last value of key in env, "" when absent.
+func envValue(env []string, key string) string {
+	for i := len(env) - 1; i >= 0; i-- {
+		if k, v, _ := strings.Cut(env[i], "="); k == key {
+			return v
+		}
+	}
+	return ""
+}
+
+// withoutEnv is env without the given keys.
+func withoutEnv(env []string, keys ...string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(keys, k) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 func envOr(key, def string) string {

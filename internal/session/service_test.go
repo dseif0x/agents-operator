@@ -24,6 +24,7 @@ import (
 	"github.com/dseif0x/agents-operator/internal/config"
 	"github.com/dseif0x/agents-operator/internal/egress"
 	"github.com/dseif0x/agents-operator/internal/github"
+	"github.com/dseif0x/agents-operator/internal/names"
 	"github.com/dseif0x/agents-operator/internal/reconcile"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/store"
@@ -595,28 +596,33 @@ func TestSandboxAccessValidation(t *testing.T) {
 	}
 }
 
-func TestSystemPromptAndAgentValidation(t *testing.T) {
+func TestPersonaAndAgentValidation(t *testing.T) {
 	svc, _, u := newService(t)
 	ctx := context.Background()
 	def := "---\nname: red-team\ndescription: Reviewer\n---\nYou review code."
-	sess, err := svc.Create(ctx, u, CreateRequest{Name: "oc", Agent: "opencode", SystemPrompt: "  Be terse.\r\nNo refusals.  ", AgentDefinition: def + "\r\n"})
+	sess, err := svc.Create(ctx, u, CreateRequest{Name: "oc", Agent: "opencode", Persona: "  Be terse.\r\nNo refusals.  ", AgentDefinition: def + "\r\n"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.SystemPrompt != "Be terse.\nNo refusals." || sess.AgentDefinition != def || sess.SystemPromptReplace {
-		t.Fatalf("stored = %q %q %v", sess.SystemPrompt, sess.AgentDefinition, sess.SystemPromptReplace)
+	if sess.Persona != "Be terse.\nNo refusals." || sess.AgentDefinition != def {
+		t.Fatalf("stored = %q %q", sess.Persona, sess.AgentDefinition)
 	}
-	if v := svc.View(sess); v.SystemPrompt != sess.SystemPrompt || v.AgentDefinition != def {
+	if v := svc.View(sess); v.Persona != sess.Persona || v.AgentDefinition != def || v.Handle != sess.Handle {
 		t.Fatalf("view = %+v", v)
 	}
+	// Every agent but the shell takes a persona.
+	for _, agent := range []string{"claude", "codex"} {
+		if _, err := svc.Create(ctx, u, CreateRequest{Name: agent, Agent: agent, Persona: "You review."}); err != nil {
+			t.Errorf("%s persona: %v", agent, err)
+		}
+	}
 	for name, req := range map[string]CreateRequest{
-		"prompt on another agent":     {Name: "c", Agent: "claude", SystemPrompt: "x"},
+		"persona on a shell":          {Name: "c", Agent: "shell", Persona: "x"},
 		"definition on another agent": {Name: "c", Agent: "codex", AgentDefinition: def},
-		"too long":                    {Name: "c", Agent: "opencode", SystemPrompt: strings.Repeat("x", MaxSystemPrompt+1)},
-		"nul":                         {Name: "c", Agent: "opencode", SystemPrompt: "a\x00b"},
-		"not utf-8":                   {Name: "c", Agent: "opencode", SystemPrompt: "a\xffb"},
+		"too long":                    {Name: "c", Agent: "opencode", Persona: strings.Repeat("x", MaxPersona+1)},
+		"nul":                         {Name: "c", Agent: "opencode", Persona: "a\x00b"},
+		"not utf-8":                   {Name: "c", Agent: "opencode", Persona: "a\xffb"},
 		"bad definition":              {Name: "c", Agent: "opencode", AgentDefinition: "You are an agent."},
-		"replace with an agent":       {Name: "c", Agent: "opencode", AgentDefinition: def, SystemPrompt: "x", SystemPromptReplace: true},
 	} {
 		if _, err := svc.Create(ctx, u, req); err == nil {
 			t.Errorf("%s accepted", name)
@@ -624,21 +630,52 @@ func TestSystemPromptAndAgentValidation(t *testing.T) {
 			t.Errorf("%s: %T %v", name, err, err)
 		}
 	}
-	if _, err := svc.Create(ctx, u, CreateRequest{Name: "r", Agent: "opencode", SystemPrompt: "x", SystemPromptReplace: true}); err != nil {
-		t.Fatalf("replace without an agent: %v", err)
-	}
-	// Edits on a stopped session apply; a blank prompt clears replace.
+	// Edits on a stopped session apply; the handle stays.
 	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateStopped, ""); err != nil {
 		t.Fatal(err)
 	}
-	up, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "oc", SystemPrompt: "   ", SystemPromptReplace: true})
-	if err != nil || up.SystemPrompt != "" || up.SystemPromptReplace || up.AgentDefinition != "" {
+	up, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "renamed", Persona: "   "})
+	if err != nil || up.Persona != "" || up.AgentDefinition != "" || up.Handle != sess.Handle || up.Name != "renamed" {
 		t.Fatalf("cleared = %+v, %v", up, err)
 	}
 	// Reserved env vars cannot smuggle either in.
-	for _, k := range []string{"AGENT_SYSTEM_PROMPT", "AGENT_DEFINITION", "AGENT_DEFINITION_NAME"} {
+	for _, k := range []string{"AGENT_PERSONA", "AGENT_HANDLE", "AGENT_DEFINITION", "AGENT_DEFINITION_NAME"} {
 		if _, err := svc.Create(ctx, u, CreateRequest{Name: "e", Agent: "opencode", Env: map[string]string{k: "x"}}); err == nil {
 			t.Errorf("%s accepted as session env", k)
 		}
+	}
+}
+
+func TestHandles(t *testing.T) {
+	svc, _, u := newService(t)
+	ctx := context.Background()
+	seen := map[string]bool{}
+	for i := 0; i < 20; i++ {
+		s, err := svc.Create(ctx, u, CreateRequest{Name: fmt.Sprintf("s%d", i), Agent: "shell"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !names.Pattern.MatchString(s.Handle) || seen[s.Handle] {
+			t.Fatalf("handle %q", s.Handle)
+		}
+		seen[s.Handle] = true
+	}
+	// Sessions from before handles get one at start; existing ones keep theirs.
+	old := &store.Session{OwnerID: u.ID, Name: "old", Agent: "shell", State: store.StateStopped}
+	if err := svc.Store.Sessions().Create(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.BackfillHandles(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := svc.Store.Sessions().Get(ctx, old.ID)
+	if !names.Pattern.MatchString(got.Handle) || seen[got.Handle] {
+		t.Fatalf("backfilled handle %q", got.Handle)
+	}
+	if err := svc.BackfillHandles(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := svc.Store.Sessions().Get(ctx, old.ID); again.Handle != got.Handle {
+		t.Fatal("backfill changed an existing handle")
 	}
 }
