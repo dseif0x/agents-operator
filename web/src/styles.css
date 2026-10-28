@@ -1447,3 +1447,20 @@ kbd {
 .page form.card + section.card {
   margin-top: 14px;
 }
+
+/* iOS 26+ colours an installed web app's (opaque, see index.html) status
+   bar by sampling the page's own top edge: the body's background or a
+   position: fixed element there. Where it cannot read a flat colour it lays
+   its Liquid Glass blur over the top of the page instead. It no longer
+   reads theme-color and does not see pseudo-elements, so a real 1px
+   element sits at the very top in the page colour (light or dark theme)
+   for it to sample. The same fix as redditview's. */
+#status-bar-fill {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  z-index: 1000;
+  background-color: var(--bg);
+}

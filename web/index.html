@@ -6,7 +6,13 @@
     <meta name="theme-color" content="#0f1115" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- Opaque status bar: from iOS 26 the system lays a Liquid Glass blur
+         over the top of a black-translucent web app (much stronger since
+         iOS 27), and only this setting is free of it. iOS reads the tag when
+         the app is added to the home screen: remove and re-add the icon.
+         The bar's colour comes from #status-bar-fill below (the installed
+         app no longer reads theme-color). -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -14,6 +20,9 @@
     <title>agents-operator</title>
   </head>
   <body>
+    <!-- A real element (pseudo-elements don't count) for iOS to sample the
+         installed app's status bar colour from; styled in styles.css. -->
+    <div id="status-bar-fill" aria-hidden="true"></div>
     <div id="app"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
