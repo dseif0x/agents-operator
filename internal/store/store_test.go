@@ -23,7 +23,7 @@ func stores(t *testing.T) map[string]Store {
 			t.Fatalf("open postgres: %v", err)
 		}
 		// Start from a clean slate; tests share one database.
-		_, _ = pg.pool.Exec(ctx, "TRUNCATE chat_reads, chat_deliveries, chat_attachments, chat_messages, chat_members, chats, session_events, sessions, user_credentials, accounts, user_profiles, repo_usage, users")
+		_, _ = pg.pool.Exec(ctx, "TRUNCATE push_subscriptions, app_settings, chat_reads, chat_deliveries, chat_attachments, chat_messages, chat_members, chats, session_events, sessions, user_credentials, accounts, user_profiles, repo_usage, users")
 		t.Cleanup(pg.Close)
 		out["postgres"] = pg
 	} else {
@@ -387,6 +387,40 @@ func exercise(t *testing.T, st Store) {
 	}
 	if err := st.Chats().Delete(ctx, chat.ID); err != nil {
 		t.Fatal(err)
+	}
+
+	// push subscriptions and settings
+	sub := &PushSubscription{Endpoint: "https://push.example/a", UserID: u.ID, P256dh: "p", Auth: "a", UserAgent: "ua"}
+	if err := st.Push().Save(ctx, sub); err != nil {
+		t.Fatal(err)
+	}
+	sub.Auth = "b"
+	if err := st.Push().Save(ctx, sub); err != nil {
+		t.Fatal(err)
+	}
+	if subs, err := st.Push().List(ctx, u.ID); err != nil || len(subs) != 1 || subs[0].Auth != "b" {
+		t.Fatalf("push subs = %+v, %v", subs, err)
+	}
+	if err := st.Push().Delete(ctx, adm.ID, sub.Endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if subs, _ := st.Push().List(ctx, u.ID); len(subs) != 1 {
+		t.Fatal("another user deleted a subscription")
+	}
+	if err := st.Push().Delete(ctx, "", sub.Endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if subs, _ := st.Push().List(ctx, u.ID); len(subs) != 0 {
+		t.Fatal("subscription not deleted")
+	}
+	if v, err := st.Settings().Get(ctx, "k"); err != nil || v != "" {
+		t.Fatalf("unset setting = %q, %v", v, err)
+	}
+	if v, _ := st.Settings().SetIfAbsent(ctx, "k", "one"); v != "one" {
+		t.Fatalf("first set = %q", v)
+	}
+	if v, _ := st.Settings().SetIfAbsent(ctx, "k", "two"); v != "one" {
+		t.Fatalf("second set = %q", v)
 	}
 	if _, err := st.Chats().Get(ctx, chat.ID); err != ErrNotFound {
 		t.Fatalf("get deleted chat err = %v", err)

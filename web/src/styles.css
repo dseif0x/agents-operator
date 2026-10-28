@@ -1426,3 +1426,24 @@ kbd {
   opacity: 1;
   color: var(--fg);
 }
+
+.push-prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.push-prompt span {
+  flex: 1;
+  min-width: 160px;
+}
+
+.page section.card + section.card,
+.page form.card + section.card {
+  margin-top: 14px;
+}

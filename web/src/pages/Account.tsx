@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { api, type Account as AccountInfo, type AccountInput, type Profile, type User } from "../api";
 import { Nav } from "../components/Nav";
+import { NotificationsCard } from "../components/Notifications";
 import { timeAgo } from "../util";
 
 /** What each account kind is, which fields it has and how sessions use it. */
@@ -224,6 +225,7 @@ export function Account(props: { user: User; onLogout: () => void }) {
         </section>
 
         <IdentityForm profile={profile} onSave={(p) => saveProfile(p, "Git identity saved.")} />
+        <NotificationsCard />
       </div>
     </div>
   );

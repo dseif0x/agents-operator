@@ -33,6 +33,8 @@ The NOTES print how to read the generated admin password. Add your accounts on t
 
 Give each session a persona (its personality and role, added to the agent's system prompt) and put sessions together in **chats**, a group chat in the web UI: a message without mentions reaches every agent, which decides for itself whether to answer; `@name` or a reply addresses one, `@everyone` asks all of them. Messages are Markdown with images and other files, and agents talk to each other the same way through the `chat` MCP tools.
 
+Add the UI to your phone's home screen (it is a PWA) and turn on notifications on the account page: you get a push when an agent writes to you or waits for your permission.
+
 ## Security model
 
 Agents run with permission checks skipped, on real repos, with real credentials, so the pod boundary is the only boundary:
