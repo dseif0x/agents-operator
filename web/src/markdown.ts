@@ -45,7 +45,54 @@ export function renderMessage(text: string, members: ChatMember[]): string {
     const m = byHandle.get(handle);
     return m ? `${pre}[@${escapeMd(m.name)}](#mention-${m.session_id})` : all;
   });
-  return sanitize(md.parse(withMentions, { async: false }) as string);
+  return withCopyButtons(sanitize(md.parse(withMentions, { async: false }) as string));
+}
+
+/** withCopyButtons wraps every code block of sanitized HTML with a copy
+ * button (markup of ours, added after sanitizing; the chat view handles
+ * the click, see copyCode). */
+function withCopyButtons(html: string): string {
+  if (!html.includes("<pre")) return html;
+  const t = document.createElement("template");
+  t.innerHTML = html;
+  for (const pre of Array.from(t.content.querySelectorAll("pre"))) {
+    const wrap = document.createElement("div");
+    wrap.className = "code-wrap";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "code-copy";
+    btn.textContent = "Copy";
+    btn.title = "Copy to clipboard";
+    pre.replaceWith(wrap);
+    wrap.append(btn, pre);
+  }
+  return t.innerHTML;
+}
+
+/** copyCode copies the code block next to a copy button and says so on the button. */
+export async function copyCode(btn: HTMLElement): Promise<void> {
+  const text = btn.parentElement?.querySelector("pre")?.textContent ?? "";
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch {
+    // No clipboard API (plain http, older browsers): the old way.
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.append(ta);
+    ta.select();
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    ta.remove();
+  }
+  btn.textContent = ok ? "Copied" : "Copy failed";
+  setTimeout(() => (btn.textContent = "Copy"), 1500);
 }
 
 /** mentionedHandles lists the handles and @everyone written in text, in order. */

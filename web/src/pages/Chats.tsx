@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, subscribeChats, type Chat, type ChatMember, type ChatMessage, type Session, type User } from "../api";
 import { Nav } from "../components/Nav";
 import { Link, navigate } from "../router";
-import { mentionedHandles, renderMessage } from "../markdown";
+import { copyCode, mentionedHandles, renderMessage } from "../markdown";
 
 // Chats: groups of the owner's agent sessions, like a group chat. The list
 // is on the left (the whole screen on a phone until a chat is open), the
@@ -29,6 +29,16 @@ function Avatar(props: { id: string; name: string; owner?: boolean }) {
   );
 }
 
+/** Images (by the type the hub sniffed) are shown inline; other files are downloads. */
+const imageTypes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const isImage = (a: { content_type: string }) => imageTypes.has(a.content_type);
+
+function sizeLabel(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function timeLabel(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
@@ -40,7 +50,7 @@ function timeLabel(iso: string): string {
 function preview(m?: ChatMessage): string {
   if (!m) return "No messages yet";
   const who = m.author.kind === "owner" ? "You" : m.author.name;
-  const text = m.text.replace(/\s+/g, " ").trim() || (m.attachments.length ? "🖼 image" : "");
+  const text = m.text.replace(/\s+/g, " ").trim() || (m.attachments.length ? (m.attachments.every(isImage) ? "🖼 image" : "📎 file") : "");
   return `${who}: ${text}`;
 }
 
@@ -301,6 +311,12 @@ function ChatView(props: {
   const working = members.filter((m) => m.state === "running" && m.activity && busyActivities.has(m.activity));
 
   const onBodyClick = (e: MouseEvent) => {
+    const copy = (e.target as HTMLElement).closest<HTMLElement>(".code-copy");
+    if (copy) {
+      e.preventDefault();
+      copyCode(copy);
+      return;
+    }
     const a = (e.target as HTMLElement).closest("a");
     const href = a?.getAttribute("href") || "";
     if (href.startsWith("#mention-")) {
@@ -445,11 +461,24 @@ function Message(props: {
           </a>
         )}
         {m.text && <div class="chat-text md" dangerouslySetInnerHTML={{ __html: html }} />}
-        {m.attachments.length > 0 && (
+        {m.attachments.some(isImage) && (
           <div class="chat-images">
-            {m.attachments.map((a) => (
+            {m.attachments.filter(isImage).map((a) => (
               <img src={a.url} alt={a.name} loading="lazy" onClick={() => props.onImage(a.url)} />
             ))}
+          </div>
+        )}
+        {m.attachments.some((a) => !isImage(a)) && (
+          <div class="chat-files">
+            {m.attachments
+              .filter((a) => !isImage(a))
+              .map((a) => (
+                <a class="chat-file" href={a.url} download={a.name} title={`Download ${a.name}`}>
+                  <span class="chat-file-icon">📎</span>
+                  <span class="chat-file-name">{a.name}</span>
+                  <span class="muted chat-file-size">{sizeLabel(a.size)}</span>
+                </a>
+              ))}
           </div>
         )}
         {queued.length > 0 && <div class="muted chat-queued">queued for {queued.join(", ")}</div>}
@@ -470,8 +499,8 @@ function Composer(props: { chat: Chat; replyTo: ChatMessage | null; onCancelRepl
   const [suggest, setSuggest] = useState<{ query: string; start: number; index: number } | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const previews = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files]);
-  useEffect(() => () => previews.forEach((u) => URL.revokeObjectURL(u)), [previews]);
+  const previews = useMemo(() => files.map((f) => (f.type.startsWith("image/") ? URL.createObjectURL(f) : "")), [files]);
+  useEffect(() => () => previews.forEach((u) => u && URL.revokeObjectURL(u)), [previews]);
 
   useEffect(() => {
     if (props.replyTo) ta.current?.focus();
@@ -525,8 +554,11 @@ function Composer(props: { chat: Chat; replyTo: ChatMessage | null; onCancelRepl
   }, [text, chat.members, props.replyTo]);
 
   const addFiles = (list: FileList | File[] | null) => {
-    const imgs = Array.from(list ?? []).filter((f) => f.type.startsWith("image/"));
-    if (imgs.length) setFiles((cur) => [...cur, ...imgs].slice(0, 5));
+    const picked = Array.from(list ?? []);
+    const big = picked.find((f) => f.size > 10 * 1024 * 1024);
+    if (big) setError(`${big.name} is larger than 10 MB`);
+    const ok = picked.filter((f) => f.size > 0 && f.size <= 10 * 1024 * 1024);
+    if (ok.length) setFiles((cur) => [...cur, ...ok].slice(0, 5));
   };
 
   const send = async () => {
@@ -592,7 +624,13 @@ function Composer(props: { chat: Chat; replyTo: ChatMessage | null; onCancelRepl
         <div class="composer-files">
           {files.map((f, i) => (
             <span class="composer-file">
-              <img src={previews[i]} alt={f.name} />
+              {previews[i] ? (
+                <img src={previews[i]} alt={f.name} />
+              ) : (
+                <span class="composer-file-chip" title={f.name}>
+                  📎 {f.name} <span class="muted">{sizeLabel(f.size)}</span>
+                </span>
+              )}
               <button class="btn small" onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} title="Remove">
                 ✕
               </button>
@@ -616,13 +654,12 @@ function Composer(props: { chat: Chat; replyTo: ChatMessage | null; onCancelRepl
         </div>
       )}
       <div class="composer-row">
-        <button class="btn small" onClick={() => fileInput.current?.click()} title="Attach images">
-          🖼
+        <button class="btn small" onClick={() => fileInput.current?.click()} title="Attach files (images are shown inline)">
+          📎
         </button>
         <input
           ref={fileInput}
           type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp"
           multiple
           hidden
           onChange={(e) => {
@@ -647,10 +684,10 @@ function Composer(props: { chat: Chat; replyTo: ChatMessage | null; onCancelRepl
           onBlur={() => setTimeout(() => setSuggest(null), 150)}
           onKeyDown={onKeyDown}
           onPaste={(e) => {
-            const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
-            if (imgs.length) {
+            const pasted = Array.from(e.clipboardData?.files ?? []);
+            if (pasted.length) {
               e.preventDefault();
-              addFiles(imgs);
+              addFiles(pasted);
             }
           }}
         />

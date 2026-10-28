@@ -283,9 +283,9 @@ func (u *Uplinks) do(ctx context.Context, sessionID string, f runner.UplinkFrame
 		if err := json.Unmarshal(f.Args, &a); err != nil {
 			return nil, &ValidationError{"bad arguments"}
 		}
-		images := make([]ChatImage, 0, len(a.Images))
+		images := make([]ChatFile, 0, len(a.Images))
 		for _, img := range a.Images {
-			images = append(images, ChatImage{Name: img.Name, Data: img.Data})
+			images = append(images, ChatFile{Name: img.Name, Data: img.Data})
 		}
 		return u.Svc.AgentPost(ctx, sess, a.Chat, a.Text, a.ReplyTo, images)
 	case runner.OpAttachment:

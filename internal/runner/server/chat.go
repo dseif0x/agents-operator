@@ -349,14 +349,28 @@ func (c *Chat) StopHook() string {
 
 var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
-// fetchFiles writes a message's images under ~/chats/<chat>/ (once) and
-// fills in their paths.
+// imageExt is the file extension of the image types shown inline.
+var imageExt = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
+
+// IsImage reports whether an attachment is one of the inline image types.
+func IsImage(contentType string) bool { return imageExt[contentType] != "" }
+
+// fetchFiles writes a message's files under ~/chats/<chat>/ (once) and
+// fills in their paths: images as <message>-<n>.<ext>, other files as
+// <message>-<n>-<their name>.
 func (c *Chat) fetchFiles(ctx context.Context, chatName string, m *runner.ChatMessage) {
 	dir := filepath.Join(c.Home, "chats", strings.Trim(unsafeName.ReplaceAllString(chatName, "-"), "-"))
 	for i := range m.Attachments {
 		a := &m.Attachments[i]
-		ext := map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}[a.ContentType]
-		path := filepath.Join(dir, fmt.Sprintf("%d-%d%s", m.ID, i+1, ext))
+		name := fmt.Sprintf("%d-%d%s", m.ID, i+1, imageExt[a.ContentType])
+		if !IsImage(a.ContentType) {
+			base := strings.Trim(unsafeName.ReplaceAllString(a.Name, "-"), "-.")
+			if base == "" {
+				base = "file"
+			}
+			name = fmt.Sprintf("%d-%d-%s", m.ID, i+1, base)
+		}
+		path := filepath.Join(dir, name)
 		if _, err := os.Stat(path); err == nil {
 			a.Path = path
 			continue
@@ -420,10 +434,14 @@ func (c *Chat) prompt(ctx context.Context, ds []runner.ChatDelivery) string {
 			b.WriteString(d.Text + "\n")
 		}
 		for _, a := range d.Attachments {
+			kind := "file"
+			if IsImage(a.ContentType) {
+				kind = "image"
+			}
 			if a.Path != "" {
-				b.WriteString("[image: " + a.Path + "]\n")
+				b.WriteString("[" + kind + ": " + a.Path + "]\n")
 			} else {
-				b.WriteString("[an image that could not be fetched]\n")
+				b.WriteString("[a " + kind + " (" + a.Name + ") that could not be fetched]\n")
 			}
 		}
 		if d.Earlier > earlier[d.ChatName] {
@@ -509,14 +527,15 @@ func (c *Chat) local(ctx context.Context, op string, body []byte) (json.RawMessa
 			Chat    string   `json:"chat"`
 			Text    string   `json:"text"`
 			ReplyTo int64    `json:"reply_to"`
-			Images  []string `json:"images"`
+			Files   []string `json:"files"`
+			Images  []string `json:"images"` // the name before files of any type
 		}
 		if err := json.Unmarshal(body, &a); err != nil {
 			return nil, errors.New("bad arguments")
 		}
 		send := runner.ChatSendArgs{Chat: a.Chat, Text: a.Text, ReplyTo: a.ReplyTo}
-		for _, p := range a.Images {
-			f, err := c.readImage(p)
+		for _, p := range append(a.Files, a.Images...) {
+			f, err := c.readFile(p)
 			if err != nil {
 				return nil, err
 			}
@@ -528,9 +547,10 @@ func (c *Chat) local(ctx context.Context, op string, body []byte) (json.RawMessa
 	}
 }
 
-// readImage reads an image the agent wants to send: a file under one of
-// Roots (after resolving links), at most 10 MiB, of an accepted type.
-func (c *Chat) readImage(path string) (runner.UplinkFile, error) {
+// readFile reads a file the agent wants to send: a regular file under one
+// of Roots (after resolving links), at most 10 MiB. Its type is sniffed by
+// the hub; images are shown inline, anything else is a download.
+func (c *Chat) readFile(path string) (runner.UplinkFile, error) {
 	var f runner.UplinkFile
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -565,11 +585,8 @@ func (c *Chat) readImage(path string) (runner.UplinkFile, error) {
 	if err != nil {
 		return f, err
 	}
-	ct := http.DetectContentType(data)
-	switch ct {
-	case "image/png", "image/jpeg", "image/gif", "image/webp":
-	default:
-		return f, fmt.Errorf("%s is %s; only PNG, JPEG, GIF and WebP images can be sent", path, ct)
+	if len(data) == 0 {
+		return f, fmt.Errorf("%s is empty", path)
 	}
-	return runner.UplinkFile{Name: filepath.Base(real), ContentType: ct, Data: data}, nil
+	return runner.UplinkFile{Name: filepath.Base(real), ContentType: http.DetectContentType(data), Data: data}, nil
 }

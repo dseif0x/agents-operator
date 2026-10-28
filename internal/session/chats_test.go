@@ -191,8 +191,12 @@ func TestChatValidation(t *testing.T) {
 			_, err := svc.PostChatMessage(ctx, u, c.ID, strings.Repeat("x", MaxChatText+1), 0, nil)
 			return err
 		},
-		"not image": func() error {
-			_, err := svc.PostChatMessage(ctx, u, c.ID, "x", 0, []ChatImage{{Name: "a.txt", Data: []byte("hello")}})
+		"empty file": func() error {
+			_, err := svc.PostChatMessage(ctx, u, c.ID, "x", 0, []ChatFile{{Name: "a.txt"}})
+			return err
+		},
+		"too many": func() error {
+			_, err := svc.PostChatMessage(ctx, u, c.ID, "x", 0, make([]ChatFile, MaxChatFiles+1))
 			return err
 		},
 		"bad reply": func() error { _, err := svc.PostChatMessage(ctx, u, c.ID, "x", 999, nil); return err },
@@ -208,7 +212,7 @@ func TestChatValidation(t *testing.T) {
 		}
 	}
 	// Images: stored, served to the owner and to members only.
-	m, err := svc.PostChatMessage(ctx, u, c.ID, "", 0, []ChatImage{{Name: "dot.png", Data: pngBytes(t)}})
+	m, err := svc.PostChatMessage(ctx, u, c.ID, "", 0, []ChatFile{{Name: "dot.png", Data: pngBytes(t)}})
 	if err != nil || len(m.Attachments) != 1 || m.Attachments[0].ContentType != "image/png" {
 		t.Fatalf("image message = %+v, %v", m, err)
 	}
@@ -222,6 +226,14 @@ func TestChatValidation(t *testing.T) {
 	other, _ := svc.Create(ctx, u, CreateRequest{Name: "outsider", Agent: "claude"})
 	if _, _, err := svc.AgentAttachment(ctx, other, m.Attachments[0].ID); err == nil {
 		t.Fatal("an outsider fetched an image")
+	}
+	// Any other file: stored with its sniffed type and a clean name.
+	fm, err := svc.PostChatMessage(ctx, u, c.ID, "notes", 0, []ChatFile{{Name: `C:\\tmp\\../"notes".txt`, Data: []byte("hello, plain text")}})
+	if err != nil || len(fm.Attachments) != 1 || fm.Attachments[0].Name != "notes.txt" || fm.Attachments[0].ContentType != "text/plain; charset=utf-8" || IsChatImage(fm.Attachments[0].ContentType) {
+		t.Fatalf("file message = %+v, %v", fm, err)
+	}
+	if _, data, err := svc.ChatAttachment(ctx, u, c.ID, fm.Attachments[0].ID); err != nil || string(data) != "hello, plain text" {
+		t.Fatalf("file attachment = %q, %v", data, err)
 	}
 	// Removing a member drops what it had not received.
 	if _, err := svc.RemoveChatMember(ctx, u, c.ID, ss[2].ID); err != nil {
@@ -269,7 +281,7 @@ func TestChatUplinkEndToEnd(t *testing.T) {
 	ul.Ensure(ctx, []*store.Session{impl})
 
 	// The owner writes; the runner types it in and confirms.
-	m, err := svc.PostChatMessage(ctx, u, c.ID, "@"+impl.Handle+" please fix the login bug", 0, []ChatImage{{Name: "shot.png", Data: pngBytes(t)}})
+	m, err := svc.PostChatMessage(ctx, u, c.ID, "@"+impl.Handle+" please fix the login bug", 0, []ChatFile{{Name: "shot.png", Data: pngBytes(t)}, {Name: "steps to repro.md", Data: []byte("1. log in\n2. wait\n")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +296,7 @@ func TestChatUplinkEndToEnd(t *testing.T) {
 		t.Fatalf("not delivered: %+v", ds)
 	}
 	typed := string(proc.Scrollback())
-	for _, want := range []string{"[agents-operator chat]", "please fix the login bug", "addressed to you", "[image: "} {
+	for _, want := range []string{"[agents-operator chat]", "please fix the login bug", "addressed to you", "[image: ", "[file: "} {
 		if !strings.Contains(typed, want) {
 			t.Fatalf("terminal lacks %q:\n%s", want, typed)
 		}
@@ -292,6 +304,10 @@ func TestChatUplinkEndToEnd(t *testing.T) {
 	img := filepath.Join(root, "home", "chats", "launch", strconv.FormatInt(m.ID, 10)+"-1.png")
 	if b, err := os.ReadFile(img); err != nil || !bytes.Equal(b, pngBytes(t)) {
 		t.Fatalf("image file %s: %v", img, err)
+	}
+	doc := filepath.Join(root, "home", "chats", "launch", strconv.FormatInt(m.ID, 10)+"-2-steps-to-repro.md")
+	if b, err := os.ReadFile(doc); err != nil || string(b) != "1. log in\n2. wait\n" {
+		t.Fatalf("file %s: %q %v", doc, b, err)
 	}
 
 	// The agent's tools, through the runner's loopback API.
@@ -309,13 +325,15 @@ func TestChatUplinkEndToEnd(t *testing.T) {
 	}
 	shot := filepath.Join(root, "fix.png")
 	_ = os.WriteFile(shot, pngBytes(t), 0o644)
-	out := call(runner.OpChatSend, map[string]any{"chat": "launch", "text": "Fixed on fix/login. @" + ss[1].Handle + " can you review?", "reply_to": m.ID, "images": []string{shot}})
+	patch := filepath.Join(root, "fix.patch")
+	_ = os.WriteFile(patch, []byte("--- a\n+++ b\n"), 0o644)
+	out := call(runner.OpChatSend, map[string]any{"chat": "launch", "text": "Fixed on fix/login. @" + ss[1].Handle + " can you review?", "reply_to": m.ID, "images": []string{shot}, "files": []string{patch}})
 	if out["error"] != nil {
 		t.Fatalf("chat_send: %s", out["error"])
 	}
 	msgs, _ := svc.Store.Chats().Messages(ctx, c.ID, 0, 0, 10)
 	last := msgs[len(msgs)-1]
-	if last.AuthorSession != impl.ID || last.ReplyTo != m.ID || len(last.Attachments) != 1 || !slices.Contains(last.Mentions, ss[1].ID) {
+	if last.AuthorSession != impl.ID || last.ReplyTo != m.ID || len(last.Attachments) != 2 || !slices.Contains(last.Mentions, ss[1].ID) {
 		t.Fatalf("posted = %+v", last)
 	}
 	// Files outside the workspace are refused.

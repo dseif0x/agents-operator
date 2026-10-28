@@ -5,7 +5,6 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/dseif0x/agents-operator/internal/session"
 )
@@ -135,15 +134,16 @@ func (s *Server) chatMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
 }
 
-// postChatMessage takes JSON {"text", "reply_to"} or, with images,
-// multipart/form-data with fields text and reply_to and files "images".
+// postChatMessage takes JSON {"text", "reply_to"} or, with files,
+// multipart/form-data with fields text and reply_to and the files under
+// "files" (or "images", the name before files of any type were allowed).
 func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 	var text string
 	var replyTo int64
-	var images []session.ChatImage
+	var images []session.ChatFile
 	ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if ct == "multipart/form-data" {
-		r.Body = http.MaxBytesReader(w, r.Body, int64(session.MaxChatImages)*session.MaxChatImageBytes+session.MaxChatText+1<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, int64(session.MaxChatFiles)*session.MaxChatFileBytes+session.MaxChatText+1<<20)
 		if err := r.ParseMultipartForm(16 << 20); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid upload: "+err.Error())
 			return
@@ -151,9 +151,10 @@ func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = r.MultipartForm.RemoveAll() }()
 		text = r.FormValue("text")
 		replyTo, _ = strconv.ParseInt(r.FormValue("reply_to"), 10, 64)
-		for _, fh := range r.MultipartForm.File["images"] {
-			if fh.Size > session.MaxChatImageBytes {
-				writeErr(w, http.StatusBadRequest, "images are limited to 10 MiB")
+		uploads := append(r.MultipartForm.File["files"], r.MultipartForm.File["images"]...)
+		for _, fh := range uploads {
+			if fh.Size > session.MaxChatFileBytes {
+				writeErr(w, http.StatusBadRequest, "files are limited to 10 MiB")
 				return
 			}
 			f, err := fh.Open()
@@ -161,13 +162,13 @@ func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusBadRequest, "invalid upload")
 				return
 			}
-			data, err := io.ReadAll(io.LimitReader(f, session.MaxChatImageBytes+1))
+			data, err := io.ReadAll(io.LimitReader(f, session.MaxChatFileBytes+1))
 			_ = f.Close()
 			if err != nil {
 				writeErr(w, http.StatusBadRequest, "invalid upload")
 				return
 			}
-			images = append(images, session.ChatImage{Name: fh.Filename, Data: data})
+			images = append(images, session.ChatFile{Name: fh.Filename, Data: data})
 		}
 	} else {
 		var body struct {
@@ -209,19 +210,21 @@ func (s *Server) chatAttachment(w http.ResponseWriter, r *http.Request) {
 		s.mapErr(w, err)
 		return
 	}
-	// Only sniffed image types are stored; never let a browser guess.
-	w.Header().Set("Content-Type", a.ContentType)
+	// Images (sniffed on upload) are shown inline; every other file is a
+	// download of opaque bytes, so a browser never renders an uploaded HTML
+	// page or script from the hub's origin. Never let a browser guess.
+	disposition, ctype := "attachment", "application/octet-stream"
+	if session.IsChatImage(a.ContentType) {
+		disposition, ctype = "inline", a.ContentType
+	}
+	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	name := strings.Map(func(r rune) rune {
-		if r < 0x20 || r == '"' || r == '\\' {
-			return -1
-		}
-		return r
-	}, a.Name)
-	if name != "" {
-		w.Header().Set("Content-Disposition", `inline; filename="`+name+`"`)
+	if cd := mime.FormatMediaType(disposition, map[string]string{"filename": session.CleanFileName(a.Name)}); cd != "" && a.Name != "" {
+		w.Header().Set("Content-Disposition", cd)
+	} else {
+		w.Header().Set("Content-Disposition", disposition)
 	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	_, _ = w.Write(data)

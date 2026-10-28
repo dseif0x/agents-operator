@@ -94,10 +94,12 @@ type UplinkFile struct {
 
 // ChatSendArgs are the arguments of OpChatSend.
 type ChatSendArgs struct {
-	Chat    string       `json:"chat"`
-	Text    string       `json:"text"`
-	ReplyTo int64        `json:"reply_to,omitempty"`
-	Images  []UplinkFile `json:"images,omitempty"`
+	Chat    string `json:"chat"`
+	Text    string `json:"text"`
+	ReplyTo int64  `json:"reply_to,omitempty"`
+	// Images carries the attached files of any type (the wire name is from
+	// when only images were allowed).
+	Images []UplinkFile `json:"images,omitempty"`
 }
 
 // ChatRefArgs name a chat (OpChatInfo) and, for OpChatRead, a window.

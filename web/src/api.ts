@@ -276,13 +276,13 @@ export const api = {
     return request<{ messages: ChatMessage[] }>("GET", `/chats/${id}/messages?${q}`);
   },
   markChatRead: (id: string, lastId: number) => request<{ ok: boolean }>("POST", `/chats/${id}/read`, { last_id: lastId }),
-  /** Post as the owner; with images it goes as multipart. */
+  /** Post as the owner; with files it goes as multipart. */
   postChatMessage: async (id: string, text: string, replyTo: number, images: File[]): Promise<ChatMessage> => {
     if (!images.length) return request<ChatMessage>("POST", `/chats/${id}/messages`, { text, reply_to: replyTo || 0 });
     const form = new FormData();
     form.set("text", text);
     if (replyTo) form.set("reply_to", String(replyTo));
-    for (const f of images) form.append("images", f, f.name || "image");
+    for (const f of images) form.append("files", f, f.name || "file");
     const res = await fetch(`/api/v1/chats/${id}/messages`, {
       method: "POST",
       headers: csrf ? { "X-CSRF-Token": csrf, Accept: "application/json" } : { Accept: "application/json" },

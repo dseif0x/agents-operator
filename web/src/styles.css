@@ -1351,3 +1351,78 @@ kbd {
     font-size: 15px;
   }
 }
+
+.chat-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.chat-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.chat-file:hover {
+  border-color: var(--accent);
+}
+
+.chat-file-name,
+.composer-file-chip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-file-size {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.composer-file-chip {
+  display: inline-block;
+  max-width: 220px;
+  padding: 8px 30px 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+/* Code blocks in chat messages get a copy button in their top right corner. */
+.code-wrap {
+  position: relative;
+}
+
+.code-wrap pre {
+  padding-right: 64px;
+}
+
+.code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.code-wrap:hover .code-copy,
+.code-copy:focus {
+  opacity: 1;
+  color: var(--fg);
+}

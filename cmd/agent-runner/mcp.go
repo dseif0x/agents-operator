@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dseif0x/agents-operator/internal/runner"
+	"github.com/dseif0x/agents-operator/internal/runner/server"
 )
 
 // `agent-runner mcp` is a stdio MCP server with the chat tools. The agent
@@ -56,7 +57,7 @@ var chatToolDefs = []map[string]any{
 	},
 	{
 		"name":        runner.OpChatRead,
-		"description": "Read a chat's messages, oldest first: the latest ones, or with since those after a message id. Images come as file paths you can open.",
+		"description": "Read a chat's messages, oldest first: the latest ones, or with since those after a message id. Images and other files come as paths you can open.",
 		"inputSchema": map[string]any{"type": "object", "required": []string{"chat"}, "properties": map[string]any{
 			"chat":  map[string]any{"type": "string", "description": "the chat's name or id"},
 			"since": map[string]any{"type": "integer", "description": "only messages after this message id"},
@@ -66,12 +67,13 @@ var chatToolDefs = []map[string]any{
 	{
 		"name": runner.OpChatSend,
 		"description": "Post a message (Markdown) to a chat. Mention members with @handle to address them (chat_info lists handles); a message without mentions goes to everyone, @everyone asks everyone to answer. " +
-			"Use reply_to to answer a specific message. Attach images by giving paths of PNG, JPEG, GIF or WebP files in the workspace.",
+			"Use reply_to to answer a specific message. Attach files (images are shown inline, anything else as a download; up to 5, 10 MiB each) by giving their paths in the workspace.",
 		"inputSchema": map[string]any{"type": "object", "required": []string{"chat", "text"}, "properties": map[string]any{
 			"chat":     map[string]any{"type": "string", "description": "the chat's name or id"},
 			"text":     map[string]any{"type": "string", "description": "the message, Markdown"},
 			"reply_to": map[string]any{"type": "integer", "description": "the id of the message this replies to"},
-			"images":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "paths of images to attach"},
+			"files":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "paths of files to attach (images or anything else)"},
+			"images":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "same as files (kept for compatibility)"},
 		}},
 	},
 }
@@ -268,10 +270,14 @@ func formatChatResult(name string, raw json.RawMessage) string {
 				b.WriteString(m.Text + "\n")
 			}
 			for _, a := range m.Attachments {
+				kind := "file"
+				if server.IsImage(a.ContentType) {
+					kind = "image"
+				}
 				if a.Path != "" {
-					b.WriteString("[image: " + a.Path + "]\n")
+					b.WriteString("[" + kind + ": " + a.Path + "]\n")
 				} else {
-					b.WriteString("[image " + a.Name + ", not fetched]\n")
+					b.WriteString("[" + kind + " " + a.Name + ", not fetched]\n")
 				}
 			}
 		}
