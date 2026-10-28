@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, subscribeChats, type Chat, type ChatMember, type ChatMessage, type Session, type User } from "../api";
 import { Nav } from "../components/Nav";
 import { Link, navigate } from "../router";
-import { mentionedHandles, renderMessage } from "../markdown";
+import { copyCode, mentionedHandles, renderMessage } from "../markdown";
 
 // Chats: groups of the owner's agent sessions, like a group chat. The list
 // is on the left (the whole screen on a phone until a chat is open), the
@@ -311,6 +311,12 @@ function ChatView(props: {
   const working = members.filter((m) => m.state === "running" && m.activity && busyActivities.has(m.activity));
 
   const onBodyClick = (e: MouseEvent) => {
+    const copy = (e.target as HTMLElement).closest<HTMLElement>(".code-copy");
+    if (copy) {
+      e.preventDefault();
+      copyCode(copy);
+      return;
+    }
     const a = (e.target as HTMLElement).closest("a");
     const href = a?.getAttribute("href") || "";
     if (href.startsWith("#mention-")) {
