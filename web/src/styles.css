@@ -1209,6 +1209,14 @@ kbd {
   padding: 8px 10px;
 }
 
+/* One line even for a long chat name on a narrow screen: a wrapped
+   placeholder made the empty box two lines tall. */
+.composer textarea::placeholder {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .composer-hint {
   font-size: 12px;
   margin-top: 4px;

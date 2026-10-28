@@ -738,7 +738,7 @@ function Composer(props: { chat: Chat; replyTo: ChatMessage | null; onCancelRepl
           ref={ta}
           rows={1}
           value={text}
-          placeholder={`Message ${chat.name} (Markdown; @ to mention)`}
+          placeholder={`Message ${chat.name}`}
           onInput={(e) => {
             const el = e.target as HTMLTextAreaElement;
             setText(el.value);
