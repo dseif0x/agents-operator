@@ -49,10 +49,26 @@ body {
   font-family: var(--font);
   font-size: 15px;
   -webkit-text-size-adjust: 100%;
+  overflow: hidden;
+}
+
+/* The document itself never scrolls: #app is the scroll container. From
+   iOS 26 the installed web app lays a Liquid Glass blur over the top of
+   the web view's own scroll view whenever content can scroll under the
+   top edge (much stronger since iOS 27), even with the opaque status bar;
+   a pinned body gives it nothing to blur. Same as redditview. */
+body {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  overscroll-behavior: none;
 }
 
 #app {
-  min-height: 100%;
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 a {
