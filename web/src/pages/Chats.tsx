@@ -129,6 +129,9 @@ export function Chats(props: { user: User; onLogout: () => void; chatId?: string
     [],
   );
 
+  // Picking a chat leaves the new-chat form.
+  useEffect(() => setCreating(false), [props.chatId]);
+
   const current = chats?.find((c) => c.id === props.chatId);
   const sorted = useMemo(
     () => [...(chats ?? [])].sort((a, b) => (b.last_message?.created_at ?? b.created_at).localeCompare(a.last_message?.created_at ?? a.created_at)),
@@ -139,7 +142,9 @@ export function Chats(props: { user: User; onLogout: () => void; chatId?: string
     <div class="page chats-page">
       <Nav user={props.user} onLogout={props.onLogout} />
       {error && <div class="error">{error}</div>}
-      <div class={`chats-layout ${props.chatId ? "has-open" : ""}`}>
+      {/* On a phone the layout shows either the list or the main pane
+          (has-open); the new-chat form is in the main pane, so it counts. */}
+      <div class={`chats-layout ${props.chatId || creating ? "has-open" : ""}`}>
         <aside class="chat-list">
           <div class="chat-list-head">
             <b>Chats</b>
