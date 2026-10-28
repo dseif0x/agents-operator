@@ -15,6 +15,7 @@ import (
 
 	"github.com/dseif0x/agents-operator/internal/auth"
 	"github.com/dseif0x/agents-operator/internal/config"
+	"github.com/dseif0x/agents-operator/internal/push"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/session"
 	"github.com/dseif0x/agents-operator/internal/store"
@@ -33,8 +34,10 @@ type Server struct {
 	Term     *term.Proxy
 	Ready    func() bool
 	UI       http.Handler
-	Metrics  http.Handler
-	Log      *slog.Logger
+	// Push sends Web Push notifications (nil: off).
+	Push    *push.Service
+	Metrics http.Handler
+	Log     *slog.Logger
 }
 
 type ctxKey int
@@ -91,6 +94,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("GET /api/v1/me/profile", s.getProfile)
 	authed.HandleFunc("PUT /api/v1/me/profile", s.putProfile)
 	s.chatRoutes(authed)
+	s.pushRoutes(authed)
 	mux.Handle("/api/v1/", s.requireAuth(s.requireCSRF(authed)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) { writeErr(w, http.StatusNotFound, "no such route") })
 
@@ -151,7 +155,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "same-origin")
 		if !strings.HasPrefix(r.URL.Path, "/api/") {
-			h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; worker-src 'self' blob:; frame-ancestors 'none'")
+			h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; worker-src 'self' blob:; frame-ancestors 'none'")
 		}
 		next.ServeHTTP(w, r)
 	})

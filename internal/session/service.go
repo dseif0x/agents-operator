@@ -25,6 +25,7 @@ import (
 	"github.com/dseif0x/agents-operator/internal/egress"
 	"github.com/dseif0x/agents-operator/internal/github"
 	"github.com/dseif0x/agents-operator/internal/names"
+	"github.com/dseif0x/agents-operator/internal/push"
 	"github.com/dseif0x/agents-operator/internal/reconcile"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/store"
@@ -90,6 +91,8 @@ type Service struct {
 	Leading func() bool
 	// Uplinks carries chat messages to running sessions (nil: none).
 	Uplinks ChatNotifier
+	// Push sends notifications to the owner's devices (nil: none).
+	Push Pusher
 
 	live sync.Map // session id -> *Live
 	// loginSynced remembers, per running session, the credential-file
@@ -991,6 +994,9 @@ func (s *Service) PollOnce(ctx context.Context) {
 		if !s.leading() {
 			continue
 		}
+		if p, ok := prev.(*Live); ok {
+			s.notifyActivity(sess, p, live)
+		}
 		s.syncLogin(ctx, sess, st)
 		if st.LastOutputAt != nil {
 			_ = s.Store.Sessions().TouchOutput(ctx, sess.ID, *st.LastOutputAt)
@@ -1024,6 +1030,37 @@ func (s *Service) PollOnce(ctx context.Context) {
 			ul.CloseAll()
 		}
 	}
+}
+
+// Pusher sends a notification to a user's devices.
+type Pusher interface {
+	Notify(userID string, n push.Notification)
+}
+
+// notifyActivity tells the owner when an agent starts waiting for them
+// (a permission prompt) or a turn fails, once per change.
+func (s *Service) notifyActivity(sess *store.Session, prev, cur *Live) {
+	if s.Push == nil || cur.Status.Activity == nil {
+		return
+	}
+	state := cur.Status.Activity.State
+	if prev.Status.Activity != nil && prev.Status.Activity.State == state {
+		return
+	}
+	var title string
+	switch state {
+	case runner.ActivityNeedsPermission:
+		title = sess.Name + " needs you"
+	case runner.ActivityError:
+		title = sess.Name + " hit an error"
+	default:
+		return
+	}
+	body := cur.Status.Activity.Detail
+	if body == "" {
+		body = "Open the session to see what it is waiting for."
+	}
+	s.Push.Notify(sess.OwnerID, push.Notification{Title: title, Body: body, URL: "/sessions/" + sess.ID, Tag: "session-" + sess.ID})
 }
 
 func refresh(sess *store.Session, st runner.Status) *store.Session {

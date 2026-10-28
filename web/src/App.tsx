@@ -7,6 +7,7 @@ import { NewSession } from "./pages/NewSession";
 import { SessionPage } from "./pages/SessionPage";
 import { Account } from "./pages/Account";
 import { Chats } from "./pages/Chats";
+import { lastPath, rememberPath, reportPresence } from "./pwa";
 
 export function App() {
   const route = useRoute();
@@ -25,9 +26,16 @@ export function App() {
       });
   }, []);
 
+  // Remember the page for the next start, and tell the hub what is on
+  // screen so it holds back notifications about it.
+  useEffect(() => {
+    rememberPath(location.pathname);
+    if (user) reportPresence(location.pathname);
+  }, [route.path, route.params.id, user]);
+
   useEffect(() => {
     if (user === null && route.path !== "/login") navigate("/login", true);
-    if (user && route.path === "/login") navigate("/", true);
+    if (user && route.path === "/login") navigate(lastPath(), true);
   }, [user, route.path]);
 
   if (user === undefined) return <div class="page muted">Loading…</div>;
@@ -38,7 +46,7 @@ export function App() {
         onLogin={(u, csrf) => {
           setCsrf(csrf);
           setUser(u);
-          navigate("/", true);
+          navigate(lastPath(), true);
         }}
       />
     );

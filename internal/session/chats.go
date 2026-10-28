@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/dseif0x/agents-operator/internal/push"
 	"github.com/dseif0x/agents-operator/internal/store"
 )
 
@@ -629,7 +630,27 @@ func (s *Service) post(ctx context.Context, owner *store.User, c *store.Chat, au
 			s.Uplinks.Notify(sid)
 		}
 	}
+	// The owner hears about what agents write (not about their own posts).
+	if author != nil && s.Push != nil {
+		body := plainText(text, 160)
+		if body == "" && len(files) > 0 {
+			body = fmt.Sprintf("📎 %d file(s)", len(files))
+		}
+		s.Push.Notify(c.OwnerID, push.Notification{Title: c.Name + " · " + author.Name, Body: body, URL: "/chats/" + c.ID, Tag: "chat-" + c.ID})
+	}
 	return mv, nil
+}
+
+// markdownNoise is what plainText strips from Markdown for a notification.
+var markdownNoise = regexp.MustCompile("(?m)^#{1,6}\\s+|^>\\s?|[*_~`]+|^\\s*[-+]\\s+")
+
+// plainText is text without most Markdown, on one line, cut to n runes.
+func plainText(text string, n int) string {
+	t := strings.Join(strings.Fields(markdownNoise.ReplaceAllString(text, "")), " ")
+	if r := []rune(t); len(r) > n {
+		t = string(r[:n-1]) + "…"
+	}
+	return t
 }
 
 // ---- agent side (through the uplink) ----

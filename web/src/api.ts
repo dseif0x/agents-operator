@@ -260,6 +260,12 @@ export const api = {
   githubRepos: (refresh = false) =>
     request<{ configured: boolean; repos: GitHubRepo[]; error?: string }>("GET", `/me/github/repos${refresh ? "?refresh=1" : ""}`),
 
+  pushKey: () => request<{ public_key: string }>("GET", "/push/key"),
+  pushSubscribe: (sub: PushSubscriptionJSON) => request<{ ok: boolean }>("POST", "/push/subscriptions", sub),
+  pushUnsubscribe: (endpoint: string) => request<{ ok: boolean }>("DELETE", "/push/subscriptions", { endpoint }),
+  pushTest: () => request<{ sent: number }>("POST", "/push/test"),
+  presence: (path: string) => request<{ ok: boolean }>("POST", "/presence", { path }),
+
   chats: () => request<{ chats: Chat[] }>("GET", "/chats"),
   chat: (id: string) => request<Chat>("GET", `/chats/${id}`),
   createChat: (name: string, members: string[], description = "") => request<Chat>("POST", "/chats", { name, members, description }),

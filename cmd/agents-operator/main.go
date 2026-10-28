@@ -24,6 +24,7 @@ import (
 	"github.com/dseif0x/agents-operator/internal/egress"
 	"github.com/dseif0x/agents-operator/internal/github"
 	"github.com/dseif0x/agents-operator/internal/k8s"
+	"github.com/dseif0x/agents-operator/internal/push"
 	"github.com/dseif0x/agents-operator/internal/reconcile"
 	"github.com/dseif0x/agents-operator/internal/session"
 	"github.com/dseif0x/agents-operator/internal/store"
@@ -158,11 +159,13 @@ func run() error {
 	rec := reconcile.New(rcfg, st, cs, inf, svc, cfg.ReconcileInterval, log)
 	svc.Orch = rec
 	svc.Uplinks = session.NewUplinks(svc, proxy.Resolver, log)
+	pusher := &push.Service{Store: st, Log: log, Subject: cfg.PublicURL.String()}
+	svc.Push = pusher
 	var leading, shuttingDown atomic.Bool
 	svc.Leading = leading.Load
 
 	srv := &api.Server{
-		Cfg: cfg, Store: st, Sessions: svc, Creds: creds,
+		Cfg: cfg, Store: st, Sessions: svc, Creds: creds, Push: pusher,
 		Auth:    auth.PasswordAuthenticator{Users: st.Users()},
 		Cookies: auth.NewSessions(cfg.CookieSecret, cfg.Secure(), st.Users()),
 		Limiter: auth.NewRateLimiter(10, 15*time.Minute),

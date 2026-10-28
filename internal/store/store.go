@@ -337,6 +337,8 @@ type Store interface {
 	Accounts() Accounts
 	Profiles() Profiles
 	Chats() Chats
+	Push() PushSubscriptions
+	Settings() Settings
 	Events() Events
 	RepoUsage() RepoUsage
 	Ping(ctx context.Context) error

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { api, subscribeChats, type Chat, type ChatMember, type ChatMessage, type Session, type User } from "../api";
+import { api, subscribeChats, subscribeSessions, type Chat, type ChatMember, type ChatMessage, type Session, type User } from "../api";
 import { Nav } from "../components/Nav";
+import { PushPrompt } from "../components/Notifications";
 import { Link, navigate } from "../router";
 import { copyCode, mentionedHandles, renderMessage } from "../markdown";
 
@@ -61,7 +62,11 @@ export function Chats(props: { user: User; onLogout: () => void; chatId?: string
   const [sessions, setSessions] = useState<Session[]>([]);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
-  const [incoming, setIncoming] = useState<ChatMessage | null>(null);
+  // Every message event goes to the open chat's listener: one state value
+  // would drop all but the last of several events arriving together.
+  const listeners = useRef(new Set<(m: ChatMessage) => void>());
+  // Bumped when the event stream reconnects, so the open chat catches up.
+  const [epoch, setEpoch] = useState(0);
   const openId = useRef(props.chatId);
   openId.current = props.chatId;
 
@@ -83,7 +88,7 @@ export function Chats(props: { user: User; onLogout: () => void; chatId?: string
           return cur.some((c) => c.id === id) ? cur.map((c) => (c.id === id ? chat : c)) : [...cur, chat];
         }),
       (msg) => {
-        setIncoming(msg);
+        listeners.current.forEach((fn) => fn(msg));
         setChats((cur) =>
           cur && cur.map((c) => {
             if (c.id !== msg.chat_id) return c;
@@ -94,9 +99,35 @@ export function Chats(props: { user: User; onLogout: () => void; chatId?: string
         );
       },
       // Reconnected: catch up on what was missed.
-      () => load(),
+      () => {
+        load();
+        setEpoch((e) => e + 1);
+      },
     );
   }, []);
+
+  // Members' state and activity ("is working…") follow their sessions.
+  useEffect(
+    () =>
+      subscribeSessions((type, id, sess) => {
+        if (type !== "session" || !sess) return;
+        setChats(
+          (cur) =>
+            cur &&
+            cur.map((c) =>
+              c.members.some((m) => m.session_id === id)
+                ? {
+                    ...c,
+                    members: c.members.map((m) =>
+                      m.session_id === id ? { ...m, name: sess.name, state: sess.state, activity: sess.state === "running" ? sess.activity?.state : undefined } : m,
+                    ),
+                  }
+                : c,
+            ),
+        );
+      }),
+    [],
+  );
 
   const current = chats?.find((c) => c.id === props.chatId);
   const sorted = useMemo(
@@ -117,6 +148,7 @@ export function Chats(props: { user: User; onLogout: () => void; chatId?: string
               New chat
             </button>
           </div>
+          <PushPrompt />
           {chats === null && <div class="muted pad">Loading…</div>}
           {chats?.length === 0 && !creating && (
             <div class="muted pad">No chats yet. Create one and add agent sessions; they talk to you and to each other there.</div>
@@ -156,7 +188,11 @@ export function Chats(props: { user: User; onLogout: () => void; chatId?: string
               key={current.id}
               chat={current}
               sessions={sessions}
-              incoming={incoming}
+              subscribe={(fn) => {
+                listeners.current.add(fn);
+                return () => listeners.current.delete(fn);
+              }}
+              epoch={epoch}
               onChanged={(c) => setChats((cur) => cur && cur.map((x) => (x.id === c.id ? c : x)))}
               onRead={() => setChats((cur) => cur && cur.map((x) => (x.id === current.id ? { ...x, unread: 0 } : x)))}
             />
@@ -238,7 +274,8 @@ const PAGE = 50;
 function ChatView(props: {
   chat: Chat;
   sessions: Session[];
-  incoming: ChatMessage | null;
+  subscribe: (fn: (m: ChatMessage) => void) => () => void;
+  epoch: number;
   onChanged: (c: Chat) => void;
   onRead: () => void;
 }) {
@@ -267,7 +304,8 @@ function ChatView(props: {
     api
       .chatMessages(chat.id, { limit: PAGE })
       .then((r) => {
-        setMessages(r.messages);
+        // Merge rather than replace: events may have arrived meanwhile.
+        merge(r.messages);
         setMore(r.messages.length === PAGE);
         scrollDown();
       })
@@ -275,17 +313,46 @@ function ChatView(props: {
       .finally(() => setLoading(false));
   }, [chat.id]);
 
-  // New messages and delivery updates from the event stream.
-  useEffect(() => {
-    const m = props.incoming;
-    if (!m || m.chat_id !== chat.id) return;
+  const merge = (list: ChatMessage[]) => {
+    if (!list.length) return;
     setMessages((cur) => {
-      const i = cur.findIndex((x) => x.id === m.id);
-      if (i >= 0) return cur.map((x) => (x.id === m.id ? m : x));
-      return [...cur, m].sort((a, b) => a.id - b.id);
+      const byId = new Map(cur.map((x) => [x.id, x]));
+      for (const m of list) byId.set(m.id, m);
+      return [...byId.values()].sort((a, b) => a.id - b.id);
     });
     if (atBottom.current) scrollDown();
-  }, [props.incoming]);
+  };
+
+  // New messages and delivery updates from the event stream.
+  useEffect(() => props.subscribe((m) => m.chat_id === chat.id && merge([m])), [chat.id]);
+
+  // Catch up after the stream reconnected or the tab comes back: fetch what
+  // came after the newest message on screen (and refresh the last ones'
+  // delivery state).
+  const newest = useRef(0);
+  newest.current = messages.length ? messages[messages.length - 1].id : 0;
+  const catchUp = () => {
+    const after = Math.max(0, newest.current - 20);
+    if (!newest.current) return;
+    api
+      .chatMessages(chat.id, { after, limit: 200 })
+      .then((r) => merge(r.messages))
+      .catch(() => undefined);
+  };
+  useEffect(() => {
+    if (props.epoch) catchUp();
+  }, [props.epoch]);
+  useEffect(() => {
+    const onVisible = () => document.visibilityState === "visible" && catchUp();
+    document.addEventListener("visibilitychange", onVisible);
+    // A safety net for an event stream a proxy holds back: look for new
+    // messages now and then while the chat is on screen.
+    const timer = setInterval(() => document.visibilityState === "visible" && catchUp(), 20000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(timer);
+    };
+  }, [chat.id]);
 
   // Reading what is on screen.
   const lastId = messages.length ? messages[messages.length - 1].id : 0;
