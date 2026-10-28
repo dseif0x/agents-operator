@@ -22,7 +22,7 @@ func TestMCPServer(t *testing.T) {
 		case "/chat/chat_send":
 			_, _ = w.Write([]byte(`{"result":{"id":42}}`))
 		case "/chat/chat_read":
-			_, _ = w.Write([]byte(`{"result":{"chat":{"name":"launch"},"messages":[{"id":7,"author":{"kind":"session","name":"review","handle":"eager_turing"},"text":"LGTM","reply_to":3,"attachments":[{"id":"a","name":"x.png","path":"/w/home/chats/launch/7-1.png"}],"created_at":"t"}]}}`))
+			_, _ = w.Write([]byte(`{"result":{"chat":{"name":"launch"},"messages":[{"id":7,"author":{"kind":"session","name":"review","handle":"eager_turing"},"text":"LGTM","reply_to":3,"attachments":[{"id":"a","name":"x.png","content_type":"image/png","path":"/w/home/chats/launch/7-1.png"},{"id":"b","name":"log.txt","content_type":"text/plain; charset=utf-8","path":"/w/home/chats/launch/7-2-log.txt"}],"created_at":"t"}]}}`))
 		default:
 			_, _ = w.Write([]byte(`{"error":"you are in no chat"}`))
 		}
@@ -67,7 +67,7 @@ func TestMCPServer(t *testing.T) {
 	if s, isErr := text(2); s != "Posted as message #42." || isErr {
 		t.Fatalf("chat_send = %q %v (%s %s)", s, isErr, gotOp, gotBody)
 	}
-	if s, _ := text(3); !strings.Contains(s, "#7 t · review (@eager_turing) · reply to #3\nLGTM\n[image: /w/home/chats/launch/7-1.png]") {
+	if s, _ := text(3); !strings.Contains(s, "#7 t · review (@eager_turing) · reply to #3\nLGTM\n[image: /w/home/chats/launch/7-1.png]\n[file: /w/home/chats/launch/7-2-log.txt]") {
 		t.Fatalf("chat_read = %q", s)
 	}
 	if s, isErr := text(4); s != "you are in no chat" || !isErr {

@@ -79,7 +79,7 @@ A stdio MCP server, registered by the runner with the session's CLI:
 | `chats_list` | the chats this session is in, with unread counts |
 | `chat_info(chat)` | the chat's description and members: session name, handle (what to type to mention it), persona, whether it is running and what it is doing right now |
 | `chat_read(chat, since?, limit?)` | messages, oldest first, with author, mentions and reply-to; images come as file paths (see below) |
-| `chat_send(chat, text, reply_to?, images?)` | post Markdown, optionally as a reply and with images given as paths in the workspace; `@handle` and `@everyone` in the text mention |
+| `chat_send(chat, text, reply_to?, files?)` | post Markdown, optionally as a reply and with files (images or anything else) given as paths in the workspace; `@handle` and `@everyone` in the text mention |
 
 That's all for the first version. The task board and session-control tools from the earlier draft can come back later as extra tools if chats alone are not enough (see phases).
 
@@ -206,4 +206,4 @@ What 2.0.0 does differently from the text above:
 - **Code blocks** are not syntax-highlighted.
 - **Browser notifications** and chat templates are not there yet.
 - **Codex and OpenCode** get messages while busy only once idle (no hook to hand them over mid-turn).
-
+- **Files of any type** (2.1): besides images, a message can carry any file up to 10 MiB. Images are shown inline; other files are downloads (never rendered by the browser) and reach agents as `~/chats/<chat>/<message>-<n>-<name>`.

@@ -44,15 +44,45 @@ const (
 // Limits.
 const (
 	MaxChatText        = 32 << 10
-	MaxChatImages      = 5
-	MaxChatImageBytes  = 10 << 20
-	ChatImageQuota     = 2 << 30 // per owner
+	MaxChatFiles       = 5
+	MaxChatFileBytes   = 10 << 20
+	ChatFileQuota      = 2 << 30 // per owner
 	MaxChatName        = 80
 	MaxChatDescription = 4 << 10
 )
 
-// ChatImageTypes are the image types chats accept, by sniffed content.
+// ChatImageTypes are the sniffed types shown inline as images. Files of
+// any other type are attachments to download.
 var ChatImageTypes = map[string]string{"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+
+// IsChatImage reports whether a stored attachment is shown as an image.
+func IsChatImage(contentType string) bool {
+	_, ok := ChatImageTypes[contentType]
+	return ok
+}
+
+// CleanFileName keeps the last path element of an uploaded file's name,
+// without control characters, quotes or backslashes, at most 200 bytes.
+func CleanFileName(name string) string {
+	name = strings.ReplaceAll(name, "\\", "/")
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == '"' || r == '\\' {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(name))
+	for len(name) > 200 {
+		_, size := utf8.DecodeLastRuneInString(name)
+		name = name[:len(name)-size]
+	}
+	if name == "." || name == ".." {
+		return ""
+	}
+	return name
+}
 
 // ChatView is the API shape of a chat.
 type ChatView struct {
@@ -122,8 +152,8 @@ type ChatInput struct {
 	Members     []string `json:"members"` // session ids, on create
 }
 
-// ChatImage is an image posted with a message.
-type ChatImage struct {
+// ChatFile is a file (an image or anything else) posted with a message.
+type ChatFile struct {
 	Name string
 	Data []byte
 }
@@ -423,7 +453,7 @@ func (s *Service) MarkChatRead(ctx context.Context, owner *store.User, chatID st
 }
 
 // PostChatMessage posts as the owner.
-func (s *Service) PostChatMessage(ctx context.Context, owner *store.User, chatID, text string, replyTo int64, images []ChatImage) (*MessageView, error) {
+func (s *Service) PostChatMessage(ctx context.Context, owner *store.User, chatID, text string, replyTo int64, images []ChatFile) (*MessageView, error) {
 	c, err := s.ownChat(ctx, owner, chatID)
 	if err != nil {
 		return nil, err
@@ -512,7 +542,7 @@ func Address(m *store.ChatMessage, recipient string) string {
 
 // post validates and stores a message by the owner (author nil) or a
 // session, queues it for its recipients and tells everyone.
-func (s *Service) post(ctx context.Context, owner *store.User, c *store.Chat, author *store.Session, text string, replyTo int64, images []ChatImage) (*MessageView, error) {
+func (s *Service) post(ctx context.Context, owner *store.User, c *store.Chat, author *store.Session, text string, replyTo int64, images []ChatFile) (*MessageView, error) {
 	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
 	if !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
 		return nil, &ValidationError{"messages are plain UTF-8 text"}
@@ -523,22 +553,24 @@ func (s *Service) post(ctx context.Context, owner *store.User, c *store.Chat, au
 	if text == "" && len(images) == 0 {
 		return nil, &ValidationError{"an empty message"}
 	}
-	if len(images) > MaxChatImages {
-		return nil, &ValidationError{fmt.Sprintf("at most %d images per message", MaxChatImages)}
+	if len(images) > MaxChatFiles {
+		return nil, &ValidationError{fmt.Sprintf("at most %d files per message", MaxChatFiles)}
 	}
 	var files []store.NewAttachment
 	var total int64
 	for _, img := range images {
-		if len(img.Data) == 0 || len(img.Data) > MaxChatImageBytes {
-			return nil, &ValidationError{fmt.Sprintf("images are limited to %d MiB", MaxChatImageBytes>>20)}
+		if len(img.Data) == 0 || len(img.Data) > MaxChatFileBytes {
+			return nil, &ValidationError{fmt.Sprintf("files are limited to %d MiB (and cannot be empty)", MaxChatFileBytes>>20)}
 		}
+		// The type is sniffed, never taken from the uploader. Images are
+		// shown inline; anything else is only ever served as a download.
 		ct := http.DetectContentType(img.Data)
-		if _, ok := ChatImageTypes[ct]; !ok {
-			return nil, &ValidationError{"only PNG, JPEG, GIF and WebP images (got " + ct + ")"}
-		}
-		name := strings.TrimSpace(img.Name)
-		if len(name) > 200 {
-			name = name[:200]
+		name := CleanFileName(img.Name)
+		if name == "" {
+			name = "file"
+			if ext, ok := ChatImageTypes[ct]; ok {
+				name = "image." + ext
+			}
 		}
 		files = append(files, store.NewAttachment{Name: name, ContentType: ct, Data: img.Data})
 		total += int64(len(img.Data))
@@ -548,8 +580,8 @@ func (s *Service) post(ctx context.Context, owner *store.User, c *store.Chat, au
 		if err != nil {
 			return nil, err
 		}
-		if used+total > ChatImageQuota {
-			return nil, &ValidationError{"the image storage of your chats is full; delete old chats to make room"}
+		if used+total > ChatFileQuota {
+			return nil, &ValidationError{"the file storage of your chats is full; delete old chats to make room"}
 		}
 	}
 	view, err := s.chatView(ctx, owner, c)
@@ -710,7 +742,7 @@ func (s *Service) AgentReadChat(ctx context.Context, sess *store.Session, ref st
 }
 
 // AgentPost posts as a session.
-func (s *Service) AgentPost(ctx context.Context, sess *store.Session, ref, text string, replyTo int64, images []ChatImage) (*MessageView, error) {
+func (s *Service) AgentPost(ctx context.Context, sess *store.Session, ref, text string, replyTo int64, images []ChatFile) (*MessageView, error) {
 	c, err := s.agentChat(ctx, sess, ref)
 	if err != nil {
 		return nil, err
