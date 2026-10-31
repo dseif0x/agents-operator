@@ -29,7 +29,7 @@ const KINDS: Record<
   codex_login: { label: "Codex login", help: "Codex's login file, saved earlier from a session.", login: true },
   openai_compatible: {
     label: "OpenAI-compatible endpoint",
-    help: "Any OpenAI-compatible API (LiteLLM, vLLM, llama.cpp, OpenRouter…). OpenCode gets it as a provider named after the account, with the models below or, if none are listed, the endpoint's own list.",
+    help: "Any OpenAI-compatible API (LiteLLM, vLLM, llama.cpp, OpenRouter…). OpenCode gets it as a provider named after the account, with the models below or, if none are listed, the endpoint's own list, and the context sizes the endpoint reports (LiteLLM: max_input_tokens in its model_info).",
     baseURL: "required",
     models: true,
   },
