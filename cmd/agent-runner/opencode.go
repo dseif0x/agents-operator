@@ -26,8 +26,9 @@ import (
 //     (openCodeProviders): OpenCode's own anthropic and openai providers for
 //     the first Anthropic and OpenAI key, the AI SDK packages for further
 //     ones, and OpenCode's OpenAI-compatible provider for OpenAI-compatible
-//     endpoints and Unjailed (with the endpoint's models and, for Unjailed,
-//     their context sizes);
+//     endpoints and Unjailed (with the endpoint's models and their context
+//     sizes: the ones the endpoint reports, else known ones, see
+//     modelLimits);
 //   - the session's persona, as an instructions file added to OpenCode's
 //     own prompt;
 //   - the session's agent definition as an OpenCode agent, selected with
@@ -130,10 +131,45 @@ export const AgentsOperatorUnjailedReasoning = async () => ({
 })`
 }
 
+// endpointModel is a model an endpoint lists, with the limits it reports
+// (0: not reported).
+type endpointModel struct {
+	ID              string
+	Context, Output int
+}
+
+// modelIDs is ids as endpointModels without limits.
+func modelIDs(ids []string) []endpointModel {
+	models := make([]endpointModel, len(ids))
+	for i, id := range ids {
+		models[i] = endpointModel{ID: id}
+	}
+	return models
+}
+
+// The fields OpenAI-compatible servers add to /models entries for the
+// context size and the longest answer; the OpenAI format itself has none.
+// LiteLLM: max_input_tokens / max_output_tokens (from its config's
+// model_info), OpenRouter: context_length, vLLM: max_model_len.
+var (
+	contextFields = []string{"max_input_tokens", "context_length", "context_window", "max_model_len"}
+	outputFields  = []string{"max_output_tokens"}
+)
+
+// firstPositive is the first of fields that m holds as a positive number.
+func firstPositive(m map[string]any, fields []string) int {
+	for _, f := range fields {
+		if v, ok := m[f].(float64); ok && v >= 1 && v <= 100_000_000 {
+			return int(v)
+		}
+	}
+	return 0
+}
+
 // fetchModels lists an endpoint's models (GET <base>/models, with the
-// Anthropic headers for an Anthropic key, else a bearer token); nil when it
-// cannot. Swapped out in tests.
-var fetchModels = func(kind, baseURL, key string) []string {
+// Anthropic headers for an Anthropic key, else a bearer token) with the
+// limits it reports; nil when it cannot. Swapped out in tests.
+var fetchModels = func(kind, baseURL, key string) []endpointModel {
 	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/models", nil)
 	if err != nil {
 		return nil
@@ -151,21 +187,19 @@ var fetchModels = func(kind, baseURL, key string) []string {
 	}
 	defer resp.Body.Close()
 	var list struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
+		Data []map[string]any `json:"data"`
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&list) != nil {
 		slog.Warn("cannot list an endpoint's models", "url", baseURL, "status", resp.StatusCode)
 		return nil
 	}
-	var ids []string
+	var models []endpointModel
 	for _, m := range list.Data {
-		if m.ID != "" && len(m.ID) <= 200 {
-			ids = append(ids, m.ID)
+		if id, _ := m["id"].(string); id != "" && len(id) <= 200 {
+			models = append(models, endpointModel{ID: id, Context: firstPositive(m, contextFields), Output: firstPositive(m, outputFields)})
 		}
 	}
-	return ids
+	return models
 }
 
 // Model lists used when an Anthropic or OpenAI account other than the
@@ -177,11 +211,11 @@ var (
 )
 
 // orList is list, or fallback when list is empty.
-func orList(list, fallback []string) []string {
+func orList(list []endpointModel, fallback []string) []endpointModel {
 	if len(list) > 0 {
 		return list
 	}
-	return fallback
+	return modelIDs(fallback)
 }
 
 // chatModel drops what an OpenAI model list has besides chat models
@@ -195,16 +229,54 @@ func chatModel(id string) bool {
 	return true
 }
 
-// providerModels is a provider's model map for OpenCode with the limits it
-// needs: known context sizes for Unjailed, a safe default otherwise.
-func providerModels(ids []string, known map[string]int) map[string]any {
-	models := map[string]any{}
-	for _, id := range ids {
-		ctx := unjailedDefaultContext
-		if c, ok := known[id]; ok {
-			ctx = c
+// familyContexts are context sizes by model name prefix, for models whose
+// endpoint does not report one (cliproxyapi behind LiteLLM, for example).
+// A provider prefix ("openai/claude-...") is ignored.
+var familyContexts = []struct {
+	prefix  string
+	context int
+}{
+	{"claude-", 200_000},
+	{"gemini-", 1_000_000},
+	{"gpt-5", 400_000},
+	{"gpt-6", 400_000},
+}
+
+// modelLimits are the context size and longest answer OpenCode gets for a
+// model: what the endpoint reports, else the known size (known, then
+// familyContexts), else a safe default; the answer limit stays below the
+// context.
+func modelLimits(m endpointModel, known map[string]int) (int, int) {
+	ctx := m.Context
+	if ctx == 0 {
+		ctx = known[m.ID]
+	}
+	if ctx == 0 {
+		name := m.ID[strings.LastIndex(m.ID, "/")+1:]
+		for _, f := range familyContexts {
+			if strings.HasPrefix(name, f.prefix) {
+				ctx = f.context
+				break
+			}
 		}
-		models[id] = map[string]any{"name": id, "limit": map[string]any{"context": ctx, "output": unjailedMaxOutput}}
+	}
+	if ctx == 0 {
+		ctx = unjailedDefaultContext
+	}
+	out := m.Output
+	if out == 0 {
+		out = unjailedMaxOutput
+	}
+	return ctx, min(out, ctx/2)
+}
+
+// providerModels is a provider's model map for OpenCode with the limits it
+// needs (modelLimits).
+func providerModels(list []endpointModel, known map[string]int) map[string]any {
+	models := map[string]any{}
+	for _, m := range list {
+		ctx, out := modelLimits(m, known)
+		models[m.ID] = map[string]any{"name": m.ID, "limit": map[string]any{"context": ctx, "output": out}}
 	}
 	return models
 }
@@ -273,7 +345,7 @@ func openCodeProviders(get func(string) string) (map[string]any, []string, map[s
 		case store.AcctOpenAIAPIKey:
 			id = providerID("openai", a.Name, used)
 			if id != "openai" {
-				ids := slices.DeleteFunc(fetchModels(a.Kind, "https://api.openai.com/v1", key), func(m string) bool { return !chatModel(m) })
+				ids := slices.DeleteFunc(fetchModels(a.Kind, "https://api.openai.com/v1", key), func(m endpointModel) bool { return !chatModel(m.ID) })
 				p["npm"] = "@ai-sdk/openai"
 				p["models"] = providerModels(orList(ids, openAIFallbackModels), nil)
 			}
@@ -281,9 +353,20 @@ func openCodeProviders(get func(string) string) (map[string]any, []string, map[s
 			if a.BaseURL == "" {
 				continue
 			}
-			ids := a.Models
-			if len(ids) == 0 {
-				ids = fetchModels(a.Kind, a.BaseURL, key)
+			// The account's own list, with the limits the endpoint reports
+			// for those of its models it lists; else the endpoint's list.
+			ids := fetchModels(a.Kind, a.BaseURL, key)
+			if len(a.Models) > 0 {
+				reported := map[string]endpointModel{}
+				for _, m := range ids {
+					reported[m.ID] = m
+				}
+				ids = modelIDs(a.Models)
+				for i, m := range ids {
+					if r, ok := reported[m.ID]; ok {
+						ids[i] = r
+					}
+				}
 			}
 			if len(ids) == 0 {
 				slog.Warn("leaving out an OpenAI-compatible account with no models", "account", a.Name)
@@ -295,16 +378,15 @@ func openCodeProviders(get func(string) string) (map[string]any, []string, map[s
 			p["models"] = providerModels(ids, nil)
 		case store.AcctUnjailed:
 			base := cmp.Or(a.BaseURL, unjailedDefaultBaseURL)
-			ids := fetchModels(a.Kind, base, key)
-			if len(ids) == 0 {
-				ids = unjailedFallbackModels
-			}
+			list := orList(fetchModels(a.Kind, base, key), unjailedFallbackModels)
 			id = providerID(unjailedProviderID, a.Name, used)
 			p["npm"] = "@ai-sdk/openai-compatible"
 			options["baseURL"] = base
-			p["models"] = providerModels(ids, unjailedContextWindows)
+			p["models"] = providerModels(list, unjailedContextWindows)
 			unjailed = append(unjailed, id)
-			unjailedModels[id] = ids
+			for _, m := range list {
+				unjailedModels[id] = append(unjailedModels[id], m.ID)
+			}
 		default:
 			continue
 		}

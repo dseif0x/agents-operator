@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -30,9 +32,22 @@ func openCodeRun(t *testing.T, autonomous bool, env ...string) ([]string, map[st
 
 func stubModels(t *testing.T, ids []string) *[]string {
 	t.Helper()
+	var list []endpointModel
+	if ids != nil {
+		list = modelIDs(ids)
+	}
+	return stubModelList(t, list)
+}
+
+// stubModelList is stubModels with the limits the endpoint reports.
+func stubModelList(t *testing.T, list []endpointModel) *[]string {
+	t.Helper()
 	var calls []string
 	old := fetchModels
-	fetchModels = func(kind, base, key string) []string { calls = append(calls, kind+" "+base+" "+key); return ids }
+	fetchModels = func(kind, base, key string) []endpointModel {
+		calls = append(calls, kind+" "+base+" "+key)
+		return list
+	}
 	t.Cleanup(func() { fetchModels = old })
 	return &calls
 }
@@ -181,8 +196,9 @@ func TestOpenCodeProviders(t *testing.T) {
 		t.Fatalf("local-llm = %v", local)
 	}
 	// Model lists: second Anthropic (Anthropic headers), second OpenAI, and
-	// Empty, which has no list of its own; Local LLM has one.
-	if want := []string{"anthropic_api_key https://api.anthropic.com/v1 a2", "openai_api_key https://api.openai.com/v1 o2", "openai_compatible http://none/v1 e"}; !slices.Equal(*calls, want) {
+	// both OpenAI-compatible endpoints (Local LLM's for the limits of its own
+	// list).
+	if want := []string{"anthropic_api_key https://api.anthropic.com/v1 a2", "openai_api_key https://api.openai.com/v1 o2", "openai_compatible http://llm:8080/v1 l", "openai_compatible http://none/v1 e"}; !slices.Equal(*calls, want) {
 		t.Fatalf("fetches = %q", *calls)
 	}
 	if cfg["model"] != nil || cfg["plugin"] != nil {
@@ -190,6 +206,39 @@ func TestOpenCodeProviders(t *testing.T) {
 	}
 	if strings.Contains(vars["OPENCODE_CONFIG_CONTENT"], "a2") {
 		t.Fatal("a key in the config")
+	}
+
+	// Limits: the ones the endpoint reports, else known sizes by model
+	// family (with or without a provider prefix), else the default; the
+	// answer limit stays below half the context. An account's own list takes
+	// the endpoint's limits for the models it shares.
+	stubModelList(t, []endpointModel{
+		{ID: "qwen", Context: 131_072},
+		{ID: "small", Context: 8192},
+		{ID: "big", Context: 1_000_000, Output: 64_000},
+		{ID: "openai/claude-sonnet-5-5"},
+		{ID: "gemini-3-pro"},
+		{ID: "mystery"},
+	})
+	for _, own := range [][]string{nil, {"qwen", "openai/claude-sonnet-5-5", "unlisted"}} {
+		_, cfg, _ = openCodeRun(t, false, "HOME="+t.TempDir(), accountsEnv(t, runner.AIAccount{Name: "LiteLLM", Kind: store.AcctOpenAICompatible, BaseURL: "http://litellm/v1", Models: own, KeyEnv: k + "LITELLM"}), k+"LITELLM=l")
+		models := cfg["provider"].(map[string]any)["litellm"].(map[string]any)["models"].(map[string]any)
+		want := map[string][2]int{
+			"qwen": {131_072, 32_768}, "small": {8192, 4096}, "big": {1_000_000, 64_000},
+			"openai/claude-sonnet-5-5": {200_000, 32_768}, "gemini-3-pro": {1_000_000, 32_768}, "mystery": {128_000, 32_768},
+		}
+		if own != nil {
+			want = map[string][2]int{"qwen": {131_072, 32_768}, "openai/claude-sonnet-5-5": {200_000, 32_768}, "unlisted": {128_000, 32_768}}
+		}
+		if len(models) != len(want) {
+			t.Fatalf("models (own list %v) = %v", own, models)
+		}
+		for id, w := range want {
+			limit := models[id].(map[string]any)["limit"].(map[string]any)
+			if limit["context"] != float64(w[0]) || limit["output"] != float64(w[1]) {
+				t.Errorf("%s (own list %v): limit = %v, want %v", id, own, limit, w)
+			}
+		}
 	}
 
 	// An OpenAI-compatible endpoint with no models at all is left out.
@@ -275,5 +324,32 @@ func TestUnjailedModelSizes(t *testing.T) {
 	}
 	if !slices.Contains(unjailedFallbackModels, unjailedDefaultModel) || !slices.Contains(unjailedFallbackModels, unjailedSmallModel) {
 		t.Fatal("the fallback list lacks the default or the title model")
+	}
+}
+
+func TestFetchModelsLimits(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer k" {
+			http.Error(w, "no", http.StatusUnauthorized)
+			return
+		}
+		// LiteLLM, OpenRouter and vLLM entries, one without limits and one
+		// with nonsense.
+		_, _ = w.Write([]byte(`{"data":[
+			{"id":"qwen","object":"model","max_input_tokens":131072,"max_output_tokens":null},
+			{"id":"router/model","context_length":200000},
+			{"id":"vllm-model","max_model_len":32768},
+			{"id":"plain"},
+			{"id":"odd","max_input_tokens":"lots","context_length":-5},
+			{"object":"model"}]}`))
+	}))
+	defer srv.Close()
+	got := fetchModels(store.AcctOpenAICompatible, srv.URL+"/v1/", "k")
+	want := []endpointModel{{ID: "qwen", Context: 131072}, {ID: "router/model", Context: 200000}, {ID: "vllm-model", Context: 32768}, {ID: "plain"}, {ID: "odd"}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("models = %+v", got)
+	}
+	if got := fetchModels(store.AcctOpenAICompatible, srv.URL+"/v1", "wrong"); got != nil {
+		t.Fatalf("models with a wrong key = %+v", got)
 	}
 }
