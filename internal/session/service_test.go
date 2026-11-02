@@ -445,7 +445,7 @@ func TestUpdate(t *testing.T) {
 	}
 	edit := CreateRequest{Name: "edited", Agent: "codex", PVCSize: "99Gi", StorageClass: "other", ImageTag: "1.2.3", RuntimeClass: "gvisor",
 		Repos: []store.Repo{{URL: "https://x/app.git"}, {URL: "https://x/lib.git"}}, Env: map[string]string{"A": "b"}, Autonomous: ptr.To(false),
-		GitCredentials: ptr.To(false), Resources: config.Resources{Limits: config.ResourceList{CPU: "2", Memory: "1Gi"}}}
+		GitCredentials: ptr.To(false), ContextCompression: ptr.To(true), Resources: config.Resources{Limits: config.ResourceList{CPU: "2", Memory: "1Gi"}}}
 	// Only stopped or failed sessions can be edited.
 	if _, err := svc.Update(ctx, u, sess.ID, edit); err != ErrInvalidTransition {
 		t.Fatalf("update while creating = %v", err)
@@ -462,7 +462,7 @@ func TestUpdate(t *testing.T) {
 	if up.Agent != "claude" || up.PVCSize != "5Gi" || up.StorageClass != "nfs-fast" {
 		t.Fatalf("immutable fields changed: %+v", up)
 	}
-	if up.Name != "edited" || up.ImageTag != "1.2.3" || up.RuntimeClass != "gvisor" || len(up.Repos) != 2 || up.Repos[1].Path != "lib" || up.Env["A"] != "b" || up.Autonomous || up.Resources.Limits.Memory != "1Gi" || !up.NoGitCredentials {
+	if up.Name != "edited" || up.ImageTag != "1.2.3" || up.RuntimeClass != "gvisor" || len(up.Repos) != 2 || up.Repos[1].Path != "lib" || up.Env["A"] != "b" || up.Autonomous || up.Resources.Limits.Memory != "1Gi" || !up.NoGitCredentials || !up.ContextCompression {
 		t.Fatalf("update = %+v", up)
 	}
 	if v := svc.View(up); v.GitCredentials {

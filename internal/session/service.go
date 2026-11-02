@@ -130,6 +130,10 @@ type CreateRequest struct {
 	// tokens from the agent (the runner still clones with them). Default
 	// true; on an edit, absent keeps the current value.
 	GitCredentials *bool `json:"git_credentials"`
+	// ContextCompression has an OpenCode session compress its context with
+	// billion-context instead of OpenCode's own compaction. Default false;
+	// on an edit, absent keeps the current value.
+	ContextCompression *bool `json:"context_compression"`
 	// Egress lists local network destinations the agent may reach beyond
 	// the chart's NetworkPolicy: `192.168.1.10`, `192.168.1.0/24`,
 	// `192.168.1.10:8080`. Each must lie in Defaults.Egress's allowed ranges.
@@ -298,7 +302,7 @@ var envKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // reservedEnv cannot be overridden per session.
 var reservedEnv = map[string]bool{
-	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvAgentGitCredentials: true, runner.EnvRepos: true,
+	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvAgentGitCredentials: true, runner.EnvContextCompression: true, runner.EnvRepos: true,
 	runner.EnvWorkspace: true, runner.EnvListen: true, "HOME": true, "PATH": true,
 	runner.EnvGitSSH: true, runner.EnvGitHTTPS: true, runner.EnvGitHubToken: true, runner.EnvAIAccounts: true,
 	runner.EnvGitUserName: true, runner.EnvGitUserEmail: true, runner.EnvPrivateFile: true,
@@ -558,12 +562,13 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 		autonomous = *req.Autonomous
 	}
 	noGit := req.GitCredentials != nil && !*req.GitCredentials
+	compression := req.ContextCompression != nil && *req.ContextCompression
 	sess := &store.Session{
 		OwnerID: owner.ID, Name: req.Name, Agent: req.Agent, Repos: repos,
 		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, RuntimeClass: req.RuntimeClass, Resources: req.Resources,
 		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
 		NoGitCredentials: noGit, Egress: req.Egress, Persona: req.Persona, AgentDefinition: req.AgentDefinition, K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
-		AIAccount: aiAccount, State: store.StateCreating,
+		AIAccount: aiAccount, ContextCompression: compression, State: store.StateCreating,
 	}
 	// A handle another request took in the meantime is a conflict: pick again.
 	for attempt := 0; ; attempt++ {
@@ -622,6 +627,9 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 	}
 	if req.GitCredentials != nil {
 		next.NoGitCredentials = !*req.GitCredentials
+	}
+	if req.ContextCompression != nil {
+		next.ContextCompression = *req.ContextCompression
 	}
 	if req.AIAccount != nil {
 		if err := s.checkAIAccount(ctx, owner.ID, sess.Agent, *req.AIAccount); err != nil {
@@ -1108,8 +1116,10 @@ type View struct {
 	Env            map[string]string   `json:"env"`
 	Autonomous     bool                `json:"autonomous"`
 	GitCredentials bool                `json:"git_credentials"`
-	Egress         []string            `json:"egress"`
-	Persona        string              `json:"persona"`
+	// ContextCompression: billion-context instead of OpenCode's compaction.
+	ContextCompression bool     `json:"context_compression"`
+	Egress             []string `json:"egress"`
+	Persona            string   `json:"persona"`
 	// Handle is the session's immutable chat name; mention it as @handle.
 	Handle          string   `json:"handle"`
 	AgentDefinition string   `json:"agent_definition"`
@@ -1146,7 +1156,7 @@ func (s *Service) View(sess *store.Session) View {
 		ID: sess.ID, Name: sess.Name, Agent: sess.Agent, Repos: sess.Repos,
 		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, RuntimeClass: sess.RuntimeClass, Resources: sess.Resources,
 		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
-		GitCredentials: !sess.NoGitCredentials, Egress: sess.Egress, Persona: sess.Persona, Handle: sess.Handle, AgentDefinition: sess.AgentDefinition, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
+		GitCredentials: !sess.NoGitCredentials, ContextCompression: sess.ContextCompression, Egress: sess.Egress, Persona: sess.Persona, Handle: sess.Handle, AgentDefinition: sess.AgentDefinition, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
 		AIAccount: sess.AIAccount, State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
 	}

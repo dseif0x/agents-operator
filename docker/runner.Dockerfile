@@ -67,13 +67,19 @@ ENV PATH=/opt/agents/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin \
 ARG CLAUDE_CODE_VERSION=latest
 ARG OPENCODE_VERSION=latest
 ARG CODEX_VERSION=latest
+# billion-context: OpenCode's context compression when a session turns it on
+# (cmd/agent-runner/opencode.go). Pinned here, not "latest": it sees every
+# model request, and its own self-update is switched off at run time.
+ARG BILLION_CONTEXT_VERSION=0.1.212
 USER 1000:1000
 RUN npm install -g --no-audit --no-fund \
       "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
       "opencode-ai@${OPENCODE_VERSION}" \
       "@openai/codex@${CODEX_VERSION}" \
+      "billion-context@${BILLION_CONTEXT_VERSION}" \
  && npm cache clean --force \
- && claude --version && opencode --version && codex --version
+ && claude --version && opencode --version && codex --version \
+ && test -f /opt/agents/lib/node_modules/billion-context/dist/agent/opencode-native.js
 
 COPY --from=build /out/agent-runner /usr/local/bin/agent-runner
 

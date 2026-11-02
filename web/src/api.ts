@@ -43,6 +43,8 @@ export interface Session {
   autonomous: boolean;
   /** Whether the agent gets the owner's SSH key and HTTPS/GitHub tokens; without them the runner only clones with them. */
   git_credentials: boolean;
+  /** OpenCode only: billion-context compresses the context instead of OpenCode's compaction. */
+  context_compression: boolean;
   /** Local network destinations the agent may reach: `192.168.1.10`, `192.168.1.0/24`, `192.168.1.10:8080`. */
   egress: string[];
   /** Personality and role, added to the agent's own system prompt (not for shell sessions). */
@@ -178,6 +180,7 @@ export interface CreateSessionRequest {
   env?: Record<string, string>;
   autonomous?: boolean;
   git_credentials?: boolean;
+  context_compression?: boolean;
   egress?: string[];
   persona?: string;
   agent_definition?: string;

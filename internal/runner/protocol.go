@@ -262,6 +262,9 @@ const (
 	// credentials (EnvGitSSH, EnvGitHTTPS, GH_TOKEN): the runner then
 	// keeps them to itself and uses them only to clone. Absent means true.
 	EnvAgentGitCredentials = "AGENT_GIT_CREDENTIALS"
+	// EnvContextCompression is "true" when an OpenCode session compresses
+	// its context with billion-context instead of OpenCode's compaction.
+	EnvContextCompression = "AGENT_CONTEXT_COMPRESSION"
 	// EnvEgress lists, comma-separated, the local network destinations the
 	// session's NetworkPolicy opens; only used for the generated AGENTS.md.
 	EnvEgress = "EGRESS"

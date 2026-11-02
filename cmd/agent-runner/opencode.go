@@ -34,7 +34,9 @@ import (
 //   - the session's agent definition as an OpenCode agent, selected with
 //     --agent;
 //   - with the Unjailed provider, a plugin that keeps earlier replies'
-//     reasoning out of requests to the GLM models (unjailedReasoningPlugin).
+//     reasoning out of requests to the GLM models (unjailedReasoningPlugin);
+//   - with the session's context compression on, the billion-context plugin
+//     in place of OpenCode's own compaction (billionContextPlugin).
 //
 // Its Claude Code compatibility (reading ~/.claude/CLAUDE.md and Claude
 // skills), sharing and self-update are turned off in the environment.
@@ -92,6 +94,16 @@ var unjailedContextWindows = map[string]int{
 	"grok-4.6":          400_000,
 	"grok-4.5":          400_000,
 }
+
+// billionContextPlugin is billion-context's OpenCode plugin
+// (github.com/ranxianglei/billion-context), installed in the runner image at
+// a pinned version. It starts a small proxy in the session that sits between
+// OpenCode and the model API and gives the model tools to fold consumed
+// parts of the conversation into summaries (and back) as the context fills,
+// instead of OpenCode's one-shot compaction. Its self-update, the advisory
+// watcher that can force-install versions and the release-notes feed are
+// turned off in openCodeEnv: the image pins the version.
+var billionContextPlugin = "/opt/agents/lib/node_modules/billion-context/dist/agent/opencode-native.js"
 
 // unjailedFallbackModels is used when the endpoint's model list cannot be
 // fetched at start: every model above.
@@ -412,6 +424,7 @@ func openCodeConfig(env []string) (map[string]any, []string) {
 		"mcp": map[string]any{mcpServerName: map[string]any{"type": "local", "command": []string{"agent-runner", "mcp"}, "enabled": true}},
 	}
 	var args []string
+	var plugins []string
 
 	providers, unjailed, unjailedModels := openCodeProviders(get)
 	if len(providers) > 0 {
@@ -433,8 +446,20 @@ func openCodeConfig(env []string) (map[string]any, []string) {
 			cfg["small_model"] = first + "/" + unjailedSmallModel
 		}
 		if file := writeSessionFile(home, "unjailed-reasoning.js", unjailedReasoningPlugin(unjailed)); file != "" {
-			cfg["plugin"] = []string{"file://" + file}
+			plugins = append(plugins, "file://"+file)
 		}
+	}
+
+	if get(runner.EnvContextCompression) == "true" {
+		if _, err := os.Stat(billionContextPlugin); err != nil {
+			slog.Warn("context compression is on but billion-context is not installed; OpenCode compacts as usual", "err", err)
+		} else {
+			plugins = append(plugins, "file://"+billionContextPlugin)
+			cfg["compaction"] = map[string]any{"auto": false}
+		}
+	}
+	if len(plugins) > 0 {
+		cfg["plugin"] = plugins
 	}
 
 	if persona := strings.TrimSpace(get(runner.EnvPersona)); persona != "" {
@@ -469,7 +494,7 @@ func openCodeConfig(env []string) (map[string]any, []string) {
 // openCodeEnv is the environment OpenCode starts with: the session's, minus
 // what only the runner reads, plus the configuration and the switches.
 func openCodeEnv(env []string, cfg map[string]any) []string {
-	out := make([]string, 0, len(env)+6)
+	out := make([]string, 0, len(env)+9)
 	for _, kv := range env {
 		switch k, _, _ := strings.Cut(kv, "="); k {
 		case runner.EnvPersona, runner.EnvAgentDefinition, runner.EnvAgentDefinitionName, "OPENCODE_CONFIG_CONTENT":
@@ -486,6 +511,11 @@ func openCodeEnv(env []string, cfg map[string]any) []string {
 		// No ~/.claude/CLAUDE.md or Claude skills: AGENTS.md says it all,
 		// and other agents' files have no business in this one's context.
 		"OPENCODE_DISABLE_CLAUDE_CODE=1",
+		// billion-context (when on): no self-update, no forced installs from
+		// its advisory feed, no release-notes fetches. The image pins it.
+		"ACP_AUTO_UPDATE=0",
+		"BILI_ADVISORY_CHECK=0",
+		"BILI_RELEASE_NOTES_CHECK=0",
 	)
 }
 

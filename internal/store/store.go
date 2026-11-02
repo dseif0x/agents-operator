@@ -199,6 +199,10 @@ type Session struct {
 	// and GitHub tokens) from the agent. The runner still clones with them
 	// on first boot; the agent can commit but not push or use the GitHub API.
 	NoGitCredentials bool
+	// ContextCompression has an OpenCode session compress its context with
+	// billion-context (a plugin baked into the runner image) instead of
+	// OpenCode's own compaction.
+	ContextCompression bool
 	// Egress lists the local network destinations the agent may reach on
 	// top of the chart's NetworkPolicy, in internal/egress canonical form
 	// (`192.168.1.10`, `192.168.1.0/24`, `192.168.1.10:8080`).
