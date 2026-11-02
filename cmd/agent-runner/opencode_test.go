@@ -353,3 +353,41 @@ func TestFetchModelsLimits(t *testing.T) {
 		t.Fatalf("models with a wrong key = %+v", got)
 	}
 }
+
+func TestOpenCodeContextCompression(t *testing.T) {
+	home := t.TempDir()
+	stubModels(t, nil)
+	old := billionContextPlugin
+	t.Cleanup(func() { billionContextPlugin = old })
+
+	// Off: OpenCode compacts as usual.
+	if _, cfg, _ := openCodeRun(t, false, "HOME="+home); cfg["plugin"] != nil || cfg["compaction"] != nil {
+		t.Fatalf("off: plugin %v, compaction %v", cfg["plugin"], cfg["compaction"])
+	}
+
+	// On but not installed: left out rather than breaking the start.
+	billionContextPlugin = filepath.Join(home, "missing.js")
+	if _, cfg, _ := openCodeRun(t, false, "HOME="+home, runner.EnvContextCompression+"=true"); cfg["plugin"] != nil || cfg["compaction"] != nil {
+		t.Fatalf("missing: plugin %v, compaction %v", cfg["plugin"], cfg["compaction"])
+	}
+
+	// On: the plugin, after the Unjailed one, and no auto compaction; its
+	// self-update and advisory feed off.
+	billionContextPlugin = filepath.Join(home, "opencode-native.js")
+	if err := os.WriteFile(billionContextPlugin, []byte("//"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stubModels(t, []string{"glm-5.3"})
+	_, cfg, vars := openCodeRun(t, false, "HOME="+home, runner.EnvContextCompression+"=true",
+		accountsEnv(t, unjailedAccount), unjailedAccount.KeyEnv+"=k")
+	plugins, _ := cfg["plugin"].([]any)
+	if len(plugins) != 2 || plugins[1] != "file://"+billionContextPlugin {
+		t.Fatalf("plugin = %v", cfg["plugin"])
+	}
+	if c, _ := cfg["compaction"].(map[string]any); c["auto"] != false {
+		t.Fatalf("compaction = %v", cfg["compaction"])
+	}
+	if vars["ACP_AUTO_UPDATE"] != "0" || vars["BILI_ADVISORY_CHECK"] != "0" {
+		t.Fatalf("update switches: %q %q", vars["ACP_AUTO_UPDATE"], vars["BILI_ADVISORY_CHECK"])
+	}
+}

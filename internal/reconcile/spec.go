@@ -285,6 +285,7 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 		{Name: runner.EnvAgent, Value: s.Agent},
 		{Name: runner.EnvAutonomous, Value: strconv.FormatBool(s.Autonomous)},
 		{Name: runner.EnvAgentGitCredentials, Value: strconv.FormatBool(!s.NoGitCredentials)},
+		{Name: runner.EnvContextCompression, Value: strconv.FormatBool(s.ContextCompression)},
 		{Name: runner.EnvRepos, Value: string(reposJSON)},
 		{Name: runner.EnvSessionName, Value: s.Name},
 		{Name: runner.EnvWorkspace, Value: WorkspacePath},

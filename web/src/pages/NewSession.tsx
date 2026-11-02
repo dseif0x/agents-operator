@@ -106,6 +106,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
   const [k8sNamespaces, setK8sNamespaces] = useState("");
   const [autonomous, setAutonomous] = useState(true);
   const [gitCredentials, setGitCredentials] = useState(true);
+  const [contextCompression, setContextCompression] = useState(false);
   const [egress, setEgress] = useState("");
   const [persona, setPersona] = useState("");
   const [handle, setHandle] = useState("");
@@ -169,6 +170,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         setK8sNamespaces((s.k8s_namespaces || []).join(", "));
         setAutonomous(s.autonomous);
         setGitCredentials(s.git_credentials ?? true);
+        setContextCompression(s.context_compression ?? false);
         setEgress((s.egress || []).join("\n"));
         setPersona(s.persona || "");
         setHandle(s.handle || "");
@@ -230,7 +232,10 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
       }
     }
     if (agent !== "shell") req.persona = persona;
-    if (agent === "opencode") req.agent_definition = agentDefinition;
+    if (agent === "opencode") {
+      req.agent_definition = agentDefinition;
+      req.context_compression = contextCompression;
+    }
     req.egress = egress
       .split(/[\s,]+/)
       .map((d) => d.trim())
@@ -374,6 +379,19 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
             commit, not push or use <code>gh</code>
           </label>
         </div>
+        {agent === "opencode" && (
+          <div class="checkbox">
+            <input id="compress" type="checkbox" checked={contextCompression} onChange={(e) => setContextCompression((e.target as HTMLInputElement).checked)} />
+            <label for="compress" style="margin:0;color:inherit">
+              Context compression with{" "}
+              <a href="https://github.com/ranxianglei/billion-context" target="_blank" rel="noreferrer">
+                billion-context
+              </a>{" "}
+              instead of OpenCode's compaction: the model folds older parts of the conversation into summaries as the context fills
+              and can unfold them again
+            </label>
+          </div>
+        )}
         {agent !== "shell" && (
           <div>
             <label for="persona">
