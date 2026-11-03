@@ -39,6 +39,11 @@ type Config struct {
 	NodeSelector map[string]string
 	Tolerations  []config.Toleration
 	RuntimeClass string
+	// GPUPriorityClass is the priorityClassName of session pods that get a
+	// GPU (an extended resource named */gpu): with one GPU and no
+	// time-slicing it decides which GPU workload may push out another.
+	// Other sessions keep the default priority.
+	GPUPriorityClass string
 	// ServiceAccount is the read-only ServiceAccount a session may opt
 	// into (its token is then mounted); empty means never.
 	ServiceAccount string
@@ -402,6 +407,9 @@ func BuildPod(s *store.Session, cfg Config) *corev1.Pod {
 	if rc := cmp.Or(s.RuntimeClass, cfg.RuntimeClass); rc != "" {
 		pod.Spec.RuntimeClassName = ptr.To(rc)
 	}
+	if cfg.GPUPriorityClass != "" && wantsGPU(pod.Spec.Containers[0].Resources) {
+		pod.Spec.PriorityClassName = cfg.GPUPriorityClass
+	}
 	switch access {
 	case store.K8sAccessReadOnly:
 		pod.Spec.ServiceAccountName = cfg.ServiceAccount
@@ -514,4 +522,15 @@ func egressEnv(s *store.Session, cfg Config) string {
 		return ""
 	}
 	return strings.Join(s.Egress, ",")
+}
+
+// wantsGPU reports whether a container asks for a GPU (nvidia.com/gpu,
+// amd.com/gpu …).
+func wantsGPU(r corev1.ResourceRequirements) bool {
+	for name, q := range r.Limits {
+		if strings.HasSuffix(string(name), "/gpu") && !q.IsZero() {
+			return true
+		}
+	}
+	return false
 }

@@ -131,7 +131,7 @@ func run() error {
 	rcfg := reconcile.Config{
 		Namespace: cfg.Namespace, RunnerImage: cfg.RunnerImage, RunnerImageTag: cfg.RunnerImageTag, ImagePullPolicy: cfg.RunnerImagePullPolicy,
 		DefaultStorageClass: cfg.DefaultStorageClass, DefaultPVCSize: cfg.DefaultPVCSize, DefaultResources: cfg.DefaultResources, MaxResources: cfg.MaxResources,
-		NodeSelector: cfg.RunnerNodeSelector, Tolerations: cfg.RunnerTolerations, RuntimeClass: cfg.RunnerRuntimeClass, ServiceAccount: cfg.RunnerServiceAccount, ExtraEnv: cfg.RunnerExtraEnv, TmpInit: cfg.RunnerTmpInit,
+		NodeSelector: cfg.RunnerNodeSelector, Tolerations: cfg.RunnerTolerations, RuntimeClass: cfg.RunnerRuntimeClass, GPUPriorityClass: cfg.RunnerGPUPriorityClass, ServiceAccount: cfg.RunnerServiceAccount, ExtraEnv: cfg.RunnerExtraEnv, TmpInit: cfg.RunnerTmpInit,
 		NamespaceWrite: cfg.RunnerNamespaceWrite, ReadClusterRole: cfg.RunnerReadClusterRole, WriteClusterRole: cfg.RunnerWriteClusterRole, ClusterWideRead: cfg.RunnerClusterWideRead,
 		NetworkPolicy: cfg.RunnerNetworkPolicy, Sandbox: cfg.Sandbox, HubServiceAccount: cfg.HubServiceAccount,
 	}.Defaults()

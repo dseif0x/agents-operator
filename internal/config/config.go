@@ -119,6 +119,8 @@ type Config struct {
 	RunnerNodeSelector map[string]string
 	RunnerTolerations  []Toleration
 	RunnerRuntimeClass string
+	// RunnerGPUPriorityClass: priorityClassName for session pods with a GPU.
+	RunnerGPUPriorityClass string
 	// RunnerServiceAccount is the read-only ServiceAccount sessions may opt
 	// into; empty means the option is off.
 	RunnerServiceAccount string
@@ -300,6 +302,7 @@ func load(get lookup) (*Config, error) {
 		DefaultStorageClass:    str("DEFAULT_STORAGE_CLASS", ""),
 		DefaultPVCSize:         str("DEFAULT_PVC_SIZE", "20Gi"),
 		RunnerRuntimeClass:     str("RUNNER_RUNTIME_CLASS", ""),
+		RunnerGPUPriorityClass: str("RUNNER_GPU_PRIORITY_CLASS", ""),
 		RunnerServiceAccount:   str("RUNNER_SERVICE_ACCOUNT", ""),
 		RunnerNamespaceWrite:   boolean("RUNNER_NAMESPACE_WRITE", false),
 		RunnerReadClusterRole:  str("RUNNER_READ_CLUSTER_ROLE", "view"),

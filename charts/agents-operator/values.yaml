@@ -48,6 +48,8 @@ runner:
   tolerations: []
   # -- runtimeClassName for session pods (gVisor, Kata); empty = default runtime
   runtimeClassName: ""
+  # -- priorityClassName for session pods that request a GPU (e.g. to rank them against other GPU workloads on a single, non-time-sliced GPU); empty = default priority
+  gpuPriorityClassName: ""
   # -- Run a root init container (`chmod 1777 /tmp`) so the /tmp emptyDir gets the sticky bit Claude Code demands for its sockets; disable under the "restricted" Pod Security Standard (the CLI then only warns)
   tmpInit: true
   # -- Extra non-secret env injected into every session pod
