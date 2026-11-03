@@ -510,3 +510,17 @@ func TestPersonaAndAgentEnv(t *testing.T) {
 		t.Fatalf("bad definition passed: %v", env)
 	}
 }
+
+func TestBuildPodGPUPriority(t *testing.T) {
+	cfg := testCfg()
+	cfg.GPUPriorityClass = "gpu-session"
+	cfg.MaxResources = config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "1"}}}
+	s := testSession()
+	if p := BuildPod(s, cfg); p.Spec.PriorityClassName != "" {
+		t.Fatalf("session without a GPU got %q", p.Spec.PriorityClassName)
+	}
+	s.Resources = config.Resources{Limits: config.ResourceList{Extended: map[string]string{"nvidia.com/gpu": "1"}}}
+	if p := BuildPod(s, cfg); p.Spec.PriorityClassName != "gpu-session" {
+		t.Fatalf("GPU session: %q (limits %v)", p.Spec.PriorityClassName, p.Spec.Containers[0].Resources.Limits)
+	}
+}
