@@ -18,7 +18,12 @@ import (
 type Codex struct {
 	Cmd Command // codex with the session's -c overrides; "app-server" is added
 	Dir string  // the thread's working directory
-	Log *slog.Logger
+	// Autonomous runs with full access and no approvals; otherwise the
+	// sandbox is the workspace and approvals go to the owner.
+	Autonomous bool
+	// Model is the model to use ("" = the configured one).
+	Model string
+	Log   *slog.Logger
 
 	p      *proc
 	events chan Event
@@ -33,6 +38,14 @@ type Codex struct {
 	window   int64
 	context  int64
 	usage    *Usage
+	reqs     map[string]codexReq // waiting for the owner
+	models   []Model
+}
+
+type codexReq struct {
+	rpcID  json.RawMessage
+	method string
+	params json.RawMessage
 }
 
 type rpcMessage struct {
@@ -65,6 +78,7 @@ func (c *Codex) Start(ctx context.Context, ref string) error {
 	c.p = p
 	c.events = make(chan Event, 256)
 	c.pending = map[int64]chan rpcResponse{}
+	c.reqs = map[string]codexReq{}
 	go c.read()
 
 	ictx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -79,6 +93,12 @@ func (c *Codex) Start(ctx context.Context, ref string) error {
 	_ = c.p.send(map[string]any{"method": "initialized"})
 
 	params := map[string]any{"cwd": c.Dir, "approvalPolicy": "never", "sandbox": "danger-full-access"}
+	if !c.Autonomous {
+		params["approvalPolicy"], params["sandbox"] = "on-request", "workspace-write"
+	}
+	if c.Model != "" {
+		params["model"] = c.Model
+	}
 	var res json.RawMessage
 	if ref != "" {
 		params["threadId"] = ref
@@ -107,8 +127,65 @@ func (c *Codex) Start(ctx context.Context, ref string) error {
 	c.mu.Lock()
 	c.thread = started.Thread.ID
 	c.mu.Unlock()
-	c.emit(Event{Type: EventInfo, Info: &Info{Model: started.Model, Ref: started.Thread.ID}})
+	if res, err := c.call(ictx, "model/list", map[string]any{"limit": 50}); err == nil {
+		var ml struct {
+			Data []struct {
+				ID          string `json:"id"`
+				Model       string `json:"model"`
+				DisplayName string `json:"displayName"`
+				Hidden      bool   `json:"hidden"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(res, &ml) == nil {
+			for _, m := range ml.Data {
+				if !m.Hidden {
+					c.models = append(c.models, Model{ID: firstNonEmpty(m.Model, m.ID), Name: m.DisplayName})
+				}
+			}
+		}
+	}
+	c.emit(Event{Type: EventInfo, Info: &Info{Model: started.Model, Ref: started.Thread.ID, Models: c.models}})
 	return nil
+}
+
+// SetModel uses model from the next turn on.
+func (c *Codex) SetModel(model string) error {
+	c.mu.Lock()
+	c.Model = model
+	c.mu.Unlock()
+	c.emit(Event{Type: EventInfo, Info: &Info{Model: model, Models: c.models}})
+	return nil
+}
+
+// Respond answers an approval or a question.
+func (c *Codex) Respond(id string, r Response) error {
+	c.mu.Lock()
+	req, ok := c.reqs[id]
+	delete(c.reqs, id)
+	turn := c.turn
+	c.mu.Unlock()
+	if !ok {
+		return errors.New("no such request (answered already, or the turn ended)")
+	}
+	var result any
+	if req.method == "item/tool/requestUserInput" {
+		answers := map[string]any{}
+		for qid, a := range r.Answers {
+			answers[qid] = map[string]any{"answers": []string{a}}
+		}
+		result = map[string]any{"answers": answers}
+	} else {
+		decision := "decline"
+		switch r.Option {
+		case "allow":
+			decision = "accept"
+		case "allow_always":
+			decision = "acceptForSession"
+		}
+		result = map[string]any{"decision": decision}
+	}
+	c.emit(Event{Type: EventRequestDone, Turn: turn, Request: &Request{ID: id}})
+	return c.p.send(map[string]any{"id": req.rpcID, "result": result})
 }
 
 func (c *Codex) Events() <-chan Event { return c.events }
@@ -153,6 +230,7 @@ func (c *Codex) Send(in Input) error {
 		c.mu.Unlock()
 		return ErrBusy
 	}
+	model := c.Model
 	c.turnSeq++
 	c.turn = fmt.Sprintf("x%d", c.turnSeq)
 	c.codexTID = ""
@@ -174,7 +252,11 @@ func (c *Codex) Send(in Input) error {
 	c.emit(Event{Type: EventTurnStarted, Turn: turn, Inputs: []string{in.ID}})
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	res, err := c.call(ctx, "turn/start", map[string]any{"threadId": thread, "input": input})
+	params := map[string]any{"threadId": thread, "input": input}
+	if model != "" {
+		params["model"] = model
+	}
+	res, err := c.call(ctx, "turn/start", params)
 	if err != nil {
 		c.endTurn(StatusFailed, "codex refused the message: "+err.Error())
 		return err
@@ -218,12 +300,20 @@ func (c *Codex) endTurn(status, errText string) {
 	c.mu.Lock()
 	turn := c.turn
 	c.turn, c.codexTID = "", ""
+	var moot []string
+	for id := range c.reqs {
+		moot = append(moot, id)
+	}
+	c.reqs = map[string]codexReq{}
 	usage := c.usage
 	if usage == nil {
 		usage = &Usage{}
 	}
 	usage.Context, usage.ContextWindow = c.context, c.window
 	c.mu.Unlock()
+	for _, id := range moot {
+		c.emit(Event{Type: EventRequestDone, Turn: turn, Request: &Request{ID: id}})
+	}
 	if turn != "" {
 		c.emit(Event{Type: EventTurnEnded, Turn: turn, Status: status, Error: errText, Usage: usage})
 	}
@@ -274,20 +364,72 @@ func (c *Codex) read() {
 	c.endTurn(StatusFailed, msg)
 }
 
-// serverRequest answers what the app server asks: sessions run
-// autonomously, so approvals are granted (phase 4 shows them as cards).
+// serverRequest handles what the app server asks: approvals (granted when
+// autonomous, else the owner's) and questions (always the owner's).
 func (c *Codex) serverRequest(m rpcMessage) {
-	var result any
 	switch m.Method {
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "applyPatchApproval", "execCommandApproval":
-		result = map[string]any{"decision": "accept"}
+		if c.Autonomous {
+			_ = c.p.send(map[string]any{"id": m.ID, "result": map[string]any{"decision": "accept"}})
+			return
+		}
+		var p map[string]any
+		_ = json.Unmarshal(m.Params, &p)
+		str := func(k string) string { s, _ := p[k].(string); return s }
+		t := &Tool{Name: "shell", Kind: ToolCommand}
+		if strings.Contains(m.Method, "fileChange") || strings.Contains(m.Method, "Patch") {
+			t = &Tool{Name: "apply_patch", Kind: ToolEdit, Title: firstNonEmpty(str("grantRoot"), str("reason"), "files")}
+		} else {
+			cmd := str("command")
+			if cmd == "" {
+				if arr, ok := p["command"].([]any); ok {
+					parts := make([]string, 0, len(arr))
+					for _, a := range arr {
+						parts = append(parts, fmt.Sprint(a))
+					}
+					cmd = strings.Join(parts, " ")
+				}
+			}
+			cmd = unwrapShell(cmd)
+			t.Title, t.Input = cmd, cmd
+		}
+		if reason := str("reason"); reason != "" {
+			t.Output = reason
+		}
+		id := "codex-" + string(m.ID)
+		c.mu.Lock()
+		c.reqs[id] = codexReq{rpcID: m.ID, method: m.Method, params: m.Params}
+		turn := c.turn
+		c.mu.Unlock()
+		c.emit(Event{Type: EventRequest, Turn: turn, Request: &Request{ID: id, Kind: RequestPermission, Tool: t, Title: permissionTitle(t), Options: permissionOptions}})
 	case "item/tool/requestUserInput":
-		result = map[string]any{"answers": map[string]any{}}
+		var p struct {
+			Questions []struct {
+				ID       string `json:"id"`
+				Header   string `json:"header"`
+				Question string `json:"question"`
+				Options  []struct {
+					Label string `json:"label"`
+				} `json:"options"`
+			} `json:"questions"`
+		}
+		_ = json.Unmarshal(m.Params, &p)
+		r := &Request{ID: "codex-" + string(m.ID), Kind: RequestQuestion, Title: "A question for you"}
+		for _, q := range p.Questions {
+			qq := Question{ID: q.ID, Header: q.Header, Question: q.Question}
+			for _, o := range q.Options {
+				qq.Options = append(qq.Options, o.Label)
+			}
+			r.Questions = append(r.Questions, qq)
+		}
+		c.mu.Lock()
+		c.reqs[r.ID] = codexReq{rpcID: m.ID, method: m.Method, params: m.Params}
+		turn := c.turn
+		c.mu.Unlock()
+		c.emit(Event{Type: EventRequest, Turn: turn, Request: r})
 	default:
 		_ = c.p.send(map[string]any{"id": m.ID, "error": map[string]any{"code": -32601, "message": "not supported by agents-operator"}})
-		return
 	}
-	_ = c.p.send(map[string]any{"id": m.ID, "result": result})
 }
 
 type codexItem struct {

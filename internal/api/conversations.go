@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/session"
 )
 
@@ -18,6 +19,90 @@ func (s *Server) conversationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/sessions/{id}/inputs/{input}", s.cancelInput)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/files/{file}", s.inputFile)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/interrupt", s.interrupt)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/requests/{request}", s.answerRequest)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/model", s.setModel)
+	mux.HandleFunc("GET /api/v1/sessions/{id}/memories", s.listMemories)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/memories", s.addMemory)
+	mux.HandleFunc("PATCH /api/v1/sessions/{id}/memories/{memory}", s.updateMemory)
+	mux.HandleFunc("DELETE /api/v1/sessions/{id}/memories/{memory}", s.deleteMemory)
+}
+
+func (s *Server) listMemories(w http.ResponseWriter, r *http.Request) {
+	ms, err := s.Sessions.ListMemories(r.Context(), principal(r).User, r.PathValue("id"))
+	if err != nil {
+		s.mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"memories": ms})
+}
+
+func (s *Server) addMemory(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	m, err := s.Sessions.AddMemory(r.Context(), principal(r).User, r.PathValue("id"), body.Text)
+	if err != nil {
+		s.mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, m)
+}
+
+func (s *Server) updateMemory(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	m, err := s.Sessions.UpdateMemory(r.Context(), principal(r).User, r.PathValue("id"), r.PathValue("memory"), body.Text)
+	if err != nil {
+		s.mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
+func (s *Server) deleteMemory(w http.ResponseWriter, r *http.Request) {
+	if err := s.Sessions.DeleteMemory(r.Context(), principal(r).User, r.PathValue("id"), r.PathValue("memory")); err != nil {
+		s.mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) answerRequest(w http.ResponseWriter, r *http.Request) {
+	var body runner.ConvoResponse
+	if err := decode(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	it, err := s.Sessions.AnswerRequest(r.Context(), principal(r).User, r.PathValue("id"), r.PathValue("request"), body)
+	if err != nil {
+		s.mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, it)
+}
+
+func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Model string `json:"model"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.Sessions.SetModel(r.Context(), principal(r).User, r.PathValue("id"), body.Model); err != nil {
+		s.mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) conversationItems(w http.ResponseWriter, r *http.Request) {

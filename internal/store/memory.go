@@ -21,6 +21,7 @@ type Memory struct {
 	chat        *memChatData
 	conv        *memConvData
 	routines    *memRoutineData
+	mems        *memMemoryData
 	push        *memPushData
 	events      map[string][]*Event
 	usage       map[string]map[string]int
@@ -37,6 +38,7 @@ func NewMemory() *Memory {
 		chat:        newMemChatData(),
 		conv:        &memConvData{files: map[string]*ConvFile{}},
 		routines:    &memRoutineData{},
+		mems:        &memMemoryData{},
 		push:        &memPushData{subs: map[string]*PushSubscription{}, settings: map[string]string{}},
 		events:      map[string][]*Event{},
 		usage:       map[string]map[string]int{},

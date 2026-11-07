@@ -117,6 +117,25 @@ func (c *Chat) ServeUplink(w http.ResponseWriter, r *http.Request) {
 			}()
 		case f.Event == runner.EventCancel && c.Convo != nil:
 			c.Convo.Cancel(f.IDs...)
+		case f.Event == runner.EventRespond && c.Convo != nil && f.Response != nil:
+			resp := convo.Response{Option: f.Response.Option, Answers: f.Response.Answers, Message: f.Response.Message}
+			go func(id string) {
+				if err := c.Convo.Respond(id, resp); err != nil {
+					c.Log.Warn("cannot answer the agent's request", "err", err)
+				}
+			}(f.RequestID)
+		case f.Event == runner.EventMemories && c.Convo != nil:
+			notes := make([]convo.Note, 0, len(f.Memories))
+			for _, m := range f.Memories {
+				notes = append(notes, convo.Note{ID: m.ID, Text: m.Text})
+			}
+			c.Convo.SetMemories(notes)
+		case f.Event == runner.EventSetModel && c.Convo != nil && f.Model != "":
+			go func(model string) {
+				if err := c.Convo.SetModel(model); err != nil {
+					c.Log.Warn("cannot switch the model", "model", model, "err", err)
+				}
+			}(f.Model)
 		case f.ID != 0:
 			c.mu.Lock()
 			ch := c.pending[f.ID]
@@ -618,6 +637,15 @@ func (c *Chat) local(ctx context.Context, op string, body []byte) (json.RawMessa
 			return nil, errors.New("this works only during a routine run")
 		}
 		return c.Call(ctx, op, map[string]string{"input": cur.ID, "reason": a.Reason})
+	case runner.OpMemorySave, runner.OpMemoryForget, runner.OpMemoryList:
+		if c.Convo == nil {
+			return nil, errors.New("memories are for conversation sessions")
+		}
+		var args json.RawMessage = body
+		if len(body) == 0 {
+			args = json.RawMessage(`{}`)
+		}
+		return c.Call(ctx, op, args)
 	case runner.OpChatsList, runner.OpChatInfo:
 		var args json.RawMessage = body
 		if len(body) == 0 {

@@ -9,6 +9,7 @@ import { Avatar } from "./Avatar";
 import { Icon } from "./icons";
 import { agentLabel, agentStatus, longTime, shortTime } from "./format";
 import { RoutineList } from "./Routines";
+import { loadDraft, saveDraft } from "../drafts";
 
 type Block =
   | { type: "user"; item: ConvItem }
@@ -17,7 +18,9 @@ type Block =
   | { type: "error"; item: ConvItem }
   | { type: "notice"; item: ConvItem }
   | { type: "date"; key: string; at: string }
-  | { type: "routine"; item: ConvItem; folded: ConvItem[] };
+  | { type: "routine"; item: ConvItem; folded: ConvItem[] }
+  | { type: "request"; item: ConvItem }
+  | { type: "tasks"; item: ConvItem; key: string };
 
 const PAGE = 200;
 
@@ -101,11 +104,7 @@ export function AgentChat({ session }: { session: Session }) {
         <Avatar id={id} size={22} status={status} />
         <span>{session.name}</span>
       </span>
-      {conv.model && (
-        <span class="sh-chip" title="Model">
-          <b>{conv.model}</b>
-        </span>
-      )}
+      {conv.model && <ModelPicker session={session} />}
       <ContextRing used={conv.context} size={conv.context_window} />
       <SessionMenu session={session} />
       <button class="sh-icon-btn" title="Details" onClick={() => setPanel((p) => !p)}>
@@ -161,7 +160,7 @@ export function AgentChat({ session }: { session: Session }) {
               </div>
             )}
             {blocks.map((b) => (
-              <BlockView key={b.type === "steps" || b.type === "date" ? b.key : b.item.key} b={b} session={session} />
+              <BlockView key={b.type === "steps" || b.type === "date" || b.type === "tasks" ? b.key : b.item.key} b={b} session={session} />
             ))}
             {working && <Working session={session} />}
           </div>
@@ -191,6 +190,19 @@ function toBlocks(items: ConvItem[]): Block[] {
     lastAt = at.getTime();
     if (quietTurn && it.turn && it.turn === quietTurn.turn && it.kind !== "user") {
       (quietTurn.block as { folded: ConvItem[] }).folded.push(it);
+      continue;
+    }
+    if (it.kind === "request") {
+      steps = null;
+      out.push({ type: "request", item: it });
+      continue;
+    }
+    if (it.kind === "tool" && taskList(it)) {
+      // The newest task list of a run of steps replaces the one before.
+      const prev = out.findIndex((b) => b.type === "tasks" && b.item.turn === it.turn);
+      if (prev >= 0) out.splice(prev, 1);
+      out.push({ type: "tasks", item: it, key: `tasks-${it.turn}` });
+      steps = null;
       continue;
     }
     const isStep = it.kind === "tool" || it.kind === "thinking" || (it.kind === "text" && it.data.parent);
@@ -231,6 +243,10 @@ function BlockView({ b, session }: { b: Block; session: Session }) {
       return <UserMessage item={b.item} session={session} />;
     case "routine":
       return <RoutineMarker item={b.item} folded={b.folded} />;
+    case "request":
+      return <RequestCard item={b.item} session={session} />;
+    case "tasks":
+      return <TaskCard item={b.item} />;
     case "text":
       return (
         <div class="cv-agent">
@@ -424,8 +440,8 @@ function Working({ session }: { session: Session }) {
   return (
     <div class="cv-working">
       <Avatar id={session.id} size={22} />
-      <span class="cv-spin" />
-      <span>{detail ? "Working:" : "Working…"}</span>
+      {a?.state === "needs_permission" ? <Icon name="alert" size={15} class="cv-warn" /> : <span class="cv-spin" />}
+      <span>{a?.state === "needs_permission" ? "Waiting for you" : detail ? "Working:" : "Working…"}</span>
       {detail && <span class="detail">{detail}</span>}
       {since > 2 && <span>{since >= 60 ? `${Math.floor(since / 60)}m ${since % 60}s` : `${since}s`}</span>}
     </div>
@@ -471,6 +487,21 @@ function Bottom({ session, queued, working, onSent }: { session: Session; queued
     }
   });
   const [files, setFiles] = useState<File[]>([]);
+  // Attached files of the unsent message survive too (drafts.ts).
+  const filesLoaded = useRef(false);
+  useEffect(() => {
+    let live = true;
+    loadDraft(`session:${session.id}`).then((d) => {
+      if (live && d.files.length) setFiles((cur) => (cur.length ? cur : d.files));
+      filesLoaded.current = true;
+    });
+    return () => {
+      live = false;
+    };
+  }, [session.id]);
+  useEffect(() => {
+    if (filesLoaded.current) saveDraft(`session:${session.id}`, { text: "", files });
+  }, [files, session.id]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [editing, setEditing] = useState<{ key: string; text: string } | null>(null);
@@ -781,6 +812,9 @@ function InfoPanel({ session, onClose }: { session: Session; onClose: () => void
       <div style={{ marginTop: 16 }}>
         <RoutineList sessionId={session.id} />
       </div>
+      <div style={{ marginTop: 16 }}>
+        <Memories session={session} />
+      </div>
       {session.persona && (
         <>
           <div style={{ marginTop: 14, color: "var(--sh-muted)" }}>Instructions</div>
@@ -796,5 +830,302 @@ function InfoPanel({ session, onClose }: { session: Session; onClose: () => void
         </Link>
       </div>
     </aside>
+  );
+}
+
+/** A task list from a tool call (Claude's TodoWrite, Codex and ACP plans). */
+type Task = { text: string; status: "pending" | "in_progress" | "completed" };
+
+function taskList(it: ConvItem): Task[] | null {
+  const t = it.data.tool;
+  if (!t || t.kind !== "task") return null;
+  if (t.name === "TodoWrite" && t.input) {
+    try {
+      const v = JSON.parse(t.input) as { todos?: { content: string; status: Task["status"]; activeForm?: string }[] };
+      if (v.todos?.length) return v.todos.map((x) => ({ text: x.status === "in_progress" && x.activeForm ? x.activeForm : x.content, status: x.status }));
+    } catch {
+      /* not JSON */
+    }
+  }
+  if (t.name === "plan" && t.output) {
+    const out: Task[] = [];
+    for (const line of t.output.split("\n")) {
+      const m = line.match(/^\s*(?:[-*]\s*)?\[( |x|X|~)\]\s*(.+)$/);
+      if (m) out.push({ text: m[2], status: m[1] === " " ? "pending" : m[1] === "~" ? "in_progress" : "completed" });
+    }
+    if (out.length) return out;
+    const lines = t.output.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length > 1) return lines.map((l) => ({ text: l.replace(/^[-*\d.)\s]+/, ""), status: "pending" }));
+  }
+  return null;
+}
+
+function TaskCard({ item }: { item: ConvItem }) {
+  const tasks = taskList(item) ?? [];
+  const done = tasks.filter((t) => t.status === "completed").length;
+  const [open, setOpen] = useState(false);
+  const all = done === tasks.length;
+  return (
+    <div class="cv-steps cv-tasks">
+      <button class="cv-steps-head" onClick={() => setOpen((o) => !o)}>
+        {all ? <Icon name="check" size={16} class="cv-ok" /> : <span class="cv-ring" style={{ ["--p" as string]: `${(done / Math.max(1, tasks.length)) * 100}%` }} />}
+        <span class="label">Tasks</span>
+        <span class="count">
+          {done}/{tasks.length}
+        </span>
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={15} />
+      </button>
+      {open && (
+        <div class="cv-step-list">
+          {tasks.map((t) => (
+            <div class={`cv-task ${t.status}`}>
+              {t.status === "completed" ? <Icon name="check" size={14} class="cv-ok" /> : t.status === "in_progress" ? <span class="cv-spin" /> : <span class="cv-box" />}
+              <span>{t.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A permission or a question the agent waits for. */
+function RequestCard({ item, session }: { item: ConvItem; session: Session }) {
+  const req = item.data.request;
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  if (!req) return null;
+  const pending = item.status === "pending";
+  const send = async (r: { option?: string; answers?: Record<string, string> }) => {
+    setBusy(true);
+    setErr("");
+    try {
+      await api.answerRequest(session.id, req.id, r);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const resp = item.data.response;
+  const status = item.status === "cancelled" ? "No longer needed" : resp?.option ? (resp.option === "deny" ? "Denied" : resp.option === "allow_always" ? "Always allowed" : "Allowed") : resp?.answers ? "Answered" : "";
+  if (req.kind === "question") {
+    const qs = req.questions ?? [];
+    return (
+      <div class={`cv-request ${pending ? "pending" : ""}`}>
+        <div class="cv-request-head">
+          <span>{req.title || "A question for you"}</span>
+          {pending ? (
+            <span class="rt-badge busy">
+              <span class="cv-spin" /> Question
+            </span>
+          ) : (
+            <span class="rt-badge">{status}</span>
+          )}
+        </div>
+        {qs.map((q) => {
+          const picked = pending ? answers[q.id] : resp?.answers?.[q.id];
+          return (
+            <div class="cv-question">
+              {q.header && <div class="cv-q-header">{q.header}</div>}
+              <div class="cv-q-text">{q.question}</div>
+              {q.options?.length ? (
+                <div class="cv-q-options">
+                  {q.options.map((o) => (
+                    <button class={picked === o ? "on" : ""} disabled={!pending || busy} onClick={() => setAnswers((a) => ({ ...a, [q.id]: o }))}>
+                      {o}
+                    </button>
+                  ))}
+                </div>
+              ) : pending ? (
+                <input class="rt-input" value={answers[q.id] ?? ""} onInput={(e) => setAnswers((a) => ({ ...a, [q.id]: (e.target as HTMLInputElement).value }))} />
+              ) : (
+                <div class="cv-q-answer">{picked}</div>
+              )}
+            </div>
+          );
+        })}
+        {err && <div class="cv-error">{err}</div>}
+        {pending && (
+          <div class="cv-request-actions">
+            <button class="sh-btn small primary" disabled={busy || qs.some((q) => !answers[q.id])} onClick={() => send({ answers })}>
+              Answer
+            </button>
+            <button class="sh-btn small" disabled={busy} onClick={() => send({ answers: {} })}>
+              Skip
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+  const t = req.tool;
+  return (
+    <div class={`cv-request ${pending ? "pending" : ""}`}>
+      <div class="cv-request-head">
+        <span>{req.title || "Allow this?"}</span>
+        {pending ? (
+          <span class="rt-badge busy">
+            <span class="cv-spin" /> Approval
+          </span>
+        ) : (
+          <span class={`rt-badge ${resp?.option === "deny" ? "bad" : resp?.option ? "ok" : ""}`}>{status}</span>
+        )}
+      </div>
+      {t && (t.input || t.title) && <pre class="cv-request-input">{t.kind === "command" ? t.title || t.input : prettyJSON(t.input || t.title || "")}</pre>}
+      {t?.output && <div class="rt-hint">{t.output}</div>}
+      {err && <div class="cv-error">{err}</div>}
+      {pending && (
+        <div class="cv-request-actions">
+          {(req.options ?? []).filter((o) => o.kind !== "deny").map((o) => (
+            <button class={`sh-btn small ${o.kind === "allow" ? "primary" : ""}`} disabled={busy} onClick={() => send({ option: o.id })}>
+              {o.label}
+            </button>
+          ))}
+          <span style={{ flex: 1 }} />
+          {(req.options ?? []).filter((o) => o.kind === "deny").map((o) => (
+            <button class="sh-btn small" disabled={busy} onClick={() => send({ option: o.id })}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The model chip: the current model, a menu of the others. */
+function ModelPicker({ session }: { session: Session }) {
+  const conv = session.conversation ?? {};
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    addEventListener("mousedown", close);
+    return () => removeEventListener("mousedown", close);
+  }, [open]);
+  const models = conv.models ?? [];
+  const current = models.find((m) => m.id === conv.model);
+  return (
+    <div class="sh-menu-wrap" ref={ref}>
+      <button class="sh-chip" title="Model" onClick={() => models.length && setOpen((o) => !o)} disabled={!models.length}>
+        <b>{current?.name || conv.model}</b>
+        {models.length > 0 && <Icon name="chevronDown" size={13} />}
+      </button>
+      {open && (
+        <div class="sh-menu">
+          {models.map((m) => (
+            <button
+              onClick={async () => {
+                setOpen(false);
+                setErr("");
+                try {
+                  await api.setModel(session.id, m.id);
+                } catch (e) {
+                  setErr((e as Error).message);
+                  alert((e as Error).message);
+                }
+              }}
+            >
+              <span style={{ width: 16 }}>{m.id === conv.model && <Icon name="check" size={14} />}</span>
+              {m.name || m.id}
+            </button>
+          ))}
+          {err && <div class="rt-hint" style={{ padding: 8 }}>{err}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The agent's memories: what it keeps across conversations. */
+function Memories({ session }: { session: Session }) {
+  const [list, setList] = useState<import("../api").AgentMemory[] | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [text, setText] = useState("");
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [err, setErr] = useState("");
+  const load = () =>
+    api
+      .memories(session.id)
+      .then((r) => setList(r.memories))
+      .catch((e) => setErr((e as Error).message));
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, [session.id]);
+  const act = async (fn: () => Promise<unknown>) => {
+    setErr("");
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+  return (
+    <div class="rt-list">
+      <div class="rt-list-head">
+        <span>Memories{list?.length ? ` · ${list.length}` : ""}</span>
+        <button class="sh-icon-btn" title="Add a memory" onClick={() => setAdding((a) => !a)}>
+          <Icon name="plus" size={17} />
+        </button>
+      </div>
+      {err && <div class="cv-error">{err}</div>}
+      {adding && (
+        <div class="mem-add">
+          <textarea class="rt-input" rows={2} value={text} placeholder="Something the agent should always know" onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} />
+          <button
+            class="sh-btn small primary"
+            disabled={!text.trim()}
+            onClick={() =>
+              act(async () => {
+                await api.addMemory(session.id, text);
+                setText("");
+                setAdding(false);
+              })
+            }
+          >
+            Save
+          </button>
+        </div>
+      )}
+      {list?.length === 0 && !adding && <div class="rt-hint">None yet. The agent saves what it should remember, and you can add your own.</div>}
+      {list?.map((m) =>
+        editing?.id === m.id ? (
+          <div class="mem-add">
+            <textarea class="rt-input" rows={2} value={editing.text} onInput={(e) => setEditing({ id: m.id, text: (e.target as HTMLTextAreaElement).value })} />
+            <button
+              class="sh-btn small primary"
+              onClick={() =>
+                act(async () => {
+                  await api.updateMemory(session.id, m.id, editing.text);
+                  setEditing(null);
+                })
+              }
+            >
+              Save
+            </button>
+          </div>
+        ) : (
+          <div class="mem-row">
+            <Icon name={m.source === "owner" ? "user" : "sparkle"} size={14} />
+            <span class="t">{m.text}</span>
+            <button class="sh-icon-btn" title="Edit" onClick={() => setEditing({ id: m.id, text: m.text })}>
+              <Icon name="pencil" size={13} />
+            </button>
+            <button class="sh-icon-btn" title="Forget" onClick={() => act(() => api.deleteMemory(session.id, m.id))}>
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        ),
+      )}
+    </div>
   );
 }

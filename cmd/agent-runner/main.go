@@ -126,11 +126,14 @@ func run() int {
 	var conv *convo.Session
 	if convoMode {
 		conv = &convo.Session{
-			New:        func() convo.Driver { return newDriver(*agent, autonomous, ws, log) },
+			New:        func(model string) convo.Driver { return newDriver(*agent, autonomous, model, ws, log) },
 			StateFile:  filepath.Join(ws.HomeDir(), ".agents-operator", "conversation.json"),
 			Send:       chat.SendEvents,
 			ClaimInput: chat.ClaimInput,
 			Log:        log.With("part", "conversation"),
+		}
+		if *agent == runner.AgentClaude {
+			conv.Adopt = func() (string, []convo.Event) { return convo.AdoptClaude(ws.HomeDir(), ws.WorkDir()) }
 		}
 		chat.Convo = conv
 	} else if *agent == runner.AgentClaude {
@@ -207,19 +210,15 @@ func run() int {
 }
 
 // newDriver makes the protocol driver of a conversation session, from the
-// same command line the terminal mode uses.
-//
-// Conversations run autonomously for now: in print mode Claude Code
-// denies every tool that needs a permission (there is no prompt to answer),
-// and the Codex and ACP drivers grant what they are asked. Approvals as
-// cards in the UI come later (docs/design/conversations.md).
-func newDriver(agent string, _ bool, ws *Workspace, log *slog.Logger) convo.Driver {
-	c := AgentCommand(agent, true, ws.WorkDir(), ws.Env())
+// same command line the terminal mode uses. Not autonomous: the CLI's
+// permission questions go to the owner as requests (cards in the UI).
+func newDriver(agent string, autonomous bool, model string, ws *Workspace, log *slog.Logger) convo.Driver {
+	c := AgentCommand(agent, autonomous, ws.WorkDir(), ws.Env())
 	cmd := convo.Command{Path: c.Path, Args: c.Args, Dir: c.Dir, Env: c.Env}
 	log = log.With("part", "conversation")
 	switch agent {
 	case runner.AgentCodex:
-		return &convo.Codex{Cmd: cmd, Dir: c.Dir, Log: log}
+		return &convo.Codex{Cmd: cmd, Dir: c.Dir, Autonomous: autonomous, Model: model, Log: log}
 	case runner.AgentOpenCode:
 		// `opencode acp` takes none of the TUI's flags; an agent definition
 		// is chosen as the session's mode.
@@ -231,9 +230,9 @@ func newDriver(agent string, _ bool, ws *Workspace, log *slog.Logger) convo.Driv
 			}
 		}
 		cmd.Args = []string{"acp"}
-		return &convo.ACP{Cmd: cmd, Dir: c.Dir, Mode: mode, Log: log}
+		return &convo.ACP{Cmd: cmd, Dir: c.Dir, Mode: mode, Autonomous: autonomous, Model: model, Log: log}
 	default:
-		return &convo.Claude{Cmd: cmd, Log: log}
+		return &convo.Claude{Cmd: cmd, Autonomous: autonomous, Model: model, Log: log}
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/runner/convo"
 	"github.com/dseif0x/agents-operator/internal/runner/server"
 	"github.com/dseif0x/agents-operator/internal/store"
@@ -25,11 +26,12 @@ import (
 // fakeDriver answers every input with a tool call and a streamed answer;
 // an input containing "slow" keeps the turn open until Interrupt.
 type fakeDriver struct {
-	events chan convo.Event
-	mu     sync.Mutex
-	got    []convo.Input
-	turn   string
-	n      int
+	events  chan convo.Event
+	mu      sync.Mutex
+	got     []convo.Input
+	turn    string
+	n       int
+	answers []string
 }
 
 func (f *fakeDriver) Start(context.Context, string) error {
@@ -48,6 +50,11 @@ func (f *fakeDriver) Send(in convo.Input) error {
 	f.events <- convo.Event{Type: convo.EventTurnStarted, Turn: turn, Inputs: []string{in.ID}}
 	f.events <- convo.Event{Type: convo.EventItem, Turn: turn, Item: &convo.Item{Key: turn + "-tool", Kind: convo.KindTool, Status: convo.StatusRunning, Tool: &convo.Tool{Name: "Bash", Kind: convo.ToolCommand, Title: "ls"}}}
 	f.events <- convo.Event{Type: convo.EventItem, Turn: turn, Item: &convo.Item{Key: turn + "-tool", Kind: convo.KindTool, Status: convo.StatusDone, Tool: &convo.Tool{Output: "a.txt"}}}
+	if strings.Contains(in.Text, "ask") {
+		f.events <- convo.Event{Type: convo.EventRequest, Turn: turn, Request: &convo.Request{ID: "req-" + turn, Kind: convo.RequestPermission, Title: "Run a command",
+			Tool: &convo.Tool{Name: "Bash", Kind: convo.ToolCommand, Title: "rm -rf build"}, Options: []convo.Option{{ID: "allow", Label: "Allow", Kind: "allow"}, {ID: "deny", Label: "Deny", Kind: "deny"}}}}
+		return nil
+	}
 	if strings.Contains(in.Text, "slow") {
 		f.events <- convo.Event{Type: convo.EventItem, Turn: turn, Item: &convo.Item{Key: turn + "-text", Kind: convo.KindText, Status: convo.StatusRunning, Text: "Working on ", Delta: true}}
 		return nil
@@ -70,7 +77,18 @@ func (f *fakeDriver) end(status string) {
 	}
 }
 
-func (f *fakeDriver) Interrupt() error           { f.end(convo.StatusInterrupted); return nil }
+func (f *fakeDriver) Interrupt() error { f.end(convo.StatusInterrupted); return nil }
+func (f *fakeDriver) Respond(id string, r convo.Response) error {
+	f.mu.Lock()
+	turn := f.turn
+	f.answers = append(f.answers, r.Option)
+	f.mu.Unlock()
+	f.events <- convo.Event{Type: convo.EventRequestDone, Turn: turn, Request: &convo.Request{ID: id}}
+	f.events <- convo.Event{Type: convo.EventItem, Turn: turn, Item: &convo.Item{Key: turn + "-text", Kind: convo.KindText, Status: convo.StatusDone, Text: "answer: " + r.Option}}
+	f.end(convo.StatusDone)
+	return nil
+}
+func (f *fakeDriver) SetModel(string) error      { return nil }
 func (f *fakeDriver) Events() <-chan convo.Event { return f.events }
 func (f *fakeDriver) Wait() error                { select {} }
 func (f *fakeDriver) Close()                     {}
@@ -105,7 +123,7 @@ func convFixture(t *testing.T, ctx context.Context, d convo.Driver) (*Service, *
 	}
 	t.Cleanup(proc.Close)
 	chat := &server.Chat{Proc: proc, Agent: "claude", Home: filepath.Join(root, "home"), Roots: []string{root}, Log: log}
-	conv := &convo.Session{New: func() convo.Driver { return d }, StateFile: filepath.Join(root, "state.json"), Send: chat.SendEvents, ClaimInput: chat.ClaimInput, Log: log}
+	conv := &convo.Session{New: func(string) convo.Driver { return d }, StateFile: filepath.Join(root, "state.json"), Send: chat.SendEvents, ClaimInput: chat.ClaimInput, Log: log}
 	chat.Convo = conv
 	srv := &server.Server{Proc: proc, Token: "tok", Agent: "claude", Chat: chat, Convo: conv, Log: log}
 	runnerHTTP := httptest.NewServer(srv.Handler())
@@ -235,6 +253,51 @@ func TestConversationEndToEnd(t *testing.T) {
 	// Sent messages can no longer be changed.
 	if _, err := svc.EditInput(ctx, u, sess.ID, d2.Input, "too late"); err == nil {
 		t.Fatal("a sent message was edited")
+	}
+}
+
+func TestConversationRequestsAndMemories(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := &fakeDriver{}
+	svc, u, sess, _, _ := convFixture(t, ctx, d)
+
+	// A memory reaches the agent with its next input.
+	if _, err := svc.AddMemory(ctx, u, sess.ID, "The owner prefers short answers."); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond) // the push reaches the runner
+	if _, err := svc.SendInput(ctx, u, sess.ID, "ask before deleting", nil); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the permission request", 10*time.Second, func() bool {
+		it := itemsByKey(t, svc, u, sess.ID)["request:req-t1"]
+		return it != nil && it.Status == "pending"
+	})
+	if got := d.inputs(); len(got) != 1 || !strings.Contains(got[0].Text, "[agents-operator memories]") || !strings.Contains(got[0].Text, "short answers") || !strings.HasSuffix(got[0].Text, "ask before deleting") {
+		t.Fatalf("driver got %+v", got)
+	}
+	it, err := svc.AnswerRequest(ctx, u, sess.ID, "req-t1", runner.ConvoResponse{Option: "deny"})
+	if err != nil || it.Status != "answered" {
+		t.Fatalf("answer = %+v, %v", it, err)
+	}
+	waitFor(t, "the answer", 10*time.Second, func() bool {
+		a := itemsByKey(t, svc, u, sess.ID)["t1-text"]
+		return a != nil && itemText(a) == "answer: deny"
+	})
+	if it := itemsByKey(t, svc, u, sess.ID)["request:req-t1"]; it.Status != "answered" {
+		t.Fatalf("request item after the answer = %s", it.Status)
+	}
+	if _, err := svc.AnswerRequest(ctx, u, sess.ID, "req-t1", runner.ConvoResponse{Option: "allow"}); err == nil {
+		t.Fatal("answered twice")
+	}
+	// The memory went with the first input only.
+	if _, err := svc.SendInput(ctx, u, sess.ID, "next", nil); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the second input", 10*time.Second, func() bool { return len(d.inputs()) == 2 })
+	if got := d.inputs()[1].Text; got != "next" {
+		t.Fatalf("second input = %q", got)
 	}
 }
 

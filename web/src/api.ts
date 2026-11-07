@@ -94,6 +94,8 @@ export interface ConvSummary {
   last_turn_at?: string;
   /** Why the agent CLI does not start. */
   error?: string;
+  /** Models the owner can switch to. */
+  models?: { id: string; name?: string }[];
   input_tokens?: number;
   output_tokens?: number;
   cost_usd?: number;
@@ -117,7 +119,29 @@ export interface ItemData {
   input?: string;
   files?: { id: string; name: string; content_type: string; size: number }[];
   /** Routine runs: extra.routine = { id, name, run, source, instruction, event }; extra.quiet when it had no news. */
+  request?: AgentRequest;
+  response?: { option?: string; answers?: Record<string, string>; message?: string };
   extra?: { routine?: { id: string; name: string; run: number; source: string; instruction: string; event?: string }; quiet?: boolean };
+}
+
+/** A note an agent keeps across conversations. */
+export interface AgentMemory {
+  id: string;
+  session_id: string;
+  text: string;
+  source: "agent" | "owner";
+  created_at: string;
+  updated_at: string;
+}
+
+/** Something the agent waits for: a permission or a question. */
+export interface AgentRequest {
+  id: string;
+  kind: "permission" | "question";
+  tool?: ToolInfo;
+  title?: string;
+  options?: { id: string; label: string; kind: "allow" | "allow_always" | "deny" }[];
+  questions?: { id: string; header?: string; question: string; options?: string[]; multi?: boolean }[];
 }
 
 /** One item of a conversation: a message to the agent, part of its answer, a tool call, an error. */
@@ -127,8 +151,8 @@ export interface ConvItem {
   thread: string;
   turn?: string;
   key: string;
-  kind: "user" | "text" | "thinking" | "tool" | "error" | "notice";
-  status: "queued" | "running" | "done" | "failed" | "interrupted" | "deleted";
+  kind: "user" | "text" | "thinking" | "tool" | "error" | "notice" | "request";
+  status: "queued" | "running" | "done" | "failed" | "interrupted" | "deleted" | "pending" | "answered" | "cancelled";
   data: ItemData;
   created_at: string;
   updated_at: string;
@@ -425,6 +449,13 @@ export const api = {
   editInput: (id: string, input: string, text: string) => request<ConvItem>("PATCH", `/sessions/${id}/inputs/${input}`, { text }),
   cancelInput: (id: string, input: string) => request<{ ok: boolean }>("DELETE", `/sessions/${id}/inputs/${input}`),
   interrupt: (id: string) => request<{ ok: boolean }>("POST", `/sessions/${id}/interrupt`),
+  answerRequest: (id: string, requestId: string, r: { option?: string; answers?: Record<string, string>; message?: string }) =>
+    request<ConvItem>("POST", `/sessions/${id}/requests/${encodeURIComponent(requestId)}`, r),
+  memories: (id: string) => request<{ memories: AgentMemory[] }>("GET", `/sessions/${id}/memories`),
+  addMemory: (id: string, text: string) => request<AgentMemory>("POST", `/sessions/${id}/memories`, { text }),
+  updateMemory: (id: string, mem: string, text: string) => request<AgentMemory>("PATCH", `/sessions/${id}/memories/${mem}`, { text }),
+  deleteMemory: (id: string, mem: string) => request<{ ok: boolean }>("DELETE", `/sessions/${id}/memories/${mem}`),
+  setModel: (id: string, model: string) => request<{ ok: boolean }>("POST", `/sessions/${id}/model`, { model }),
   routines: (q: { session?: string; chat?: string } = {}) =>
     request<{ routines: Routine[] }>("GET", `/routines?session=${encodeURIComponent(q.session ?? "")}&chat=${encodeURIComponent(q.chat ?? "")}`),
   createRoutine: (r: RoutineInput) => request<Routine>("POST", "/routines", r),

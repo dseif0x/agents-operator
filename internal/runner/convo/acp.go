@@ -22,7 +22,11 @@ type ACP struct {
 	Dir string
 	// Mode is the session mode to switch to (OpenCode: an agent definition).
 	Mode string
-	Log  *slog.Logger
+	// Autonomous grants permission requests; otherwise they go to the owner.
+	Autonomous bool
+	// Model is the model to switch to after start ("" = the configured one).
+	Model string
+	Log   *slog.Logger
 
 	p      *proc
 	events chan Event
@@ -42,6 +46,13 @@ type ACP struct {
 	tools     map[string]*Tool
 	streamed  map[string]string // key -> kind of text streamed this turn
 	usage     *Usage
+	reqs      map[string]acpReq
+	models    []Model
+}
+
+type acpReq struct {
+	rpcID   json.RawMessage
+	options map[string]string // our option id -> the agent's optionId
 }
 
 // Start launches the agent and creates or loads the session.
@@ -55,6 +66,7 @@ func (a *ACP) Start(ctx context.Context, ref string) error {
 	a.pending = map[int64]chan rpcResponse{}
 	a.tools = map[string]*Tool{}
 	a.streamed = map[string]string{}
+	a.reqs = map[string]acpReq{}
 	go a.read()
 
 	ictx, cancel := context.WithTimeout(ctx, 90*time.Second)
@@ -105,7 +117,11 @@ func (a *ACP) Start(ctx context.Context, ref string) error {
 	var s struct {
 		SessionID string `json:"sessionId"`
 		Models    *struct {
-			CurrentModelID string `json:"currentModelId"`
+			CurrentModelID  string `json:"currentModelId"`
+			AvailableModels []struct {
+				ModelID string `json:"modelId"`
+				Name    string `json:"name"`
+			} `json:"availableModels"`
 		} `json:"models"`
 	}
 	_ = json.Unmarshal(res, &s)
@@ -116,9 +132,51 @@ func (a *ACP) Start(ctx context.Context, ref string) error {
 	info := &Info{Ref: s.SessionID}
 	if s.Models != nil {
 		info.Model = s.Models.CurrentModelID
+		for _, m := range s.Models.AvailableModels {
+			a.models = append(a.models, Model{ID: m.ModelID, Name: m.Name})
+		}
+		info.Models = a.models
+	}
+	if a.Model != "" && a.Model != info.Model {
+		if _, err := a.call(ictx, "session/set_model", map[string]any{"sessionId": s.SessionID, "modelId": a.Model}); err == nil {
+			info.Model = a.Model
+		}
 	}
 	a.emit(Event{Type: EventInfo, Info: info})
 	return nil
+}
+
+// SetModel switches the session's model.
+func (a *ACP) SetModel(model string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	a.mu.Lock()
+	session := a.session
+	a.mu.Unlock()
+	if _, err := a.call(ctx, "session/set_model", map[string]any{"sessionId": session, "modelId": model}); err != nil {
+		return err
+	}
+	a.Model = model
+	a.emit(Event{Type: EventInfo, Info: &Info{Model: model, Models: a.models}})
+	return nil
+}
+
+// Respond answers a permission request.
+func (a *ACP) Respond(id string, r Response) error {
+	a.mu.Lock()
+	req, ok := a.reqs[id]
+	delete(a.reqs, id)
+	turn := a.turn
+	a.mu.Unlock()
+	if !ok {
+		return errors.New("no such request (answered already, or the turn ended)")
+	}
+	outcome := map[string]any{"outcome": "cancelled"}
+	if opt := req.options[r.Option]; opt != "" {
+		outcome = map[string]any{"outcome": "selected", "optionId": opt}
+	}
+	a.emit(Event{Type: EventRequestDone, Turn: turn, Request: &Request{ID: id}})
+	return a.p.send(map[string]any{"jsonrpc": "2.0", "id": req.rpcID, "result": map[string]any{"outcome": outcome}})
 }
 
 // setMode switches the session to Mode, if set.
@@ -269,6 +327,10 @@ func (a *ACP) endTurn(turn, status, errText string) {
 		open = append(open, Event{Type: EventItem, Turn: turn, Item: &Item{Key: key, Kind: kind, Status: StatusDone}})
 		delete(a.streamed, key)
 	}
+	for id := range a.reqs {
+		open = append(open, Event{Type: EventRequestDone, Turn: turn, Request: &Request{ID: id}})
+		delete(a.reqs, id)
+	}
 	a.mu.Unlock()
 	for _, ev := range open {
 		a.emit(ev)
@@ -333,30 +395,63 @@ func (a *ACP) read() {
 	}
 }
 
-// clientRequest answers the agent's requests: permissions are granted
-// (sessions run autonomously; phase 4 shows them as cards).
+// clientRequest answers the agent's requests: permissions are granted when
+// autonomous, else they go to the owner.
 func (a *ACP) clientRequest(m acpMessage) {
 	if m.Method == "session/request_permission" {
 		var p struct {
+			ToolCall struct {
+				ToolCallID string          `json:"toolCallId"`
+				Title      string          `json:"title"`
+				Kind       string          `json:"kind"`
+				RawInput   json.RawMessage `json:"rawInput"`
+			} `json:"toolCall"`
 			Options []struct {
 				OptionID string `json:"optionId"`
+				Name     string `json:"name"`
 				Kind     string `json:"kind"`
 			} `json:"options"`
 		}
 		_ = json.Unmarshal(m.Params, &p)
-		choice := ""
-		for _, kind := range []string{"allow_always", "allow_once"} {
-			for _, o := range p.Options {
-				if o.Kind == kind && choice == "" {
-					choice = o.OptionID
+		if a.Autonomous {
+			choice := ""
+			for _, kind := range []string{"allow_always", "allow_once"} {
+				for _, o := range p.Options {
+					if o.Kind == kind && choice == "" {
+						choice = o.OptionID
+					}
 				}
 			}
+			outcome := map[string]any{"outcome": "cancelled"}
+			if choice != "" {
+				outcome = map[string]any{"outcome": "selected", "optionId": choice}
+			}
+			_ = a.p.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"outcome": outcome}})
+			return
 		}
-		outcome := map[string]any{"outcome": "cancelled"}
-		if choice != "" {
-			outcome = map[string]any{"outcome": "selected", "optionId": choice}
+		t := &Tool{Name: p.ToolCall.Kind, Kind: acpToolKind(p.ToolCall.Kind), Title: p.ToolCall.Title}
+		if len(p.ToolCall.RawInput) > 0 && string(p.ToolCall.RawInput) != "null" {
+			t.Input = trim(string(p.ToolCall.RawInput))
 		}
-		_ = a.p.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"outcome": outcome}})
+		req := acpReq{rpcID: m.ID, options: map[string]string{}}
+		var opts []Option
+		for _, o := range p.Options {
+			kind := map[string]string{"allow_once": "allow", "allow_always": "allow_always", "reject_once": "deny", "reject_always": "deny"}[o.Kind]
+			if kind == "" {
+				kind = "allow"
+			}
+			if req.options[kind] != "" {
+				continue
+			}
+			req.options[kind] = o.OptionID
+			opts = append(opts, Option{ID: kind, Label: o.Name, Kind: kind})
+		}
+		id := "acp-" + string(m.ID)
+		a.mu.Lock()
+		a.reqs[id] = req
+		turn := a.turn
+		a.mu.Unlock()
+		a.emit(Event{Type: EventRequest, Turn: turn, Request: &Request{ID: id, Kind: RequestPermission, Tool: t, Title: permissionTitle(t), Options: opts}})
 		return
 	}
 	_ = a.p.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32601, "message": "not supported by agents-operator"}})

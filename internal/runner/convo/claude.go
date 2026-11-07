@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"mime"
@@ -18,7 +19,12 @@ import (
 // every message, partial message and result as JSON lines.
 type Claude struct {
 	Cmd Command // claude with the session's flags (persona, MCP config, ...)
-	Log *slog.Logger
+	// Autonomous grants every permission the CLI asks for; otherwise each
+	// is a request for the owner. Questions always go to the owner.
+	Autonomous bool
+	// Model is the model to start with ("" = the CLI's default).
+	Model string
+	Log   *slog.Logger
 
 	p      *proc
 	events chan Event
@@ -35,6 +41,20 @@ type Claude struct {
 	order   map[string][]int     // msgID -> stream indexes in order
 	context int64
 	window  int64
+	// Permission and question requests waiting for the owner.
+	pendingReqs map[string]claudeControl
+}
+
+// claudeControl is a control request from the CLI.
+type claudeControl struct {
+	RequestID string `json:"request_id"`
+	Request   struct {
+		Subtype     string          `json:"subtype"`
+		ToolName    string          `json:"tool_name"`
+		Input       json.RawMessage `json:"input"`
+		ToolUseID   string          `json:"tool_use_id"`
+		Suggestions json.RawMessage `json:"permission_suggestions"`
+	} `json:"request"`
 }
 
 type claudeBlock struct {
@@ -45,9 +65,14 @@ type claudeBlock struct {
 
 // Start launches claude; ref resumes an earlier session.
 func (c *Claude) Start(ctx context.Context, ref string) error {
-	args := append([]string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}, c.Cmd.Args...)
+	args := append([]string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+		// Permission prompts and questions come to us as control requests.
+		"--permission-prompt-tool", "stdio"}, c.Cmd.Args...)
 	if ref != "" {
 		args = append(args, "--resume", ref)
+	}
+	if c.Model != "" {
+		args = append(args, "--model", c.Model)
 	}
 	cmd := c.Cmd
 	cmd.Args = args
@@ -60,8 +85,147 @@ func (c *Claude) Start(ctx context.Context, ref string) error {
 	c.blocks = map[int]*claudeBlock{}
 	c.matched = map[string]int{}
 	c.order = map[string][]int{}
+	c.pendingReqs = map[string]claudeControl{}
 	go c.read()
 	return nil
+}
+
+// claudeModels are the aliases Claude Code understands.
+var claudeModels = []Model{{ID: "opus", Name: "Opus"}, {ID: "sonnet", Name: "Sonnet"}, {ID: "haiku", Name: "Haiku"}}
+
+// SetModel switches the model with a control request.
+func (c *Claude) SetModel(model string) error {
+	c.mu.Lock()
+	c.ctrlSeq++
+	id := fmt.Sprintf("model-%d", c.ctrlSeq)
+	c.mu.Unlock()
+	if err := c.p.send(map[string]any{"type": "control_request", "request_id": id, "request": map[string]any{"subtype": "set_model", "model": model}}); err != nil {
+		return err
+	}
+	c.Model = model
+	c.emit(Event{Type: EventInfo, Info: &Info{Model: model, Models: claudeModels}})
+	return nil
+}
+
+// Respond answers a permission or question request.
+func (c *Claude) Respond(id string, r Response) error {
+	c.mu.Lock()
+	req, ok := c.pendingReqs[id]
+	delete(c.pendingReqs, id)
+	c.mu.Unlock()
+	if !ok {
+		return errors.New("no such request (answered already, or the turn ended)")
+	}
+	var answer map[string]any
+	if req.Request.ToolName == "AskUserQuestion" {
+		answer = claudeQuestionAnswer(req.Request.Input, r)
+	} else {
+		switch r.Option {
+		case "allow":
+			answer = map[string]any{"behavior": "allow", "updatedInput": json.RawMessage(req.Request.Input)}
+		case "allow_always":
+			answer = map[string]any{"behavior": "allow", "updatedInput": json.RawMessage(req.Request.Input)}
+			if len(req.Request.Suggestions) > 0 && string(req.Request.Suggestions) != "null" {
+				answer["updatedPermissions"] = json.RawMessage(req.Request.Suggestions)
+			}
+		default:
+			msg := r.Message
+			if msg == "" {
+				msg = "The owner did not allow this."
+			}
+			answer = map[string]any{"behavior": "deny", "message": msg}
+		}
+	}
+	c.emit(Event{Type: EventRequestDone, Turn: c.currentTurn(), Request: &Request{ID: id}})
+	return c.answerControl(req.RequestID, answer)
+}
+
+func (c *Claude) answerControl(requestID string, response any) error {
+	return c.p.send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": requestID, "response": response}})
+}
+
+// claudeQuestionAnswer fills AskUserQuestion's input with the answers.
+func claudeQuestionAnswer(input json.RawMessage, r Response) map[string]any {
+	var in map[string]any
+	_ = json.Unmarshal(input, &in)
+	if in == nil {
+		in = map[string]any{}
+	}
+	answers := map[string]string{}
+	qs, _ := in["questions"].([]any)
+	for i, q := range qs {
+		qm, _ := q.(map[string]any)
+		text, _ := qm["question"].(string)
+		if a, ok := r.Answers[fmt.Sprint(i)]; ok {
+			answers[text] = a
+		}
+	}
+	if len(answers) == 0 {
+		return map[string]any{"behavior": "deny", "message": "The owner skipped the question."}
+	}
+	in["answers"] = answers
+	return map[string]any{"behavior": "allow", "updatedInput": in}
+}
+
+// control handles a control request from the CLI.
+func (c *Claude) control(line []byte) {
+	var req claudeControl
+	if json.Unmarshal(line, &req) != nil || req.Request.Subtype != "can_use_tool" {
+		if req.RequestID != "" {
+			_ = c.p.send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "error", "request_id": req.RequestID, "error": "not supported"}})
+		}
+		return
+	}
+	turn := c.currentTurn()
+	if req.Request.ToolName == "AskUserQuestion" {
+		r := &Request{ID: req.RequestID, Kind: RequestQuestion, Title: "A question for you"}
+		var in struct {
+			Questions []struct {
+				Question string `json:"question"`
+				Header   string `json:"header"`
+				Multi    bool   `json:"multiSelect"`
+				Options  []struct {
+					Label string `json:"label"`
+				} `json:"options"`
+			} `json:"questions"`
+		}
+		_ = json.Unmarshal(req.Request.Input, &in)
+		for i, q := range in.Questions {
+			qq := Question{ID: fmt.Sprint(i), Header: q.Header, Question: q.Question, Multi: q.Multi}
+			for _, o := range q.Options {
+				qq.Options = append(qq.Options, o.Label)
+			}
+			r.Questions = append(r.Questions, qq)
+		}
+		c.mu.Lock()
+		c.pendingReqs[req.RequestID] = req
+		c.mu.Unlock()
+		c.emit(Event{Type: EventRequest, Turn: turn, Request: r})
+		return
+	}
+	if c.Autonomous {
+		_ = c.answerControl(req.RequestID, map[string]any{"behavior": "allow", "updatedInput": json.RawMessage(req.Request.Input)})
+		return
+	}
+	t := claudeTool(req.Request.ToolName, req.Request.Input)
+	c.mu.Lock()
+	c.pendingReqs[req.RequestID] = req
+	c.mu.Unlock()
+	c.emit(Event{Type: EventRequest, Turn: turn, Request: &Request{ID: req.RequestID, Kind: RequestPermission, Tool: t, Title: permissionTitle(t), Options: permissionOptions}})
+}
+
+// dropRequests ends the requests still waiting (the turn ended).
+func (c *Claude) dropRequests(turn string) {
+	c.mu.Lock()
+	ids := make([]string, 0, len(c.pendingReqs))
+	for id := range c.pendingReqs {
+		ids = append(ids, id)
+	}
+	c.pendingReqs = map[string]claudeControl{}
+	c.mu.Unlock()
+	for _, id := range ids {
+		c.emit(Event{Type: EventRequestDone, Turn: turn, Request: &Request{ID: id}})
+	}
 }
 
 func (c *Claude) Events() <-chan Event { return c.events }
@@ -153,6 +317,7 @@ func (c *Claude) endTurn(status, errText string, usage *Usage) {
 	c.turn = ""
 	c.mu.Unlock()
 	if turn != "" {
+		c.dropRequests(turn)
 		c.emit(Event{Type: EventTurnEnded, Turn: turn, Status: status, Error: errText, Usage: usage})
 	}
 }
@@ -225,6 +390,10 @@ func (c *Claude) read() {
 		if err := json.Unmarshal(line, &l); err != nil {
 			continue
 		}
+		if l.Type == "control_request" {
+			c.control(line)
+			continue
+		}
 		c.handle(l)
 	}
 	err := c.p.wait()
@@ -244,7 +413,7 @@ func (c *Claude) handle(l claudeLine) {
 	case "system":
 		switch l.Subtype {
 		case "init":
-			c.emit(Event{Type: EventInfo, Info: &Info{Model: l.Model, Ref: l.SessionID}})
+			c.emit(Event{Type: EventInfo, Info: &Info{Model: l.Model, Ref: l.SessionID, Models: claudeModels}})
 		case "compact_boundary":
 			if turn := c.currentTurn(); turn != "" {
 				c.emit(Event{Type: EventItem, Turn: turn, Item: &Item{Key: "compact-" + randKey(), Kind: KindNotice, Status: StatusDone, Text: "Context compacted"}})

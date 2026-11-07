@@ -66,7 +66,7 @@ function hostLabel(host?: string) {
   return host === "*" ? "any other host" : host;
 }
 
-export function Account(props: { user: User; onLogout: () => void }) {
+export function Account(props: { user: User; onLogout: () => void; embedded?: boolean; }) {
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [profile, setProfile] = useState<Profile>({ git_name: "", git_email: "", defaults: {} });
   const [error, setError] = useState("");
@@ -160,8 +160,8 @@ export function Account(props: { user: User; onLogout: () => void }) {
     );
 
   return (
-    <div class="page">
-      <Nav user={props.user} onLogout={props.onLogout} />
+    <div class={`page ${props.embedded ? "embedded" : ""}`}>
+      {!props.embedded && <Nav user={props.user} onLogout={props.onLogout} />}
       <div style="max-width:760px">
         {error && <div class="error">{error}</div>}
         {notice && <div style="color:var(--ok);margin:10px 0;font-size:14px">{notice}</div>}

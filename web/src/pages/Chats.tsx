@@ -4,6 +4,7 @@ import { Nav } from "../components/Nav";
 import { PushPrompt } from "../components/Notifications";
 import { Link, navigate } from "../router";
 import { copyCode, mentionedHandles, renderMessage } from "../markdown";
+import { loadDraft, saveDraft } from "../drafts";
 
 // Chats: groups of the owner's agent sessions, like a group chat. The list
 // is on the left (the whole screen on a phone until a chat is open), the
@@ -573,6 +574,26 @@ function Composer(props: { chat: Chat; replyTo: ChatMessage | null; onCancelRepl
   const fileInput = useRef<HTMLInputElement>(null);
   const previews = useMemo(() => files.map((f) => (f.type.startsWith("image/") ? URL.createObjectURL(f) : "")), [files]);
   useEffect(() => () => previews.forEach((u) => u && URL.revokeObjectURL(u)), [previews]);
+  // The unsent message survives leaving the chat (drafts.ts).
+  const draftLoaded = useRef(false);
+  useEffect(() => {
+    draftLoaded.current = false;
+    let live = true;
+    loadDraft(`chat:${chat.id}`).then((d) => {
+      if (!live) return;
+      if (d.text) setText((cur) => cur || d.text);
+      if (d.files.length) setFiles((cur) => (cur.length ? cur : d.files));
+      draftLoaded.current = true;
+    });
+    return () => {
+      live = false;
+    };
+  }, [chat.id]);
+  useEffect(() => {
+    if (!draftLoaded.current) return;
+    const t = setTimeout(() => saveDraft(`chat:${chat.id}`, { text, files }), 300);
+    return () => clearTimeout(t);
+  }, [text, files, chat.id]);
 
   useEffect(() => {
     if (props.replyTo) ta.current?.focus();
