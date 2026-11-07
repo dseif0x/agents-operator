@@ -48,6 +48,9 @@ type ACP struct {
 	usage     *Usage
 	reqs      map[string]acpReq
 	models    []Model
+	// modelOption is set when the agent offers its models as a session
+	// config option (OpenCode 1.19+) instead of the older models field.
+	modelOption string
 }
 
 type acpReq struct {
@@ -95,7 +98,8 @@ func (a *ACP) Start(ctx context.Context, ref string) error {
 		a.mu.Lock()
 		a.loading = true
 		a.mu.Unlock()
-		_, err = a.call(ictx, "session/load", map[string]any{"sessionId": ref, "cwd": a.Dir, "mcpServers": []any{}})
+		var loaded json.RawMessage
+		loaded, err = a.call(ictx, "session/load", map[string]any{"sessionId": ref, "cwd": a.Dir, "mcpServers": []any{}})
 		a.mu.Lock()
 		a.loading = false
 		a.mu.Unlock()
@@ -104,7 +108,12 @@ func (a *ACP) Start(ctx context.Context, ref string) error {
 			a.session = ref
 			a.mu.Unlock()
 			a.setMode(ictx)
-			a.emit(Event{Type: EventInfo, Info: &Info{Ref: ref}})
+			info := &Info{Ref: ref, Model: a.readModels(loaded)}
+			info.Models = a.models
+			if a.Model != "" && a.Model != info.Model && a.switchModel(ictx, a.Model) == nil {
+				info.Model = a.Model
+			}
+			a.emit(Event{Type: EventInfo, Info: info})
 			return nil
 		}
 		a.Log.Warn("cannot load the ACP session; starting a new one", "session", ref, "err", err)
@@ -116,7 +125,34 @@ func (a *ACP) Start(ctx context.Context, ref string) error {
 	}
 	var s struct {
 		SessionID string `json:"sessionId"`
-		Models    *struct {
+	}
+	_ = json.Unmarshal(res, &s)
+	a.mu.Lock()
+	a.session = s.SessionID
+	a.mu.Unlock()
+	a.setMode(ictx)
+	info := &Info{Ref: s.SessionID, Model: a.readModels(res)}
+	info.Models = a.models
+	if a.Model != "" && a.Model != info.Model && a.switchModel(ictx, a.Model) == nil {
+		info.Model = a.Model
+	}
+	a.emit(Event{Type: EventInfo, Info: info})
+	return nil
+}
+
+// readModels takes the models a session/new or session/load answer
+// offers, in either form: configOptions with a model select (OpenCode
+// 1.19+) or the older models field. It returns the current model.
+func (a *ACP) readModels(res json.RawMessage) string {
+	var r struct {
+		ConfigOptions []struct {
+			ID           string          `json:"id"`
+			Category     string          `json:"category"`
+			Type         string          `json:"type"`
+			CurrentValue string          `json:"currentValue"`
+			Options      json.RawMessage `json:"options"`
+		} `json:"configOptions"`
+		Models *struct {
 			CurrentModelID  string `json:"currentModelId"`
 			AvailableModels []struct {
 				ModelID string `json:"modelId"`
@@ -124,36 +160,70 @@ func (a *ACP) Start(ctx context.Context, ref string) error {
 			} `json:"availableModels"`
 		} `json:"models"`
 	}
-	_ = json.Unmarshal(res, &s)
-	a.mu.Lock()
-	a.session = s.SessionID
-	a.mu.Unlock()
-	a.setMode(ictx)
-	info := &Info{Ref: s.SessionID}
-	if s.Models != nil {
-		info.Model = s.Models.CurrentModelID
-		for _, m := range s.Models.AvailableModels {
+	if json.Unmarshal(res, &r) != nil {
+		return ""
+	}
+	for _, o := range r.ConfigOptions {
+		if o.Category != "model" && o.ID != "model" {
+			continue
+		}
+		models := acpOptionValues(o.Options)
+		if len(models) == 0 {
+			continue
+		}
+		a.models, a.modelOption = models, o.ID
+		return o.CurrentValue
+	}
+	if r.Models != nil {
+		a.models = nil
+		for _, m := range r.Models.AvailableModels {
 			a.models = append(a.models, Model{ID: m.ModelID, Name: m.Name})
 		}
-		info.Models = a.models
+		return r.Models.CurrentModelID
 	}
-	if a.Model != "" && a.Model != info.Model {
-		if _, err := a.call(ictx, "session/set_model", map[string]any{"sessionId": s.SessionID, "modelId": a.Model}); err == nil {
-			info.Model = a.Model
+	return ""
+}
+
+// acpOptionValues reads a select option's choices: a flat list of
+// {value, name}, or groups of them ({name, options: [...]}).
+func acpOptionValues(raw json.RawMessage) []Model {
+	var items []struct {
+		Value   string          `json:"value"`
+		Name    string          `json:"name"`
+		Options json.RawMessage `json:"options"`
+	}
+	if json.Unmarshal(raw, &items) != nil {
+		return nil
+	}
+	var out []Model
+	for _, it := range items {
+		if it.Value != "" {
+			out = append(out, Model{ID: it.Value, Name: it.Name})
+		} else if len(it.Options) > 0 {
+			out = append(out, acpOptionValues(it.Options)...)
 		}
 	}
-	a.emit(Event{Type: EventInfo, Info: info})
-	return nil
+	return out
+}
+
+// switchModel changes the session's model the way the agent offers.
+func (a *ACP) switchModel(ctx context.Context, model string) error {
+	a.mu.Lock()
+	session, option := a.session, a.modelOption
+	a.mu.Unlock()
+	if option != "" {
+		_, err := a.call(ctx, "session/set_config_option", map[string]any{"sessionId": session, "configId": option, "value": model})
+		return err
+	}
+	_, err := a.call(ctx, "session/set_model", map[string]any{"sessionId": session, "modelId": model})
+	return err
 }
 
 // SetModel switches the session's model.
 func (a *ACP) SetModel(model string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	a.mu.Lock()
-	session := a.session
-	a.mu.Unlock()
-	if _, err := a.call(ctx, "session/set_model", map[string]any{"sessionId": session, "modelId": model}); err != nil {
+	if err := a.switchModel(ctx, model); err != nil {
 		return err
 	}
 	a.Model = model
