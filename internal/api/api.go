@@ -68,6 +68,8 @@ func (s *Server) Handler() http.Handler {
 	// Public auth routes.
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
+	// Webhook routines: signed with the routine's secret, no login.
+	mux.HandleFunc("POST /api/v1/hooks/{id}", s.webhook)
 
 	// Authenticated routes.
 	authed := http.NewServeMux()
@@ -95,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("PUT /api/v1/me/profile", s.putProfile)
 	s.chatRoutes(authed)
 	s.conversationRoutes(authed)
+	s.routineRoutes(authed)
 	s.pushRoutes(authed)
 	mux.Handle("/api/v1/", s.requireAuth(s.requireCSRF(authed)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) { writeErr(w, http.StatusNotFound, "no such route") })

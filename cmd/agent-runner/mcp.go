@@ -78,6 +78,25 @@ var chatToolDefs = []map[string]any{
 	},
 }
 
+// routineToolDefs report how a routine run went; they only work while the
+// agent works on a routine (agents-operator conversations).
+var routineToolDefs = []map[string]any{
+	{
+		"name":        runner.OpRoutineNoUpdate,
+		"description": "In a routine run: call this instead of answering when there is nothing new worth telling the owner. The run then shows as \"no update\" and does not notify anyone.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		"name":        runner.OpRoutineFailure,
+		"description": "In a routine run: call this when you could not do the routine's task, with a short reason. The run is marked failed.",
+		"inputSchema": map[string]any{"type": "object", "required": []string{"reason"}, "properties": map[string]any{
+			"reason": map[string]any{"type": "string", "description": "why the task could not be done, in one sentence"},
+		}},
+	},
+}
+
+func init() { chatToolDefs = append(chatToolDefs, routineToolDefs...) }
+
 const mcpInstructions = "Chats connect you with other agent sessions and with your owner. Messages for you arrive as prompts starting with [agents-operator chat]. " +
 	"Answer with chat_send when a message is addressed to you; for messages to everyone, only post when you add something. chat_info shows who is in a chat."
 

@@ -215,7 +215,11 @@ func cmpOr(a, b string) string {
 func (c *Chat) enqueueInputs(ctx context.Context, ins []runner.ConvoInput) {
 	var ps []convo.Pending
 	for _, in := range ins {
-		p := convo.Pending{Input: convo.Input{ID: in.ID, Text: in.Text}, Source: convo.SourceOwner, Claim: true}
+		source := in.Source
+		if source == "" {
+			source = convo.SourceOwner
+		}
+		p := convo.Pending{Input: convo.Input{ID: in.ID, Text: in.Text}, Source: source, Claim: true}
 		for i, f := range in.Files {
 			if path := c.fetchInputFile(ctx, in.ID, i, f); path != "" {
 				p.Files = append(p.Files, path)
@@ -601,6 +605,19 @@ func (c *Chat) Handler() http.Handler {
 // read from and written to disk here.
 func (c *Chat) local(ctx context.Context, op string, body []byte) (json.RawMessage, error) {
 	switch op {
+	case runner.OpRoutineNoUpdate, runner.OpRoutineFailure:
+		var a struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.Unmarshal(body, &a)
+		if c.Convo == nil {
+			return nil, errors.New("routines run in conversation sessions only")
+		}
+		cur, running := c.Convo.Current()
+		if !running || cur.Source != convo.SourceRoutine {
+			return nil, errors.New("this works only during a routine run")
+		}
+		return c.Call(ctx, op, map[string]string{"input": cur.ID, "reason": a.Reason})
 	case runner.OpChatsList, runner.OpChatInfo:
 		var args json.RawMessage = body
 		if len(body) == 0 {

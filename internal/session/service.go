@@ -1067,6 +1067,7 @@ func (s *Service) PollOnce(ctx context.Context) {
 	}); ok {
 		if s.leading() {
 			ul.Ensure(ctx, all)
+			s.RunDueRoutines(ctx)
 		} else {
 			ul.CloseAll()
 		}
