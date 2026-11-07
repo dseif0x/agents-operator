@@ -2069,3 +2069,252 @@
     padding: 12px;
   }
 }
+
+/* requests: permissions and questions */
+.cv-request {
+  align-self: stretch;
+  max-width: 640px;
+  border: 1px solid var(--sh-border);
+  border-radius: 14px;
+  background: var(--sh-panel);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cv-request.pending {
+  border-color: color-mix(in srgb, var(--sh-warn) 50%, transparent);
+}
+
+.cv-request-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.cv-request-head > span:first-child {
+  flex: 1;
+}
+
+.rt-badge.busy {
+  color: var(--sh-warn);
+  border-color: color-mix(in srgb, var(--sh-warn) 45%, transparent);
+}
+
+.cv-request-input {
+  margin: 0;
+  background: var(--sh-code);
+  border: 1px solid var(--sh-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.cv-request-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cv-question {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cv-q-header {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sh-muted);
+}
+
+.cv-q-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cv-q-options button {
+  border: 1px solid var(--sh-border);
+  background: var(--sh-bg);
+  color: var(--sh-fg);
+  border-radius: 10px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.cv-q-options button.on {
+  background: var(--sh-strong);
+  color: var(--sh-on-strong);
+  border-color: transparent;
+}
+
+.cv-q-options button:disabled {
+  cursor: default;
+}
+
+.cv-q-answer {
+  color: var(--sh-muted);
+}
+
+/* task list */
+.cv-task {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 12px;
+  color: var(--sh-fg);
+}
+
+.cv-task.completed span:last-child {
+  color: var(--sh-muted);
+  text-decoration: line-through;
+}
+
+.cv-box {
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  border: 1.5px solid var(--sh-faint);
+  flex: none;
+}
+
+.cv-ring {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  flex: none;
+  background: conic-gradient(var(--sh-fg) var(--p), var(--sh-border) 0);
+}
+
+.sh-chip:disabled {
+  cursor: default;
+}
+
+button.sh-chip {
+  cursor: pointer;
+}
+
+/* memories */
+.mem-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 4px 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--sh-border);
+  background: var(--sh-panel);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.mem-row .icon {
+  margin-top: 2px;
+  color: var(--sh-muted);
+}
+
+.mem-row .t {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mem-row .sh-icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.mem-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+/* the older forms (new agent, settings, account) inside the workspace */
+.sh {
+  --accent: var(--sh-link);
+  --accent-fg: #fff;
+  --radius: 10px;
+}
+
+.sh-form {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sh .page.embedded {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 22px 22px calc(30px + var(--sab));
+}
+
+.sh .page.embedded .card {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.sh .page.embedded h3 {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.sh .page.embedded section.card + section.card,
+.sh .page.embedded form.card + section.card,
+.sh .page.embedded section.card + form.card {
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid var(--sh-border);
+}
+
+.sh .page input,
+.sh .page select,
+.sh .page textarea {
+  background: var(--sh-panel);
+  border: 1px solid var(--sh-border);
+  border-radius: 10px;
+  color: var(--sh-fg);
+}
+
+.sh .page input:focus,
+.sh .page select:focus,
+.sh .page textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--sh-fg) 30%, transparent);
+}
+
+.sh .page label {
+  color: var(--sh-muted);
+}
+
+.sh .btn {
+  background: var(--sh-panel);
+  border-color: var(--sh-border);
+  border-radius: 10px;
+  color: var(--sh-fg);
+  font-family: var(--sh-font);
+}
+
+.sh .btn:hover {
+  background: var(--sh-hover);
+}
+
+.sh .btn.primary {
+  background: var(--sh-strong);
+  color: var(--sh-on-strong);
+}
+
+.sh .page .muted {
+  color: var(--sh-muted);
+}
+.cv-warn { color: var(--sh-warn); }

@@ -35,8 +35,8 @@ export function agentStatus(s: Session): AgentStatus {
   if (s.state !== "running") return null;
   if (s.conversation?.error) return "error";
   const a = s.activity?.state;
-  if (s.conversation?.turn || a === "thinking" || a === "tool") return "working";
   if (a === "needs_permission") return "attention";
+  if (s.conversation?.turn || a === "thinking" || a === "tool") return "working";
   if (a === "error") return "error";
   return null;
 }
@@ -58,9 +58,9 @@ export function agentLine(s: Session): string {
   if (s.state === "failed") return s.state_reason || "Failed";
   if (s.conversation?.error) return s.conversation.error;
   const a = s.activity;
+  if (a?.state === "needs_permission") return `Waiting for you: ${a.detail || "a permission"}`;
   if (a?.state === "tool" && a.detail) return a.detail;
   if (a?.state === "thinking" || s.conversation?.turn) return "Working…";
-  if (a?.state === "needs_permission") return a.detail || "Waiting for your permission";
   if (a?.state === "error") return a.detail || "Error";
   if (a?.message) return a.message.replace(/\s+/g, " ").trim();
   return s.tail?.trim() || (s.interface === "conversation" ? "Ready" : "Terminal");

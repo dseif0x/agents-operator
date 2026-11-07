@@ -18,6 +18,11 @@ const (
 	EventItem        = "item"
 	EventTurnEnded   = "turn_ended"
 	EventInfo        = "info"
+	// EventRequest: the agent waits for the owner (a permission or a
+	// question); Respond answers it.
+	EventRequest = "request"
+	// EventRequestDone: a request was answered or is moot.
+	EventRequestDone = "request_done"
 )
 
 // Item kinds.
@@ -59,10 +64,63 @@ type Event struct {
 	Inputs []string `json:"inputs,omitempty"`
 	Item   *Item    `json:"item,omitempty"`
 	// Status and Error end a turn (turn_ended).
-	Status string `json:"status,omitempty"`
-	Error  string `json:"error,omitempty"`
-	Usage  *Usage `json:"usage,omitempty"`
-	Info   *Info  `json:"info,omitempty"`
+	Status  string   `json:"status,omitempty"`
+	Error   string   `json:"error,omitempty"`
+	Usage   *Usage   `json:"usage,omitempty"`
+	Info    *Info    `json:"info,omitempty"`
+	Request *Request `json:"request,omitempty"`
+}
+
+// Request kinds.
+const (
+	RequestPermission = "permission" // may the agent use a tool?
+	RequestQuestion   = "question"   // the agent asks the owner something
+)
+
+// Request is something the agent waits for the owner to answer.
+type Request struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	// Tool is the tool asked for (permissions); Title a one-line summary.
+	Tool  *Tool  `json:"tool,omitempty"`
+	Title string `json:"title,omitempty"`
+	// Options are the answers to a permission: allow, always allow, deny.
+	Options []Option `json:"options,omitempty"`
+	// Questions are what the agent asks (questions).
+	Questions []Question `json:"questions,omitempty"`
+}
+
+// Option is one answer to a permission request.
+type Option struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// Kind is allow, allow_always or deny.
+	Kind string `json:"kind"`
+}
+
+// Question is one question with its choices (none: a free answer).
+type Question struct {
+	ID       string   `json:"id"`
+	Header   string   `json:"header,omitempty"`
+	Question string   `json:"question"`
+	Options  []string `json:"options,omitempty"`
+	Multi    bool     `json:"multi,omitempty"`
+}
+
+// Response answers a request: an option (permissions) or answers by
+// question id (questions). Empty means deny or skip.
+type Response struct {
+	Option  string            `json:"option,omitempty"`
+	Answers map[string]string `json:"answers,omitempty"`
+	// Message is a note for the agent with a denial.
+	Message string `json:"message,omitempty"`
+}
+
+// Standard permission options.
+var permissionOptions = []Option{
+	{ID: "allow", Label: "Allow", Kind: "allow"},
+	{ID: "allow_always", Label: "Always allow", Kind: "allow_always"},
+	{ID: "deny", Label: "Deny", Kind: "deny"},
 }
 
 // Item is one part of an answer, sent when it starts, while it grows and
@@ -115,6 +173,14 @@ type Info struct {
 	ContextWindow int64  `json:"context_window,omitempty"`
 	// Ref is the CLI's own id of the conversation, used to resume it.
 	Ref string `json:"ref,omitempty"`
+	// Models are what the owner can switch to.
+	Models []Model `json:"models,omitempty"`
+}
+
+// Model is a model the CLI can use.
+type Model struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
 }
 
 // Input is something for the agent to work on.
@@ -135,6 +201,10 @@ type Driver interface {
 	Send(in Input) error
 	// Interrupt stops the running turn; it ends with StatusInterrupted.
 	Interrupt() error
+	// Respond answers a request the driver sent.
+	Respond(id string, r Response) error
+	// SetModel switches the model for the next turns.
+	SetModel(model string) error
 	// Events delivers the conversation; it is closed when the CLI exits.
 	Events() <-chan Event
 	// Wait waits for the CLI to exit.
@@ -162,4 +232,21 @@ func randKey() string {
 	var b [6]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// permissionTitle is a permission request's summary: "Run a command".
+func permissionTitle(t *Tool) string {
+	switch t.Kind {
+	case ToolCommand:
+		return "Run a command"
+	case ToolEdit:
+		return "Change a file"
+	case ToolRead:
+		return "Read a file"
+	case ToolWeb:
+		return "Open a web page"
+	case ToolMCP:
+		return "Use " + firstNonEmpty(t.Title, t.Name)
+	}
+	return "Use " + firstNonEmpty(t.Name, "a tool")
 }

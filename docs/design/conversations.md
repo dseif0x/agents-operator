@@ -63,15 +63,37 @@ Each driver turns its protocol into the same small event model:
   is its own session id, which the runner keeps in
   `~/.agents-operator/conversation.json` to resume after a restart.
 
-Conversation sessions run autonomously (Claude
+**Permissions and questions.** A session's Autonomous setting decides
+permissions: autonomous sessions grant everything (Claude Code
 `--dangerously-skip-permissions`, Codex `approvalPolicy: never` with full
-access, ACP permission requests granted), whatever the session's
-Autonomous setting says: in print mode Claude Code would deny every tool
-that needs a permission, as there is no prompt to answer. Approvals as
-cards come in phase 4, and with them the setting counts again: the
-protocols all have the requests (Claude `can_use_tool` control requests
-with `--permission-prompt-tool stdio`, Codex `requestApproval` server
-requests, ACP `session/request_permission`).
+access, ACP requests granted); otherwise each permission becomes a
+`request` event and a card in the UI (Allow, Always allow, Deny): Claude
+Code's `can_use_tool` control requests (`--permission-prompt-tool stdio`),
+Codex's `requestApproval` server requests (sandbox `workspace-write`,
+`approvalPolicy: on-request`), ACP's `session/request_permission`.
+Questions to the owner (Claude's `AskUserQuestion`, Codex's
+`requestUserInput`) are always cards. The answer goes back over the uplink
+(`respond`); a request the turn outlives ends as `cancelled`. While one
+waits the agent's activity is `needs_permission` (the "Needs you" list and
+a push notification).
+
+**Models.** The drivers report the models the owner can pick (Claude
+Code's aliases, Codex's `model/list`, ACP's `availableModels`); the header
+switches with `set_model` (Claude's control request, Codex's per-turn
+model, ACP's `session/set_model`). The choice is kept in the runner's state
+file and used on the next start.
+
+**Memories.** Short notes per agent (`memories`), written by the agent's
+`memory_save` / `memory_forget` tools or by the owner. The hub pushes them
+over the uplink; the runner puts a `[agents-operator memories]` block in
+front of the next input whenever they changed, and again after the CLI
+restarts.
+
+**Continuing a terminal session.** On the first start without a
+conversation id, a Claude Code session resumes the newest transcript in
+`~/.claude/projects/<workspace>/` and imports its last 3000 items into the
+conversation (source `imported`), so a session switched from the terminal
+keeps its context and its history.
 
 The persona, the chat MCP server (`agent-runner mcp`), the context sizes
 and the account setup stay exactly as for terminal sessions.

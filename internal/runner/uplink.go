@@ -33,6 +33,10 @@ const (
 	// works on. {"input":"<input id>","reason":"..."}
 	OpRoutineNoUpdate = "routine_no_update"
 	OpRoutineFailure  = "routine_report_failure"
+	// Memories: {"text":"..."} / {"id":"<id prefix>"} / {}.
+	OpMemorySave   = "memory_save"
+	OpMemoryForget = "memory_forget"
+	OpMemoryList   = "memory_list"
 )
 
 // Hub pushes.
@@ -46,7 +50,27 @@ const (
 	EventInterrupt = "interrupt"
 	// EventCancel drops queued inputs (IDs) the runner holds.
 	EventCancel = "cancel"
+	// EventRespond answers a request of the agent (RequestID, Response).
+	EventRespond = "respond"
+	// EventSetModel switches the agent's model (Model).
+	EventSetModel = "set_model"
+	// EventMemories replaces the agent's memories (Memories).
+	EventMemories = "memories"
 )
+
+// MemoryNote is one of the agent's memories.
+type MemoryNote struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// ConvoResponse answers a permission (Option: allow, allow_always, deny) or
+// a question (Answers by question id); convo.Response on the wire.
+type ConvoResponse struct {
+	Option  string            `json:"option,omitempty"`
+	Answers map[string]string `json:"answers,omitempty"`
+	Message string            `json:"message,omitempty"`
+}
 
 // UplinkFrame is one JSON text frame of the uplink, in either direction.
 type UplinkFrame struct {
@@ -61,6 +85,12 @@ type UplinkFrame struct {
 	Deliveries []ChatDelivery `json:"deliveries,omitempty"`
 	Inputs     []ConvoInput   `json:"inputs,omitempty"`
 	IDs        []string       `json:"ids,omitempty"`
+	RequestID  string         `json:"request_id,omitempty"`
+	Response   *ConvoResponse `json:"response,omitempty"`
+	Model      string         `json:"model,omitempty"`
+	Memories   []MemoryNote   `json:"memories,omitempty"`
+	// HasMemories marks a memories event (an empty list is one too).
+	HasMemories bool `json:"has_memories,omitempty"`
 }
 
 // ConvoInput is a message from the owner for a conversation session.

@@ -28,13 +28,14 @@ func TestLive(t *testing.T) {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	var d Driver
+	auto := os.Getenv("CONVO_AUTO") != "0"
 	switch which {
 	case "claude":
-		d = &Claude{Cmd: Command{Path: "claude", Args: strings.Fields(os.Getenv("CONVO_ARGS")), Dir: dir, Env: env}, Log: log}
+		d = &Claude{Cmd: Command{Path: "claude", Args: strings.Fields(os.Getenv("CONVO_ARGS")), Dir: dir, Env: env}, Autonomous: auto, Log: log}
 	case "codex":
-		d = &Codex{Cmd: Command{Path: "codex", Args: strings.Fields(os.Getenv("CONVO_ARGS")), Dir: dir, Env: env}, Dir: dir, Log: log}
+		d = &Codex{Cmd: Command{Path: "codex", Args: strings.Fields(os.Getenv("CONVO_ARGS")), Dir: dir, Env: env}, Dir: dir, Autonomous: auto, Log: log}
 	case "opencode":
-		d = &ACP{Cmd: Command{Path: "opencode", Args: append(strings.Fields(os.Getenv("CONVO_ARGS")), "acp"), Dir: dir, Env: env}, Dir: dir, Log: log}
+		d = &ACP{Cmd: Command{Path: "opencode", Args: append(strings.Fields(os.Getenv("CONVO_ARGS")), "acp"), Dir: dir, Env: env}, Dir: dir, Autonomous: auto, Log: log}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -62,6 +63,21 @@ func TestLive(t *testing.T) {
 				continue
 			}
 			t.Logf("%s", b)
+			if ev.Type == EventRequest {
+				r := Response{Option: "allow"}
+				if ev.Request.Kind == RequestQuestion {
+					r = Response{Answers: map[string]string{}}
+					for _, q := range ev.Request.Questions {
+						a := "yes"
+						if len(q.Options) > 0 {
+							a = q.Options[0]
+						}
+						r.Answers[q.ID] = a
+					}
+				}
+				id := ev.Request.ID
+				go func() { _ = d.Respond(id, r) }()
+			}
 			if ev.Type == EventTurnEnded {
 				if ev.Status == StatusFailed {
 					t.Errorf("turn failed: %s", ev.Error)

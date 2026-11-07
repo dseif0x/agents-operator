@@ -5,6 +5,8 @@ import { api, subscribeChats, subscribeSessions, type Chat, type Session, type U
 import { Link, navigate, type Route } from "../router";
 import { applyTheme, currentTheme } from "../theme";
 import { Chats } from "../pages/Chats";
+import { NewSession } from "../pages/NewSession";
+import { Account } from "../pages/Account";
 import { Avatar } from "./Avatar";
 import { Icon } from "./icons";
 import { AgentChat } from "./AgentChat";
@@ -127,7 +129,7 @@ export function Shell(props: { user: User; route: Route; onLogout: () => void })
 
   const current = route.path === "/sessions/:id" ? sessions?.find((s) => s.id === route.params.id) : undefined;
   const currentChat = route.path === "/chats/:id" ? chats?.find((c) => c.id === route.params.id) : undefined;
-  const open = Boolean(path) || route.path === "/chats" || route.path === "/routines";
+  const open = Boolean(path) || ["/chats", "/routines", "/new", "/sessions/:id/edit", "/account"].includes(route.path);
   const toggle = (k: string) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
 
   let content: preact.ComponentChildren;
@@ -141,6 +143,24 @@ export function Shell(props: { user: User; route: Route; onLogout: () => void })
       );
     else if (current.interface === "conversation") content = <AgentChat key={current.id} session={current} />;
     else content = <TerminalSession session={current} />;
+  } else if (route.path === "/new") {
+    content = (
+      <div class="sh-form">
+        <NewSession user={props.user} onLogout={props.onLogout} embedded />
+      </div>
+    );
+  } else if (route.path === "/sessions/:id/edit") {
+    content = (
+      <div class="sh-form">
+        <NewSession key={route.params.id} user={props.user} onLogout={props.onLogout} embedded edit={route.params.id} />
+      </div>
+    );
+  } else if (route.path === "/account") {
+    content = (
+      <div class="sh-form">
+        <Account user={props.user} onLogout={props.onLogout} embedded />
+      </div>
+    );
   } else if (route.path === "/routines") {
     content = <RoutinesPage sessions={sessions ?? []} chats={chats ?? []} />;
   } else if (route.path === "/chats/:id" || route.path === "/chats") {

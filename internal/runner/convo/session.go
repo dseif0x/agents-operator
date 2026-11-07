@@ -3,6 +3,7 @@ package convo
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -35,13 +36,17 @@ type Pending struct {
 // when it exits), hands it queued inputs one turn at a time, and passes its
 // events on to the hub.
 type Session struct {
-	// New makes a driver for each (re)start.
-	New func() Driver
+	// New makes a driver for each (re)start, on model ("" = the default).
+	New func(model string) Driver
 	// StateFile keeps the CLI's conversation id across restarts.
 	StateFile string
 	// Send passes a batch of events to the hub; an error keeps them for the
 	// next try.
 	Send func(ctx context.Context, events []Event) error
+	// Adopt finds an earlier CLI conversation to continue (a session that
+	// was switched from the terminal) and its history; called once, before
+	// the first start without a conversation id.
+	Adopt func() (ref string, history []Event)
 	// ClaimInput asks the hub whether a queued input may be sent now.
 	ClaimInput func(ctx context.Context, id string) (bool, error)
 	Log        *slog.Logger
@@ -63,7 +68,82 @@ type Session struct {
 	startErr string
 	prefix   string // makes turn ids unique across CLI restarts
 	lastAt   time.Time
-	current  Pending // the input of the running (or last) turn
+	current  Pending           // the input of the running (or last) turn
+	requests map[string]string // waiting for the owner: id -> title
+	memories []Note
+	memVer   string // of memories
+	memSent  string // the version the agent has
+}
+
+// Note is one of the agent's memories.
+type Note struct {
+	ID   string
+	Text string
+}
+
+// SetMemories replaces the agent's memories; the next input carries them.
+func (s *Session) SetMemories(notes []Note) {
+	var b strings.Builder
+	for _, n := range notes {
+		b.WriteString(n.ID + "\x00" + n.Text + "\x00")
+	}
+	s.mu.Lock()
+	s.memories = notes
+	s.memVer = b.String()
+	s.mu.Unlock()
+}
+
+// memoryBlock is the memories to put before an input, "" when the agent
+// has them already.
+func (s *Session) memoryBlock() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.memVer == s.memSent {
+		return ""
+	}
+	s.memSent = s.memVer
+	var b strings.Builder
+	if len(s.memories) == 0 {
+		return "[agents-operator memories] You have no memories saved now (all were forgotten).\n\n"
+	}
+	b.WriteString("[agents-operator memories] What you keep across conversations (memory_save adds one, memory_forget removes one by its id):\n")
+	for _, n := range s.memories {
+		id := n.ID
+		if len(id) > 8 {
+			id = id[:8]
+		}
+		fmt.Fprintf(&b, "- (%s) %s\n", id, strings.ReplaceAll(n.Text, "\n", " "))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// Respond answers a request of the agent.
+func (s *Session) Respond(id string, r Response) error {
+	s.mu.Lock()
+	d := s.driver
+	s.mu.Unlock()
+	if d == nil {
+		return ErrNotRunning
+	}
+	return d.Respond(id, r)
+}
+
+// SetModel switches the agent's model and keeps it for restarts.
+func (s *Session) SetModel(model string) error {
+	s.mu.Lock()
+	d := s.driver
+	s.mu.Unlock()
+	if d == nil {
+		return ErrNotRunning
+	}
+	if err := d.SetModel(model); err != nil {
+		return err
+	}
+	st := s.load()
+	st.Model = model
+	s.save(st)
+	return nil
 }
 
 // Current is the input the agent works on, and whether a turn runs.
@@ -208,8 +288,22 @@ func (s *Session) Run(ctx context.Context) {
 }
 
 func (s *Session) runOnce(ctx context.Context) error {
-	d := s.New()
-	if err := d.Start(ctx, s.loadRef()); err != nil {
+	st := s.load()
+	if st.Ref == "" && !st.Adopted {
+		if s.Adopt != nil {
+			if ref, history := s.Adopt(); ref != "" {
+				s.Log.Info("continuing the earlier CLI conversation", "ref", ref, "items", len(history))
+				st.Ref = ref
+				for _, ev := range history {
+					s.push(ev)
+				}
+			}
+		}
+		st.Adopted = true
+		s.save(st)
+	}
+	d := s.New(st.Model)
+	if err := d.Start(ctx, st.Ref); err != nil {
 		s.mu.Lock()
 		s.startErr = err.Error()
 		s.setActivity(runner.ActivityError, "the agent CLI does not start: "+err.Error(), "")
@@ -218,6 +312,7 @@ func (s *Session) runOnce(ctx context.Context) error {
 		return err
 	}
 	s.mu.Lock()
+	s.memSent = "" // a new CLI process gets the memories again
 	s.prefix = randKey() + "-"
 	s.driver, s.running = d, true
 	hadErr := s.startErr != ""
@@ -308,6 +403,9 @@ func (s *Session) dispatch(ctx context.Context, d Driver) {
 			// The hub has no message for it yet: show what the agent got.
 			s.push(Event{Type: EventItem, Item: &Item{Key: "input:" + p.ID, Kind: KindUser, Status: StatusDone, Text: p.Text, Source: p.Source}})
 		}
+		if block := s.memoryBlock(); block != "" {
+			p.Text = block + p.Text
+		}
 		s.mu.Lock()
 		s.turn = "pending"
 		s.current = p
@@ -385,7 +483,7 @@ func (s *Session) handle(ev Event) {
 				delete(s.tools, it.Key)
 			}
 		}
-		if s.turn != "" {
+		if s.turn != "" && len(s.requests) == 0 {
 			if len(s.tools) > 0 {
 				detail := ""
 				for _, t := range s.tools {
@@ -398,6 +496,7 @@ func (s *Session) handle(ev Event) {
 		}
 	case EventTurnEnded:
 		s.turn = ""
+		s.requests = nil
 		switch ev.Status {
 		case StatusFailed:
 			s.setActivity(runner.ActivityError, ev.Error, "")
@@ -407,6 +506,21 @@ func (s *Session) handle(ev Event) {
 	case EventInfo:
 		if ev.Info != nil && ev.Info.Ref != "" {
 			s.saveRef(ev.Info.Ref)
+		}
+	case EventRequest:
+		if ev.Request != nil {
+			if s.requests == nil {
+				s.requests = map[string]string{}
+			}
+			s.requests[ev.Request.ID] = firstNonEmpty(ev.Request.Title, "Waiting for you")
+			s.setActivity(runner.ActivityNeedsPermission, s.requests[ev.Request.ID], "")
+		}
+	case EventRequestDone:
+		if ev.Request != nil {
+			delete(s.requests, ev.Request.ID)
+			if len(s.requests) == 0 && s.turn != "" {
+				s.setActivity(runner.ActivityThinking, "", "")
+			}
 		}
 	}
 	s.mu.Unlock()
@@ -472,30 +586,42 @@ func (s *Session) sender(ctx context.Context) {
 }
 
 type state struct {
-	Ref string `json:"ref"`
+	Ref   string `json:"ref"`
+	Model string `json:"model,omitempty"`
+	// Adopted is set once an earlier CLI conversation was looked for.
+	Adopted bool `json:"adopted,omitempty"`
 }
 
-func (s *Session) loadRef() string {
-	if s.StateFile == "" {
-		return ""
-	}
-	b, err := os.ReadFile(s.StateFile)
-	if err != nil {
-		return ""
-	}
+func (s *Session) load() state {
 	var st state
-	_ = json.Unmarshal(b, &st)
-	return st.Ref
+	if s.StateFile == "" {
+		return st
+	}
+	if b, err := os.ReadFile(s.StateFile); err == nil {
+		_ = json.Unmarshal(b, &st)
+	}
+	return st
 }
 
-func (s *Session) saveRef(ref string) {
-	if s.StateFile == "" || ref == s.loadRef() {
+func (s *Session) save(st state) {
+	if s.StateFile == "" {
 		return
 	}
-	b, _ := json.Marshal(state{Ref: ref})
+	b, _ := json.Marshal(st)
 	_ = os.MkdirAll(filepath.Dir(s.StateFile), 0o700)
 	tmp := s.StateFile + ".tmp"
 	if os.WriteFile(tmp, b, 0o600) == nil {
 		_ = os.Rename(tmp, s.StateFile)
 	}
+}
+
+func (s *Session) loadRef() string { return s.load().Ref }
+
+func (s *Session) saveRef(ref string) {
+	st := s.load()
+	if st.Ref == ref {
+		return
+	}
+	st.Ref = ref
+	s.save(st)
 }

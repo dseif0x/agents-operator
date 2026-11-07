@@ -95,7 +95,33 @@ var routineToolDefs = []map[string]any{
 	},
 }
 
-func init() { chatToolDefs = append(chatToolDefs, routineToolDefs...) }
+// memoryToolDefs keep notes across conversations (conversation sessions).
+var memoryToolDefs = []map[string]any{
+	{
+		"name":        runner.OpMemorySave,
+		"description": "Remember something across conversations: a fact about the owner, the project or how to work, in one or two sentences. You get your memories with your next messages.",
+		"inputSchema": map[string]any{"type": "object", "required": []string{"text"}, "properties": map[string]any{
+			"text": map[string]any{"type": "string", "description": "what to remember, short"},
+		}},
+	},
+	{
+		"name":        runner.OpMemoryForget,
+		"description": "Forget a memory that is wrong or no longer useful, by its id (shown in parentheses with your memories).",
+		"inputSchema": map[string]any{"type": "object", "required": []string{"id"}, "properties": map[string]any{
+			"id": map[string]any{"type": "string", "description": "the memory's id (its first characters are enough)"},
+		}},
+	},
+	{
+		"name":        runner.OpMemoryList,
+		"description": "List your memories with their ids.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+}
+
+func init() {
+	chatToolDefs = append(chatToolDefs, routineToolDefs...)
+	chatToolDefs = append(chatToolDefs, memoryToolDefs...)
+}
 
 const mcpInstructions = "Chats connect you with other agent sessions and with your owner. Messages for you arrive as prompts starting with [agents-operator chat]. " +
 	"Answer with chat_send when a message is addressed to you; for messages to everyone, only post when you add something. chat_info shows who is in a chat."

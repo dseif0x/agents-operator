@@ -166,6 +166,13 @@ func (u *Uplinks) run(ctx context.Context, sessionID string, c *uplinkConn) {
 			return err
 		}
 		if sess.Interface == store.InterfaceConversation {
+			notes := u.Svc.MemoryNotes(ctx, sess)
+			if notes == nil {
+				notes = []runner.MemoryNote{}
+			}
+			if err := write(runner.UplinkFrame{Event: runner.EventMemories, Memories: notes, HasMemories: true}); err != nil {
+				return err
+			}
 			ins, err := u.Svc.QueuedInputs(ctx, sess)
 			if err != nil {
 				return err
@@ -376,6 +383,13 @@ func (u *Uplinks) do(ctx context.Context, sessionID string, f runner.UplinkFrame
 			return nil, err
 		}
 		return map[string]string{"ok": "recorded"}, nil
+	case runner.OpMemorySave, runner.OpMemoryForget, runner.OpMemoryList:
+		var a struct {
+			Text string `json:"text"`
+			ID   string `json:"id"`
+		}
+		_ = json.Unmarshal(f.Args, &a)
+		return u.Svc.AgentMemory(ctx, sess, f.Op, a.Text, a.ID)
 	case runner.OpDelivered:
 		var a struct {
 			IDs []int64 `json:"ids"`

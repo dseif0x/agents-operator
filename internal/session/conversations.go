@@ -30,6 +30,8 @@ type ConvSummary struct {
 	LastTurnAt *time.Time `json:"last_turn_at,omitempty"`
 	// Error is why the agent CLI does not start, if it does not.
 	Error string `json:"error,omitempty"`
+	// Models are what the owner can switch to.
+	Models []convo.Model `json:"models,omitempty"`
 	// Totals over the conversation.
 	InputTokens  int64   `json:"input_tokens,omitempty"`
 	OutputTokens int64   `json:"output_tokens,omitempty"`
@@ -47,6 +49,10 @@ type ItemData struct {
 	Usage  *convo.Usage   `json:"usage,omitempty"`
 	Error  string         `json:"error,omitempty"`
 	Extra  map[string]any `json:"extra,omitempty"`
+	// Request is what the agent waits for (request items); Response the
+	// owner's answer.
+	Request  *convo.Request        `json:"request,omitempty"`
+	Response *runner.ConvoResponse `json:"response,omitempty"`
 }
 
 // InputFile describes a file of a message to the agent.
@@ -330,6 +336,9 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 				if ev.Info.ContextWindow > 0 {
 					sum.ContextWindow = ev.Info.ContextWindow
 				}
+				if len(ev.Info.Models) > 0 {
+					sum.Models = ev.Info.Models
+				}
 			}
 		case convo.EventTurnStarted:
 			// The owner's messages were marked sent when claimed; they get
@@ -376,6 +385,28 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 				d.Tool = mergeTool(d.Tool, e.Tool)
 			}
 			it.Data = mustJSON(d)
+		case convo.EventRequest:
+			if ev.Request == nil {
+				continue
+			}
+			it, d := load("request:" + ev.Request.ID)
+			it.Turn, it.Kind, it.Status = ev.Turn, "request", "pending"
+			d.Request = ev.Request
+			it.Data = mustJSON(d)
+		case convo.EventRequestDone:
+			if ev.Request == nil {
+				continue
+			}
+			key := "request:" + ev.Request.ID
+			if touched[key] == nil {
+				if _, err := conv.GetItem(ctx, sess.ID, store.MainThread, key); err != nil {
+					continue
+				}
+			}
+			it, _ := load(key)
+			if it.Status == "pending" {
+				it.Status = "cancelled" // moot: the turn ended or another client answered
+			}
 		case convo.EventTurnEnded:
 			if err := flush(); err != nil {
 				return err
@@ -437,13 +468,57 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 	if err := flush(); err != nil {
 		return err
 	}
-	if sum != before {
-		b := mustJSON(sum)
+	if b := mustJSON(sum); string(b) != string(mustJSON(before)) {
 		if err := s.Store.Sessions().SetConversation(ctx, sess.ID, b); err != nil {
 			return err
 		}
 		sess.Conversation = b
 		s.SessionChanged(ctx, sess)
+	}
+	return nil
+}
+
+// AnswerRequest answers a permission or a question of the agent.
+func (s *Service) AnswerRequest(ctx context.Context, owner *store.User, id, requestID string, r runner.ConvoResponse) (*store.ConvItem, error) {
+	sess, err := s.convSession(ctx, owner.ID, id)
+	if err != nil {
+		return nil, err
+	}
+	it, err := s.Store.Conversations().GetItem(ctx, sess.ID, store.MainThread, "request:"+requestID)
+	if err != nil {
+		return nil, err
+	}
+	if it.Status != "pending" {
+		return nil, &ValidationError{"this was answered already, or the agent stopped waiting"}
+	}
+	us, ok := s.Uplinks.(uplinkSender)
+	if !ok || !us.Send(sess.ID, runner.UplinkFrame{Event: runner.EventRespond, RequestID: requestID, Response: &r}) {
+		return nil, &ValidationError{"the agent is not connected; try again in a few seconds"}
+	}
+	var d ItemData
+	_ = json.Unmarshal(it.Data, &d)
+	d.Response = &r
+	it.Status, it.Data = "answered", mustJSON(d)
+	if it, err = s.Store.Conversations().UpsertItem(ctx, it); err != nil {
+		return nil, err
+	}
+	s.publishItem(owner.ID, sess.ID, it)
+	return it, nil
+}
+
+// SetModel switches a conversation session's model.
+func (s *Service) SetModel(ctx context.Context, owner *store.User, id, model string) error {
+	sess, err := s.convSession(ctx, owner.ID, id)
+	if err != nil {
+		return err
+	}
+	model = strings.TrimSpace(model)
+	if model == "" || len(model) > 200 {
+		return &ValidationError{"a model name is needed"}
+	}
+	us, ok := s.Uplinks.(uplinkSender)
+	if !ok || !us.Send(sess.ID, runner.UplinkFrame{Event: runner.EventSetModel, Model: model}) {
+		return &ValidationError{"the agent is not connected; start it first"}
 	}
 	return nil
 }

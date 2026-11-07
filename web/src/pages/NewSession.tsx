@@ -86,7 +86,7 @@ const keyValueLines = (m: Record<string, string | undefined> | undefined, skip: 
 // NewSession creates a session, or with `edit` set (a session id) replaces
 // the settings of a stopped one: same form, the fields that shape the
 // volume (agent, PVC size, storage class) locked.
-export function NewSession(props: { user: User; onLogout: () => void; edit?: string }) {
+export function NewSession(props: { user: User; onLogout: () => void; embedded?: boolean; edit?: string }) {
   const editing = !!props.edit;
   const [agents, setAgents] = useState<string[]>(["claude", "opencode", "codex", "shell"]);
   const [name, setName] = useState("");
@@ -290,10 +290,10 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
   };
 
   return (
-    <div class="page">
-      <Nav user={props.user} onLogout={props.onLogout} />
+    <div class={`page ${props.embedded ? "embedded" : ""}`}>
+      {!props.embedded && <Nav user={props.user} onLogout={props.onLogout} />}
       <form class="card" onSubmit={submit} style="max-width:720px">
-        <h3 style="margin:0">{editing ? "Edit session" : "New session"}</h3>
+        <h3 style="margin:0">{editing ? "Agent settings" : "New agent"}</h3>
         {editing && editable === false && <div class="banner error" style="position:static;margin-top:8px">Stop the session to change its settings; they apply to the next start.</div>}
         {editing && editable && (
           <p class="muted" style="margin:6px 0 0;font-size:13px">
@@ -581,7 +581,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         {error && <div class="error">{error}</div>}
         <div class="row" style="margin-top:16px">
           <button class="btn primary" disabled={busy || editable === false || editable === null}>
-            {busy ? (editing ? "Saving…" : "Creating…") : editing ? "Save settings" : "Create session"}
+            {busy ? (editing ? "Saving…" : "Creating…") : editing ? "Save settings" : "Create agent"}
           </button>
           <button type="button" class="btn" onClick={() => navigate(props.edit ? `/sessions/${props.edit}` : "/")}>
             Cancel
