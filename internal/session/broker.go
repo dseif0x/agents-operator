@@ -2,6 +2,8 @@ package session
 
 import (
 	"sync"
+
+	"github.com/dseif0x/agents-operator/internal/store"
 )
 
 // Event is what the SSE endpoint streams to the UI.
@@ -14,6 +16,9 @@ type Event struct {
 	Session *View        `json:"session,omitempty"`
 	Chat    *ChatView    `json:"chat,omitempty"`
 	Message *MessageView `json:"message,omitempty"`
+	// Item is a conversation item that changed (type "item"; ID is the
+	// session). Status "deleted" means it is gone.
+	Item *store.ConvItem `json:"item,omitempty"`
 }
 
 // Broker fans session events out to SSE subscribers, per owner.

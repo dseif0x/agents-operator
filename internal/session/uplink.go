@@ -14,6 +14,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/dseif0x/agents-operator/internal/runner"
+	"github.com/dseif0x/agents-operator/internal/runner/convo"
 	"github.com/dseif0x/agents-operator/internal/store"
 	"github.com/dseif0x/agents-operator/internal/term"
 )
@@ -34,6 +35,24 @@ type Uplinks struct {
 type uplinkConn struct {
 	kick   chan struct{}
 	cancel context.CancelFunc
+	out    chan runner.UplinkFrame
+}
+
+// Send pushes a frame to the session's runner; false when no uplink is
+// open.
+func (u *Uplinks) Send(sessionID string, f runner.UplinkFrame) bool {
+	u.mu.Lock()
+	c := u.conns[sessionID]
+	u.mu.Unlock()
+	if c == nil {
+		return false
+	}
+	select {
+	case c.out <- f:
+		return true
+	case <-time.After(5 * time.Second):
+		return false
+	}
 }
 
 // NewUplinks returns a manager for svc.
@@ -61,7 +80,7 @@ func (u *Uplinks) Notify(sessionID string) {
 func (u *Uplinks) Ensure(ctx context.Context, running []*store.Session) {
 	want := map[string]*store.Session{}
 	for _, s := range running {
-		if s.State == store.StateRunning && u.Svc.InChats(ctx, s.ID) {
+		if s.State == store.StateRunning && (s.Interface == store.InterfaceConversation || u.Svc.InChats(ctx, s.ID)) {
 			want[s.ID] = s
 		}
 	}
@@ -82,7 +101,7 @@ func (u *Uplinks) Ensure(ctx context.Context, running []*store.Session) {
 			continue
 		}
 		cctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-		c := &uplinkConn{kick: make(chan struct{}, 1), cancel: cancel}
+		c := &uplinkConn{kick: make(chan struct{}, 1), cancel: cancel, out: make(chan runner.UplinkFrame, 16)}
 		u.conns[id] = c
 		go u.run(cctx, id, c)
 	}
@@ -145,6 +164,17 @@ func (u *Uplinks) run(ctx context.Context, sessionID string, c *uplinkConn) {
 		sess, err := u.Svc.Store.Sessions().Get(ctx, sessionID)
 		if err != nil {
 			return err
+		}
+		if sess.Interface == store.InterfaceConversation {
+			ins, err := u.Svc.QueuedInputs(ctx, sess)
+			if err != nil {
+				return err
+			}
+			if len(ins) > 0 {
+				if err := write(runner.UplinkFrame{Event: runner.EventInputs, Inputs: ins}); err != nil {
+					return err
+				}
+			}
 		}
 		ds, err := u.Svc.QueuedDeliveries(ctx, sess)
 		if err != nil || len(ds) == 0 {
@@ -212,6 +242,11 @@ func (u *Uplinks) run(ctx context.Context, sessionID string, c *uplinkConn) {
 		case <-c.kick:
 			if err := push(); err != nil {
 				u.Log.Warn("uplink push failed", "session", sessionID, "err", err)
+			}
+		case f := <-c.out:
+			if err := write(f); err != nil {
+				u.Log.Warn("uplink write failed", "session", sessionID, "err", err)
+				return
 			}
 		}
 	}
@@ -300,6 +335,35 @@ func (u *Uplinks) do(ctx context.Context, sessionID string, f runner.UplinkFrame
 			return nil, err
 		}
 		return runner.UplinkFile{Name: att.Name, ContentType: att.ContentType, Data: data}, nil
+	case runner.OpEvents:
+		var a struct {
+			Events []convo.Event `json:"events"`
+		}
+		if err := json.Unmarshal(f.Args, &a); err != nil {
+			return nil, &ValidationError{"bad arguments"}
+		}
+		return map[string]bool{"ok": true}, u.Svc.ApplyEvents(ctx, sess, a.Events)
+	case runner.OpInputClaim:
+		var a struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(f.Args, &a); err != nil {
+			return nil, &ValidationError{"bad arguments"}
+		}
+		ok, err := u.Svc.ClaimInput(ctx, sess, a.ID)
+		return map[string]bool{"ok": ok}, err
+	case runner.OpInputFile:
+		var a struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(f.Args, &a); err != nil {
+			return nil, &ValidationError{"bad arguments"}
+		}
+		file, err := u.Svc.InputFile(ctx, sess, a.ID)
+		if err != nil {
+			return nil, err
+		}
+		return runner.UplinkFile{Name: file.Name, ContentType: file.ContentType, Data: file.Data}, nil
 	case runner.OpDelivered:
 		var a struct {
 			IDs []int64 `json:"ids"`

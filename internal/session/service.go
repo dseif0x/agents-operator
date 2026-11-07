@@ -6,6 +6,7 @@ package session
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -134,6 +135,10 @@ type CreateRequest struct {
 	// billion-context instead of OpenCode's own compaction. Default false;
 	// on an edit, absent keeps the current value.
 	ContextCompression *bool `json:"context_compression"`
+	// Interface is "conversation" (the agent CLI is driven through its
+	// protocol and shown as a chat) or "terminal". Default: conversation
+	// for Claude Code, Codex and OpenCode; on an edit, absent keeps it.
+	Interface *string `json:"interface"`
 	// Egress lists local network destinations the agent may reach beyond
 	// the chart's NetworkPolicy: `192.168.1.10`, `192.168.1.0/24`,
 	// `192.168.1.10:8080`. Each must lie in Defaults.Egress's allowed ranges.
@@ -302,7 +307,7 @@ var envKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // reservedEnv cannot be overridden per session.
 var reservedEnv = map[string]bool{
-	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvAgentGitCredentials: true, runner.EnvContextCompression: true, runner.EnvRepos: true,
+	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvAgentGitCredentials: true, runner.EnvContextCompression: true, runner.EnvInterface: true, runner.EnvRepos: true,
 	runner.EnvWorkspace: true, runner.EnvListen: true, "HOME": true, "PATH": true,
 	runner.EnvGitSSH: true, runner.EnvGitHTTPS: true, runner.EnvGitHubToken: true, runner.EnvAIAccounts: true,
 	runner.EnvGitUserName: true, runner.EnvGitUserEmail: true, runner.EnvPrivateFile: true,
@@ -563,12 +568,21 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 	}
 	noGit := req.GitCredentials != nil && !*req.GitCredentials
 	compression := req.ContextCompression != nil && *req.ContextCompression
+	iface := store.InterfaceTerminal
+	if runner.HasConversation(req.Agent) {
+		iface = store.InterfaceConversation
+	}
+	if req.Interface != nil {
+		if iface, err = checkInterface(req.Agent, *req.Interface); err != nil {
+			return nil, err
+		}
+	}
 	sess := &store.Session{
 		OwnerID: owner.ID, Name: req.Name, Agent: req.Agent, Repos: repos,
 		ImageTag: req.ImageTag, PVCSize: req.PVCSize, StorageClass: req.StorageClass, RuntimeClass: req.RuntimeClass, Resources: req.Resources,
 		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
 		NoGitCredentials: noGit, Egress: req.Egress, Persona: req.Persona, AgentDefinition: req.AgentDefinition, K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
-		AIAccount: aiAccount, ContextCompression: compression, State: store.StateCreating,
+		AIAccount: aiAccount, ContextCompression: compression, Interface: iface, State: store.StateCreating,
 	}
 	// A handle another request took in the meantime is a conflict: pick again.
 	for attempt := 0; ; attempt++ {
@@ -631,6 +645,11 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 	if req.ContextCompression != nil {
 		next.ContextCompression = *req.ContextCompression
 	}
+	if req.Interface != nil {
+		if next.Interface, err = checkInterface(sess.Agent, *req.Interface); err != nil {
+			return nil, err
+		}
+	}
 	if req.AIAccount != nil {
 		if err := s.checkAIAccount(ctx, owner.ID, sess.Agent, *req.AIAccount); err != nil {
 			return nil, err
@@ -645,6 +664,20 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 	s.recordRepoUsage(ctx, owner.ID, sess.Repos, repos)
 	s.SessionChanged(ctx, updated)
 	return updated, nil
+}
+
+// checkInterface validates a requested interface for an agent.
+func checkInterface(agent, iface string) (string, error) {
+	switch iface {
+	case store.InterfaceTerminal:
+		return iface, nil
+	case store.InterfaceConversation:
+		if !runner.HasConversation(agent) {
+			return "", &ValidationError{"only Claude Code, Codex and OpenCode sessions can run as a conversation"}
+		}
+		return iface, nil
+	}
+	return "", &ValidationError{`interface must be "conversation" or "terminal"`}
 }
 
 // checkAIAccount accepts "" or an account of the owner's that agent signs
@@ -1117,9 +1150,13 @@ type View struct {
 	Autonomous     bool                `json:"autonomous"`
 	GitCredentials bool                `json:"git_credentials"`
 	// ContextCompression: billion-context instead of OpenCode's compaction.
-	ContextCompression bool     `json:"context_compression"`
-	Egress             []string `json:"egress"`
-	Persona            string   `json:"persona"`
+	ContextCompression bool   `json:"context_compression"`
+	Interface          string `json:"interface"`
+	// Conversation is the hub's summary of a conversation session: model,
+	// context use, the running turn, queued messages.
+	Conversation json.RawMessage `json:"conversation,omitempty"`
+	Egress       []string        `json:"egress"`
+	Persona      string          `json:"persona"`
 	// Handle is the session's immutable chat name; mention it as @handle.
 	Handle          string   `json:"handle"`
 	AgentDefinition string   `json:"agent_definition"`
@@ -1157,7 +1194,7 @@ func (s *Service) View(sess *store.Session) View {
 		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, RuntimeClass: sess.RuntimeClass, Resources: sess.Resources,
 		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
 		GitCredentials: !sess.NoGitCredentials, ContextCompression: sess.ContextCompression, Egress: sess.Egress, Persona: sess.Persona, Handle: sess.Handle, AgentDefinition: sess.AgentDefinition, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
-		AIAccount: sess.AIAccount, State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
+		AIAccount: sess.AIAccount, Interface: cmp.Or(sess.Interface, store.InterfaceTerminal), Conversation: sess.Conversation, State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
 	}
 	if v.K8sAccess == store.K8sAccessSandbox && s.Defaults.K8sSandbox {
