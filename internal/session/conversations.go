@@ -332,9 +332,20 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 				}
 			}
 		case convo.EventTurnStarted:
-			// The owner's messages were marked sent when claimed.
+			// The owner's messages were marked sent when claimed; they get
+			// the turn they started (a quiet routine run folds by it).
 			sum.Turn, sum.TurnSince = ev.Turn, &now
 			s.routineTurnStarted(ctx, ev.Turn, ev.Inputs)
+			for _, id := range ev.Inputs {
+				key := "input:" + id
+				if touched[key] == nil {
+					if _, err := conv.GetItem(ctx, sess.ID, store.MainThread, key); err != nil {
+						continue // a chat message: its item comes from the runner
+					}
+				}
+				it, _ := load(key)
+				it.Turn = ev.Turn
+			}
 		case convo.EventItem:
 			if ev.Item == nil || ev.Item.Key == "" {
 				continue
