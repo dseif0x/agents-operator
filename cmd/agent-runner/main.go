@@ -208,8 +208,13 @@ func run() int {
 
 // newDriver makes the protocol driver of a conversation session, from the
 // same command line the terminal mode uses.
-func newDriver(agent string, autonomous bool, ws *Workspace, log *slog.Logger) convo.Driver {
-	c := AgentCommand(agent, autonomous, ws.WorkDir(), ws.Env())
+//
+// Conversations run autonomously for now: in print mode Claude Code
+// denies every tool that needs a permission (there is no prompt to answer),
+// and the Codex and ACP drivers grant what they are asked. Approvals as
+// cards in the UI come later (docs/design/conversations.md).
+func newDriver(agent string, _ bool, ws *Workspace, log *slog.Logger) convo.Driver {
+	c := AgentCommand(agent, true, ws.WorkDir(), ws.Env())
 	cmd := convo.Command{Path: c.Path, Args: c.Args, Dir: c.Dir, Env: c.Env}
 	log = log.With("part", "conversation")
 	switch agent {

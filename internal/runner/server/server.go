@@ -117,6 +117,9 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 		if a.State == runner.ActivityTool {
 			st.Tail = a.Detail
 		}
+		if t := s.Convo.LastActive(); !t.IsZero() && (st.LastOutputAt == nil || t.After(*st.LastOutputAt)) {
+			st.LastOutputAt = &t
+		}
 	} else if s.Hooks != nil && st.Running {
 		if a := s.Hooks.Current(); a != nil {
 			st.Activity = a

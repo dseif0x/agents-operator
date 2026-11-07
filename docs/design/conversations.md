@@ -63,11 +63,15 @@ Each driver turns its protocol into the same small event model:
   is its own session id, which the runner keeps in
   `~/.agents-operator/conversation.json` to resume after a restart.
 
-Sessions run autonomously as before (Claude `--dangerously-skip-permissions`,
-Codex `approval_policy="never"` with full access, OpenCode `--auto`
-semantics). Approvals as cards come in phase 4: the protocols all have the
-requests (Claude `can_use_tool` control requests, Codex `requestApproval`
-server requests, ACP `session/request_permission`).
+Conversation sessions run autonomously (Claude
+`--dangerously-skip-permissions`, Codex `approvalPolicy: never` with full
+access, ACP permission requests granted), whatever the session's
+Autonomous setting says: in print mode Claude Code would deny every tool
+that needs a permission, as there is no prompt to answer. Approvals as
+cards come in phase 4, and with them the setting counts again: the
+protocols all have the requests (Claude `can_use_tool` control requests
+with `--permission-prompt-tool stdio`, Codex `requestApproval` server
+requests, ACP `session/request_permission`).
 
 The persona, the chat MCP server (`agent-runner mcp`), the context sizes
 and the account setup stay exactly as for terminal sessions.

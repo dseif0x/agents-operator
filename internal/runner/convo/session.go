@@ -61,6 +61,18 @@ type Session struct {
 	flush    chan struct{}
 	startErr string
 	prefix   string // makes turn ids unique across CLI restarts
+	lastAt   time.Time
+}
+
+// LastActive is when the conversation last did something: now while a
+// turn runs (so idle stops never cut one off), else the last event.
+func (s *Session) LastActive() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turn != "" {
+		return time.Now()
+	}
+	return s.lastAt
 }
 
 func (s *Session) init() {
@@ -96,6 +108,7 @@ func (s *Session) Enqueue(ps ...Pending) {
 	}
 	s.mu.Unlock()
 	if added {
+		s.Log.Debug("inputs queued", "count", len(ps))
 		s.kick(s.wake)
 	}
 }
@@ -197,10 +210,22 @@ func (s *Session) runOnce(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	s.prefix = randKey() + "-"
-	s.driver, s.running, s.startErr = d, true, ""
+	s.driver, s.running = d, true
+	hadErr := s.startErr != ""
 	s.setActivity(runner.ActivityWaitingInput, "", s.lastText)
 	s.mu.Unlock()
-	s.push(Event{Type: EventInfo, Info: &Info{}}) // clears an earlier start error
+	// An earlier start error is cleared once the CLI stays up a while, so a
+	// CLI that dies right away keeps showing why.
+	upTimer := time.AfterFunc(10*time.Second, func() {
+		s.mu.Lock()
+		s.startErr = ""
+		s.mu.Unlock()
+		if hadErr {
+			s.push(Event{Type: EventInfo, Info: &Info{}})
+		}
+	})
+	defer upTimer.Stop()
+	started := time.Now()
 
 	done := make(chan struct{})
 	go func() {
@@ -220,7 +245,19 @@ func (s *Session) runOnce(ctx context.Context) error {
 			s.mu.Lock()
 			s.driver, s.running, s.turn = nil, false, ""
 			s.setActivity(runner.ActivityExited, "", "")
+			if time.Since(started) < 10*time.Second {
+				msg := "the agent CLI stopped right after starting"
+				if err != nil {
+					msg += ": " + err.Error()
+				}
+				s.startErr = msg
+				s.setActivity(runner.ActivityError, msg, "")
+			}
+			startErr := s.startErr
 			s.mu.Unlock()
+			if startErr != "" {
+				s.push(Event{Type: EventInfo, Info: &Info{}, Error: startErr})
+			}
 			return err
 		case <-s.wake:
 			s.dispatch(ctx, d)
@@ -246,6 +283,7 @@ func (s *Session) dispatch(ctx context.Context, d Driver) {
 			ok, err := s.ClaimInput(cctx, p.ID)
 			cancel()
 			if err != nil {
+				s.Log.Debug("cannot claim an input", "id", p.ID, "err", err)
 				// No answer from the hub: try again later.
 				s.mu.Lock()
 				s.queue = append([]Pending{p}, s.queue...)
@@ -253,6 +291,7 @@ func (s *Session) dispatch(ctx context.Context, d Driver) {
 				return
 			}
 			if !ok {
+				s.Log.Debug("input no longer queued in the hub", "id", p.ID)
 				continue // edited or cancelled meanwhile
 			}
 		}
@@ -281,6 +320,7 @@ func (s *Session) dispatch(ctx context.Context, d Driver) {
 // handle keeps track of the turn and forwards the event.
 func (s *Session) handle(ev Event) {
 	s.mu.Lock()
+	s.lastAt = time.Now()
 	if ev.Turn != "" {
 		ev.Turn = s.prefix + ev.Turn
 	}

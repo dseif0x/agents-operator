@@ -103,6 +103,15 @@ The owner groups sessions into chats (`docs/design/agent-chats.md`). Each sessio
 - **Files** are stored in Postgres (`chat_attachments`, up to 5 per message, 10 MiB each, 2 GiB per owner) with their sniffed type and a cleaned name. Images (PNG, JPEG, GIF, WebP) are shown inline; every other file is only ever served as a download (`application/octet-stream`, `Content-Disposition: attachment`), so an uploaded page or script is never rendered from the hub's origin. All are served with `nosniff` and a sandboxing CSP. Agents receive them as files under `~/chats/` and send them as paths in the workspace.
 - **UI** (`web/src/pages/Chats.tsx`): chat list, Markdown messages rendered with marked and sanitized with DOMPurify (no raw HTML, http(s)/mailto/in-page links only, no Markdown images), mention chips with session names, replies, image upload by paste/drop/picker, `@` autocomplete over names and handles, and an info panel. Live updates come over the session SSE stream (`chat`, `chat_message` events).
 
+## Conversations
+
+New Claude Code, Codex and OpenCode sessions run as conversations (`sessions.interface`, `docs/design/conversations.md`): the runner drives the CLI through its own protocol (`internal/runner/convo`) and the hub keeps the conversation (`internal/session/conversations.go`).
+
+- **Items** (`conversation_items`): one row per message to the agent, piece of an answer, thinking, tool call, error or notice, keyed by the driver's id and updated in place as events arrive (text deltas are merged per batch). A turn's items still running when it ends are closed with it; a failed turn adds an error item, a stopped one a "Stopped" notice. `sessions.conversation` holds the summary: model, context use, the running turn, token totals, a start error.
+- **Queue** (`conversation_inputs`, `conversation_files`): the owner's messages wait as `queued` items the UI shows above the composer, editable and cancellable until the runner claims them (`input_claim`, an atomic `queued → sent`).
+- **API**: `GET /sessions/{id}/items`, `POST /sessions/{id}/inputs` (JSON or multipart with files), `PATCH`/`DELETE /sessions/{id}/inputs/{input}`, `POST /sessions/{id}/interrupt`, `GET /sessions/{id}/files/{file}`. Item changes go out on the SSE stream as `item` events.
+- Conversations run autonomously until approvals exist in the UI; the terminal (a login shell) stays available for CLI logins.
+
 ## Notifications and PWA
 
 - **PWA**: the UI ships a web app manifest and icons, so it can be added to a phone's home screen and runs standalone. The service worker (`web/public/sw.js`) caches nothing (the app is a live connection) and only handles push notifications. The last page is kept in `localStorage`: opening the app at `/` (a new tab, the home-screen icon, after logging in) goes back to it.
@@ -111,6 +120,8 @@ The owner groups sessions into chats (`docs/design/agent-chats.md`). Each sessio
 - **Live chat updates**: the chat page applies every chat event (several arriving together are all kept), follows its members' activity from the session events, and catches up on missed messages after the event stream reconnects, when the tab comes back, and every 20 s while open.
 
 ## Frontend
+
+The workspace (`web/src/shell`) is laid out like OpenBot: an icon rail, a sidebar with Needs you / Agents / Chats and search, tabs of open conversations, the agent's conversation (messages, steps folded per turn, streaming text, queue, Stop, context ring, details panel) and a phone layout that shows the list or the conversation. The terminal page (`/sessions/{id}/terminal`) and the forms stay full screen.
 
 Preact + TypeScript + Vite, xterm.js 6 with fit, WebGL (falls back to DOM), web-links, clipboard and unicode11 addons. The clipboard addon implements OSC 52, which is how Claude Code and other TUIs copy the text selected inside them; xterm's own selection (shift+drag while an app has mouse reporting on) copies with the browser's usual shortcut. Phones get a key bar and a selectable text sheet instead. xterm 6 has no touch scrolling of its own (its viewport no longer scrolls natively, unlike xterm 5), so a drag over the terminal is turned into mouse-wheel events, one per row, and kept from the page. Going through the wheel path matters: an app with mouse reporting on, which Claude Code is, receives them as wheel reports and scrolls its own view, exactly as with a mouse, instead of xterm scrolling its buffer past the TUI into stale frames. Taps are left to xterm, whose mousedown handling focuses the textarea. When the on-screen keyboard opens, the page takes the visual viewport's height, so the terminal shrinks, the PTY is resized and the TUI lays itself out for the visible area. No state library: the URL is the state, the list page follows `GET /api/v1/sessions/events` (SSE). Built into `internal/ui/dist` and embedded with `go build -tags ui`; a build without the tag compiles a stub so backend tests never need Node.
 

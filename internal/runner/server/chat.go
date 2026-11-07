@@ -106,6 +106,17 @@ func (c *Chat) ServeUplink(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case f.Event == runner.EventDeliver:
 			c.enqueue(f.Deliveries)
+		case f.Event == runner.EventInputs && c.Convo != nil:
+			// Fetching files goes over this connection: not on its reader.
+			go c.enqueueInputs(ctx, f.Inputs)
+		case f.Event == runner.EventInterrupt && c.Convo != nil:
+			go func() {
+				if err := c.Convo.Interrupt(); err != nil {
+					c.Log.Warn("cannot interrupt the agent", "err", err)
+				}
+			}()
+		case f.Event == runner.EventCancel && c.Convo != nil:
+			c.Convo.Cancel(f.IDs...)
 		case f.ID != 0:
 			c.mu.Lock()
 			ch := c.pending[f.ID]

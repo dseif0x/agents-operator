@@ -58,6 +58,10 @@ export interface Session {
   k8s_namespaces: string[];
   /** Claude Code and Codex: the account the session signs in with; "" = the owner's default. */
   ai_account: string;
+  /** "conversation": the agent is driven through its protocol and shown as a chat; "terminal": a terminal. */
+  interface: "conversation" | "terminal";
+  /** Conversation sessions: model, context use and the running turn. */
+  conversation?: ConvSummary;
   /** Sandbox mode: the host namespace of the session's vcluster. */
   sandbox_namespace?: string;
   /** Sandbox mode: the DNS name the sandbox's Ingress hosts live under (absent without a sandbox domain). */
@@ -77,6 +81,55 @@ export interface Session {
   clients: number;
   runner_error?: string;
   pod_name: string;
+}
+
+export interface ConvSummary {
+  model?: string;
+  ref?: string;
+  context?: number;
+  context_window?: number;
+  /** The running turn; absent when the agent is idle. */
+  turn?: string;
+  turn_since?: string;
+  last_turn_at?: string;
+  /** Why the agent CLI does not start. */
+  error?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
+}
+
+export interface ToolInfo {
+  name: string;
+  kind: "command" | "edit" | "read" | "search" | "web" | "task" | "mcp" | "other";
+  title?: string;
+  input?: string;
+  output?: string;
+  error?: boolean;
+}
+
+export interface ItemData {
+  text?: string;
+  tool?: ToolInfo;
+  parent?: string;
+  source?: string;
+  /** The input id of a message to the agent. */
+  input?: string;
+  files?: { id: string; name: string; content_type: string; size: number }[];
+}
+
+/** One item of a conversation: a message to the agent, part of its answer, a tool call, an error. */
+export interface ConvItem {
+  id: number;
+  session_id: string;
+  thread: string;
+  turn?: string;
+  key: string;
+  kind: "user" | "text" | "thinking" | "tool" | "error" | "notice";
+  status: "queued" | "running" | "done" | "failed" | "interrupted" | "deleted";
+  data: ItemData;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Activity {
@@ -181,6 +234,7 @@ export interface CreateSessionRequest {
   autonomous?: boolean;
   git_credentials?: boolean;
   context_compression?: boolean;
+  interface?: "conversation" | "terminal";
   egress?: string[];
   persona?: string;
   agent_definition?: string;
@@ -284,6 +338,26 @@ export const api = {
     if (opts.limit) q.set("limit", String(opts.limit));
     return request<{ messages: ChatMessage[] }>("GET", `/chats/${id}/messages?${q}`);
   },
+  items: (id: string, before = 0, limit = 200) => request<{ items: ConvItem[] }>("GET", `/sessions/${id}/items?before=${before}&limit=${limit}`),
+  /** A message to a conversation session's agent; with files it goes as multipart. */
+  sendInput: async (id: string, text: string, files: File[] = []): Promise<ConvItem> => {
+    if (!files.length) return request<ConvItem>("POST", `/sessions/${id}/inputs`, { text });
+    const form = new FormData();
+    form.set("text", text);
+    for (const f of files) form.append("files", f, f.name || "file");
+    const res = await fetch(`/api/v1/sessions/${id}/inputs`, {
+      method: "POST",
+      headers: csrf ? { "X-CSRF-Token": csrf, Accept: "application/json" } : { Accept: "application/json" },
+      credentials: "same-origin",
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, data.error || res.statusText);
+    return data as ConvItem;
+  },
+  editInput: (id: string, input: string, text: string) => request<ConvItem>("PATCH", `/sessions/${id}/inputs/${input}`, { text }),
+  cancelInput: (id: string, input: string) => request<{ ok: boolean }>("DELETE", `/sessions/${id}/inputs/${input}`),
+  interrupt: (id: string) => request<{ ok: boolean }>("POST", `/sessions/${id}/interrupt`),
   markChatRead: (id: string, lastId: number) => request<{ ok: boolean }>("POST", `/chats/${id}/read`, { last_id: lastId }),
   /** Post as the owner; with files it goes as multipart. */
   postChatMessage: async (id: string, text: string, replyTo: number, images: File[]): Promise<ChatMessage> => {
@@ -351,89 +425,106 @@ export interface Chat {
   updated_at: string;
 }
 
-/** Chat events from the shared event stream: a chat changed (null: deleted) or a message arrived or changed. */
-export function subscribeChats(onChat: (id: string, chat: Chat | null) => void, onMessage: (msg: ChatMessage) => void, onOpen?: () => void): () => void {
-  let es: EventSource | null = null;
-  let stopped = false;
-  let retry = 1000;
-  const connect = () => {
-    if (stopped) return;
-    es = new EventSource("/api/v1/sessions/events");
-    es.onopen = () => {
-      retry = 1000;
-      onOpen?.();
-    };
-    es.addEventListener("chat", (ev: MessageEvent) => {
-      try {
-        const d = JSON.parse(ev.data) as { id: string; chat?: Chat };
-        onChat(d.id, d.chat ?? null);
-      } catch {
-        /* ignore malformed frames */
-      }
-    });
-    es.addEventListener("chat_message", (ev: MessageEvent) => {
-      try {
-        const d = JSON.parse(ev.data) as { message?: ChatMessage };
-        if (d.message) onMessage(d.message);
-      } catch {
-        /* ignore malformed frames */
-      }
-    });
-    es.onerror = () => {
-      es?.close();
-      es = null;
-      if (!stopped) {
-        setTimeout(connect, retry);
-        retry = Math.min(retry * 2, 30000);
-      }
-    };
+// ---- the event stream ----
+// One EventSource for the whole app; every subscriber listens on it.
+
+type Listener = (data: unknown) => void;
+const listeners = new Map<string, Set<Listener>>();
+const openListeners = new Set<() => void>();
+let source: EventSource | null = null;
+let retry = 1000;
+let subscribers = 0;
+
+function connect() {
+  if (source || subscribers === 0) return;
+  const es = new EventSource("/api/v1/sessions/events");
+  source = es;
+  es.onopen = () => {
+    retry = 1000;
+    openListeners.forEach((fn) => fn());
   };
-  connect();
-  return () => {
-    stopped = true;
-    es?.close();
+  for (const type of ["session", "deleted", "chat", "chat_message", "item"]) {
+    es.addEventListener(type, (ev: MessageEvent) => {
+      let data: unknown;
+      try {
+        data = JSON.parse(ev.data);
+      } catch {
+        return; // ignore malformed frames
+      }
+      listeners.get(type)?.forEach((fn) => fn(data));
+    });
+  }
+  es.onerror = () => {
+    es.close();
+    if (source === es) source = null;
+    setTimeout(connect, retry);
+    retry = Math.min(retry * 2, 30000);
   };
 }
 
-/** Subscribe to session state changes over SSE. Returns a stop function. */
-export function subscribeSessions(
-  onEvent: (type: "session" | "deleted", id: string, session?: Session) => void,
-  onOpen?: () => void,
-): () => void {
-  let es: EventSource | null = null;
-  let stopped = false;
-  let retry = 1000;
-  const connect = () => {
-    if (stopped) return;
-    es = new EventSource("/api/v1/sessions/events");
-    es.onopen = () => {
-      retry = 1000;
-      onOpen?.();
-    };
-    const handler = (type: "session" | "deleted") => (ev: MessageEvent) => {
-      try {
-        const data = JSON.parse(ev.data) as { id: string; session?: Session };
-        onEvent(type, data.id, data.session);
-      } catch {
-        /* ignore malformed frames */
-      }
-    };
-    es.addEventListener("session", handler("session"));
-    es.addEventListener("deleted", handler("deleted"));
-    es.onerror = () => {
-      es?.close();
-      es = null;
-      if (!stopped) {
-        setTimeout(connect, retry);
-        retry = Math.min(retry * 2, 30000);
-      }
-    };
-  };
+/** Listen to events of the given types; onOpen runs on every (re)connect. Returns a stop function. */
+export function onEvents(handlers: Record<string, Listener>, onOpen?: () => void): () => void {
+  for (const [type, fn] of Object.entries(handlers)) {
+    if (!listeners.has(type)) listeners.set(type, new Set());
+    listeners.get(type)!.add(fn);
+  }
+  if (onOpen) openListeners.add(onOpen);
+  subscribers++;
   connect();
+  if (source && source.readyState === EventSource.OPEN) onOpen?.();
   return () => {
-    stopped = true;
-    es?.close();
+    for (const [type, fn] of Object.entries(handlers)) listeners.get(type)?.delete(fn);
+    if (onOpen) openListeners.delete(onOpen);
+    subscribers--;
+    if (subscribers === 0) {
+      source?.close();
+      source = null;
+    }
   };
+}
+
+/** Chat events from the shared event stream: a chat changed (null: deleted) or a message arrived or changed. */
+export function subscribeChats(onChat: (id: string, chat: Chat | null) => void, onMessage: (msg: ChatMessage) => void, onOpen?: () => void): () => void {
+  return onEvents(
+    {
+      chat: (d) => {
+        const v = d as { id: string; chat?: Chat };
+        onChat(v.id, v.chat ?? null);
+      },
+      chat_message: (d) => {
+        const v = d as { message?: ChatMessage };
+        if (v.message) onMessage(v.message);
+      },
+    },
+    onOpen,
+  );
+}
+
+/** Subscribe to session state changes over SSE. Returns a stop function. */
+export function subscribeSessions(onEvent: (type: "session" | "deleted", id: string, session?: Session) => void, onOpen?: () => void): () => void {
+  return onEvents(
+    {
+      session: (d) => {
+        const v = d as { id: string; session?: Session };
+        onEvent("session", v.id, v.session);
+      },
+      deleted: (d) => onEvent("deleted", (d as { id: string }).id),
+    },
+    onOpen,
+  );
+}
+
+/** Conversation items of one session as they change. */
+export function subscribeItems(sessionId: string, onItem: (item: ConvItem) => void, onOpen?: () => void): () => void {
+  return onEvents(
+    {
+      item: (d) => {
+        const v = d as { id: string; item?: ConvItem };
+        if (v.id === sessionId && v.item) onItem(v.item);
+      },
+    },
+    onOpen,
+  );
 }
 
 export function wsUrl(id: string): string {

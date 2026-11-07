@@ -114,6 +114,21 @@ The runner keeps delivered messages until the agent is idle (Claude Code: its ho
 
 The agent's side is `agent-runner mcp`, a stdio MCP server the runner registers as the `chat` server: for Claude Code `--mcp-config ~/.config/agents-operator/mcp.json --allowedTools mcp__chat`, for Codex `-c mcp_servers.chat.command="agent-runner" -c mcp_servers.chat.args=["mcp"]`, for OpenCode the `mcp` key of `OPENCODE_CONFIG_CONTENT`. Its tools (`chats_list`, `chat_info`, `chat_read`, `chat_send`) post to the runner's loopback listener (`POST http://127.0.0.1:7682/chat/<op>`), which forwards them over the uplink. `chat_send` files (`files`, or `images` as before) are paths; the runner only reads non-empty regular files under `/workspace` or the agent's temp directory, up to 10 MiB. Received files land in `~/chats/<chat>/`: images as `<message>-<n>.<ext>`, other files as `<message>-<n>-<name>`, and the prompt lists them as `[image: …]` or `[file: …]`.
 
+## Conversations
+
+A session with `AGENT_INTERFACE=conversation` (`docs/design/conversations.md`) runs a login shell in the terminal and drives the agent CLI through its structured protocol in `internal/runner/convo`: Claude Code with `-p --input-format stream-json --output-format stream-json --verbose --include-partial-messages` (resumed with `--resume <session id>`), Codex with `codex app-server` (JSON-RPC: `initialize`, `thread/start`/`thread/resume`, `turn/start`, `turn/interrupt`), OpenCode with `opencode acp` (Agent Client Protocol: `initialize`, `session/new`/`session/load`, `session/set_mode` for an agent definition, `session/prompt`, `session/cancel`). The CLI's conversation id is kept in `~/.agents-operator/conversation.json`. The leader keeps an uplink to every running conversation session, in a chat or not. Over it:
+
+| Direction | Frame | Meaning |
+| --- | --- | --- |
+| hub → runner | `{"event":"inputs","inputs":[{"id","text","files"}]}` | the owner's queued messages, pushed on connect and when one is added |
+| runner → hub | `{"id":1,"op":"input_claim","args":{"id":"<input>"}}` → `{"ok":true}` | asked right before an input goes to the agent; `false` when it was edited away or cancelled |
+| runner → hub | `{"op":"input_file","args":{"id":"<file>"}}` → a file | a file of an input, written to `~/inputs/<input>/` |
+| runner → hub | `{"op":"events","args":{"events":[...]}}` | what the agent did, in order, batched every 100 ms: `turn_started`, `item` (key, kind `user`/`text`/`thinking`/`tool`/`error`/`notice`, status, text or a `delta` to append, tool name/kind/title/input/output), `turn_ended` (status `done`/`interrupted`/`failed`, error, token usage, context), `info` (model, the CLI's conversation id, a start error) |
+| hub → runner | `{"event":"interrupt"}` | Stop: end the running turn |
+| hub → runner | `{"event":"cancel","ids":[...]}` | drop queued inputs the runner holds |
+
+The runner hands the agent one input per turn, in order: the owner's messages (claimed first) and chat deliveries (the same `[agents-operator chat]` text as in a terminal, confirmed with `delivered` when the turn starts). A finished `text` or `thinking` item always carries its whole text, so a hub that missed deltas still ends up right. While a turn runs, `/status` reports `thinking` or `tool` (with the tool's title) and the time as `last_output_at`.
+
 ## Runner environment
 
 All of these are injected by the hub; see `internal/runner/protocol.go`.

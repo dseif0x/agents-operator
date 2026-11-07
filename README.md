@@ -1,10 +1,10 @@
 # agents-operator
 
-Self-hosted mission control for AI coding agents on Kubernetes. Every session is its own pod with its own PersistentVolumeClaim, and the agent's real terminal (Claude Code, OpenCode, Codex) is streamed to the browser with full colour and keyboard. Close the tab, nothing dies; reopen it from your phone and the TUI is exactly where you left it.
+Self-hosted mission control for AI coding agents on Kubernetes. Every agent (Claude Code, OpenCode, Codex) is its own pod with its own PersistentVolumeClaim and a persistent conversation: you chat with it, see its thinking and its steps, queue messages while it works, and put agents together in chats. Close the tab, nothing dies; reopen it from your phone and everything is where you left it. The agent's real terminal is still one click away, and sessions can run in it entirely if you prefer.
 
 One Go binary serves the API, the WebSocket terminal proxy, the Kubernetes orchestration and the embedded web UI. It ships as a Helm chart with Postgres as a chart dependency and runs on a plain k3s cluster with NFS storage, Traefik and cert-manager.
 
-**This is not** a chat UI around an agent SDK, a multi-tenant SaaS, a sandbox service with object storage, or a Docker/tmux runtime. Sessions are pods. State lives on a PVC and in Postgres and nowhere else.
+**This is not** a hosted agent SDK, a multi-tenant SaaS, a sandbox service with object storage, or a Docker/tmux runtime. Sessions are pods. State lives on a PVC and in Postgres and nowhere else.
 
 ## How it works
 
@@ -15,7 +15,7 @@ browser ──▶ hub ──▶ session pod (agent-runner + agent CLI, /workspac
 ```
 
 - The **hub** (`cmd/agents-operator`) is a single-replica Deployment, upgraded with a rolling surge and a leader Lease so the UI and terminals stay up. It creates a PVC, a Secret and a Pod per session, proxies the terminal WebSocket by pod IP, and serves the SPA.
-- **agent-runner** (`cmd/agent-runner`) is the entrypoint of the session pod. It clones the session's repositories on first boot (one or many, side by side under `/workspace`), runs the agent under a PTY, keeps 2 MiB of scrollback and serves it over a WebSocket. Reconnects replay the buffer, so the TUI redraws correctly.
+- **agent-runner** (`cmd/agent-runner`) is the entrypoint of the session pod. It clones the session's repositories on first boot (one or many, side by side under `/workspace`), drives the agent CLI through its structured protocol (Claude Code stream-json, Codex app-server, OpenCode ACP) and sends what it does to the hub, which keeps the conversation in Postgres. The terminal (a shell, or the agent's TUI for terminal sessions) runs under a PTY with 2 MiB of scrollback served over a WebSocket.
 - Stop deletes the pod and keeps the PVC. Start recreates the pod on the same PVC. Delete removes everything.
 
 Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/PROTOCOL.md](docs/PROTOCOL.md), [docs/OPERATIONS.md](docs/OPERATIONS.md), chart values in [charts/agents-operator/README.md](charts/agents-operator/README.md).
