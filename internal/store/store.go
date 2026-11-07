@@ -367,6 +367,7 @@ type Store interface {
 	Profiles() Profiles
 	Chats() Chats
 	Conversations() Conversations
+	Routines() Routines
 	Push() PushSubscriptions
 	Settings() Settings
 	Events() Events

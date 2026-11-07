@@ -112,6 +112,10 @@ New Claude Code, Codex and OpenCode sessions run as conversations (`sessions.int
 - **API**: `GET /sessions/{id}/items`, `POST /sessions/{id}/inputs` (JSON or multipart with files), `PATCH`/`DELETE /sessions/{id}/inputs/{input}`, `POST /sessions/{id}/interrupt`, `GET /sessions/{id}/files/{file}`. Item changes go out on the SSE stream as `item` events.
 - Conversations run autonomously until approvals exist in the UI; the terminal (a login shell) stays available for CLI logins.
 
+## Routines
+
+Agents and chats run routines (`docs/design/routines.md`): an instruction on a schedule (`internal/routine`: once, hourly, every n hours, daily, weekdays, weekly, monthly, yearly, cron; in a time zone) or when a signed webhook arrives (`POST /api/v1/hooks/{id}`, no login, HMAC or bearer secret). The leader fires due routines from its poll loop; an agent routine is a queued conversation input (a stopped agent is started), a chat routine a message in the chat. Runs (`routine_runs`) follow the turn that works on them; the agent's `routine_no_update` and `routine_report_failure` tools mark a run quiet or failed. API: `/api/v1/routines` (CRUD, `/run`, `/secret`, `/runs`, `/calendar`).
+
 ## Notifications and PWA
 
 - **PWA**: the UI ships a web app manifest and icons, so it can be added to a phone's home screen and runs standalone. The service worker (`web/public/sw.js`) caches nothing (the app is a live connection) and only handles push notifications. The last page is kept in `localStorage`: opening the app at `/` (a new tab, the home-screen icon, after logging in) goes back to it.

@@ -364,6 +364,18 @@ func (u *Uplinks) do(ctx context.Context, sessionID string, f runner.UplinkFrame
 			return nil, err
 		}
 		return runner.UplinkFile{Name: file.Name, ContentType: file.ContentType, Data: file.Data}, nil
+	case runner.OpRoutineNoUpdate, runner.OpRoutineFailure:
+		var a struct {
+			Input  string `json:"input"`
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal(f.Args, &a); err != nil {
+			return nil, &ValidationError{"bad arguments"}
+		}
+		if err := u.Svc.RoutineReport(ctx, sess, a.Input, f.Op == runner.OpRoutineFailure, a.Reason); err != nil {
+			return nil, err
+		}
+		return map[string]string{"ok": "recorded"}, nil
 	case runner.OpDelivered:
 		var a struct {
 			IDs []int64 `json:"ids"`

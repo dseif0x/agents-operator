@@ -7,7 +7,8 @@ import { Link, navigate } from "../router";
 import { copyCode, renderMessage } from "../markdown";
 import { Avatar } from "./Avatar";
 import { Icon } from "./icons";
-import { agentLabel, agentStatus, longTime } from "./format";
+import { agentLabel, agentStatus, longTime, shortTime } from "./format";
+import { RoutineList } from "./Routines";
 
 type Block =
   | { type: "user"; item: ConvItem }
@@ -15,7 +16,8 @@ type Block =
   | { type: "steps"; items: ConvItem[]; key: string }
   | { type: "error"; item: ConvItem }
   | { type: "notice"; item: ConvItem }
-  | { type: "date"; key: string; at: string };
+  | { type: "date"; key: string; at: string }
+  | { type: "routine"; item: ConvItem; folded: ConvItem[] };
 
 const PAGE = 200;
 
@@ -177,6 +179,7 @@ function toBlocks(items: ConvItem[]): Block[] {
   let steps: ConvItem[] | null = null;
   let lastDay = "";
   let lastAt = 0;
+  let quietTurn: { turn: string; block: Block } | null = null;
   for (const it of items) {
     const at = new Date(it.created_at);
     const day = at.toDateString();
@@ -186,6 +189,10 @@ function toBlocks(items: ConvItem[]): Block[] {
       steps = null;
     }
     lastAt = at.getTime();
+    if (quietTurn && it.turn && it.turn === quietTurn.turn && it.kind !== "user") {
+      (quietTurn.block as { folded: ConvItem[] }).folded.push(it);
+      continue;
+    }
     const isStep = it.kind === "tool" || it.kind === "thinking" || (it.kind === "text" && it.data.parent);
     if (isStep) {
       if (!steps || (steps[0].turn !== it.turn && it.turn)) {
@@ -196,6 +203,18 @@ function toBlocks(items: ConvItem[]): Block[] {
       continue;
     }
     steps = null;
+    const rt = it.kind === "user" ? it.data.extra?.routine : undefined;
+    if (rt) {
+      const block: Block = { type: "routine", item: it, folded: [] };
+      out.push(block);
+      if (it.data.extra?.quiet) quietTurn = { turn: it.turn ?? "", block };
+      continue;
+    }
+    if (quietTurn && it.turn && it.turn === quietTurn.turn) {
+      // A routine run with no news: its answer stays folded in the marker.
+      (quietTurn.block as { folded: ConvItem[] }).folded.push(it);
+      continue;
+    }
     if (it.kind === "user") out.push({ type: "user", item: it });
     else if (it.kind === "text") out.push({ type: "text", item: it });
     else if (it.kind === "error") out.push({ type: "error", item: it });
@@ -210,6 +229,8 @@ function BlockView({ b, session }: { b: Block; session: Session }) {
       return <div class="cv-date">{longTime(b.at)}</div>;
     case "user":
       return <UserMessage item={b.item} session={session} />;
+    case "routine":
+      return <RoutineMarker item={b.item} folded={b.folded} />;
     case "text":
       return (
         <div class="cv-agent">
@@ -233,6 +254,34 @@ function BlockView({ b, session }: { b: Block; session: Session }) {
         </div>
       );
   }
+}
+
+function RoutineMarker({ item, folded }: { item: ConvItem; folded: ConvItem[] }) {
+  const [open, setOpen] = useState(false);
+  const rt = item.data.extra!.routine!;
+  const quiet = item.data.extra?.quiet;
+  const src = rt.source === "webhook" ? `webhook${rt.event ? " " + rt.event : ""}` : rt.source === "test" ? "test run" : "scheduled";
+  return (
+    <div class="cv-routine">
+      <button class="cv-routine-head" onClick={() => setOpen((o) => !o)}>
+        <Icon name={rt.source === "webhook" ? "plug" : "clock"} size={14} class={item.status === "queued" ? "" : "cv-ok"} />
+        <b>{rt.name}</b>
+        <span>· {src}</span>
+        {item.status === "queued" && <span>· waiting</span>}
+        {quiet && <span>· no update</span>}
+        <span>· {shortTime(item.created_at)}</span>
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={13} />
+      </button>
+      {open && (
+        <div class="cv-routine-body">
+          <div class="cv-routine-instr">{rt.instruction}</div>
+          {folded.filter((f) => f.kind === "text").map((f) => (
+            <div class="cv-bubble cv-md" dangerouslySetInnerHTML={{ __html: renderMessage(f.data.text ?? "", []) }} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function UserMessage({ item, session }: { item: ConvItem; session: Session }) {
@@ -729,6 +778,9 @@ function InfoPanel({ session, onClose }: { session: Session; onClose: () => void
         <dt>Autonomous</dt>
         <dd>{session.autonomous ? "yes" : "no"}</dd>
       </dl>
+      <div style={{ marginTop: 16 }}>
+        <RoutineList sessionId={session.id} />
+      </div>
       {session.persona && (
         <>
           <div style={{ marginTop: 14, color: "var(--sh-muted)" }}>Instructions</div>

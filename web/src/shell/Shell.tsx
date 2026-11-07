@@ -8,6 +8,7 @@ import { Chats } from "../pages/Chats";
 import { Avatar } from "./Avatar";
 import { Icon } from "./icons";
 import { AgentChat } from "./AgentChat";
+import { RoutinesPage } from "./Routines";
 import { agentLine, agentStatus, lastActive, needsYou, roleTag, shortTime } from "./format";
 import "./shell.css";
 
@@ -126,7 +127,7 @@ export function Shell(props: { user: User; route: Route; onLogout: () => void })
 
   const current = route.path === "/sessions/:id" ? sessions?.find((s) => s.id === route.params.id) : undefined;
   const currentChat = route.path === "/chats/:id" ? chats?.find((c) => c.id === route.params.id) : undefined;
-  const open = Boolean(path) || route.path === "/chats";
+  const open = Boolean(path) || route.path === "/chats" || route.path === "/routines";
   const toggle = (k: string) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
 
   let content: preact.ComponentChildren;
@@ -140,6 +141,8 @@ export function Shell(props: { user: User; route: Route; onLogout: () => void })
       );
     else if (current.interface === "conversation") content = <AgentChat key={current.id} session={current} />;
     else content = <TerminalSession session={current} />;
+  } else if (route.path === "/routines") {
+    content = <RoutinesPage sessions={sessions ?? []} chats={chats ?? []} />;
   } else if (route.path === "/chats/:id" || route.path === "/chats") {
     content = <Chats key={route.params.id ?? "list"} user={props.user} onLogout={props.onLogout} chatId={route.params.id === "new" ? undefined : route.params.id} embedded creating={route.params.id === "new"} />;
   } else {
@@ -166,13 +169,16 @@ export function Shell(props: { user: User; route: Route; onLogout: () => void })
         <Link href="/" class="logo" title="agents-operator">
           ao
         </Link>
-        <Link href="/" class={`sh-rail-btn ${!route.path.startsWith("/chats") ? "active" : ""}`} title="Agents">
+        <Link href="/" class={`sh-rail-btn ${!route.path.startsWith("/chats") && route.path !== "/routines" ? "active" : ""}`} title="Agents">
           <Icon name="bot" size={20} />
           {attention.length > 0 && <span class="dot" />}
         </Link>
         <Link href={chatList[0] ? `/chats/${chatList[0].id}` : "/chats/new"} class={`sh-rail-btn ${route.path.startsWith("/chats") ? "active" : ""}`} title="Chats">
           <Icon name="chats" size={20} />
           {unreadChats > 0 && <span class="dot" />}
+        </Link>
+        <Link href="/routines" class={`sh-rail-btn ${route.path === "/routines" ? "active" : ""}`} title="Routines">
+          <Icon name="clock" size={20} />
         </Link>
         <Link href="/new" class="sh-rail-btn" title="New agent">
           <Icon name="plus" size={20} />
@@ -262,6 +268,9 @@ export function Shell(props: { user: User; route: Route; onLogout: () => void })
           </button>
           <Link href="/account" class="sh-icon-btn" title="Account">
             <Icon name="sliders" size={18} />
+          </Link>
+          <Link href="/routines" class="sh-icon-btn" title="Routines">
+            <Icon name="clock" size={18} />
           </Link>
           <span style={{ flex: 1 }} />
           <button class="sh-icon-btn" title="Log out" onClick={props.onLogout}>

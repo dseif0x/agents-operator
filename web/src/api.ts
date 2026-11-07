@@ -116,6 +116,8 @@ export interface ItemData {
   /** The input id of a message to the agent. */
   input?: string;
   files?: { id: string; name: string; content_type: string; size: number }[];
+  /** Routine runs: extra.routine = { id, name, run, source, instruction, event }; extra.quiet when it had no news. */
+  extra?: { routine?: { id: string; name: string; run: number; source: string; instruction: string; event?: string }; quiet?: boolean };
 }
 
 /** One item of a conversation: a message to the agent, part of its answer, a tool call, an error. */
@@ -130,6 +132,71 @@ export interface ConvItem {
   data: ItemData;
   created_at: string;
   updated_at: string;
+}
+
+export interface Schedule {
+  kind: "once" | "hourly" | "every_n_hours" | "daily" | "weekdays" | "weekly" | "monthly" | "yearly" | "cron";
+  at?: string;
+  days?: number[];
+  day?: number;
+  month?: number;
+  every?: number;
+  date?: string;
+  cron?: string;
+  tz?: string;
+}
+
+export interface RoutineRun {
+  id: number;
+  routine_id: string;
+  source: "schedule" | "webhook" | "test";
+  status: "queued" | "running" | "succeeded" | "failed" | "interrupted" | "sent";
+  quiet?: boolean;
+  error?: string;
+  input_id?: string;
+  scheduled_for?: string;
+  started_at: string;
+  ended_at?: string;
+}
+
+export interface Routine {
+  id: string;
+  session_id?: string;
+  chat_id?: string;
+  name: string;
+  instruction: string;
+  trigger: "schedule" | "webhook";
+  schedule?: Schedule;
+  describe: string;
+  enabled: boolean;
+  event_type?: string;
+  filters?: { path: string; value: string }[];
+  webhook_path?: string;
+  /** Only right after it was made. */
+  secret?: string;
+  has_secret?: boolean;
+  next_run_at?: string;
+  last_run_at?: string;
+  last_run?: RoutineRun;
+  created_at: string;
+}
+
+export interface RoutineInput {
+  session_id?: string;
+  chat_id?: string;
+  name?: string;
+  instruction?: string;
+  trigger?: "schedule" | "webhook";
+  schedule?: Schedule;
+  enabled?: boolean;
+  event_type?: string;
+  filters?: { path: string; value: string }[];
+}
+
+export interface CalendarEntry {
+  routine_id: string;
+  at: string;
+  run?: RoutineRun;
 }
 
 export interface Activity {
@@ -358,6 +425,15 @@ export const api = {
   editInput: (id: string, input: string, text: string) => request<ConvItem>("PATCH", `/sessions/${id}/inputs/${input}`, { text }),
   cancelInput: (id: string, input: string) => request<{ ok: boolean }>("DELETE", `/sessions/${id}/inputs/${input}`),
   interrupt: (id: string) => request<{ ok: boolean }>("POST", `/sessions/${id}/interrupt`),
+  routines: (q: { session?: string; chat?: string } = {}) =>
+    request<{ routines: Routine[] }>("GET", `/routines?session=${encodeURIComponent(q.session ?? "")}&chat=${encodeURIComponent(q.chat ?? "")}`),
+  createRoutine: (r: RoutineInput) => request<Routine>("POST", "/routines", r),
+  updateRoutine: (id: string, r: RoutineInput) => request<Routine>("PATCH", `/routines/${id}`, r),
+  deleteRoutine: (id: string) => request<{ ok: boolean }>("DELETE", `/routines/${id}`),
+  runRoutine: (id: string) => request<RoutineRun>("POST", `/routines/${id}/run`),
+  rotateSecret: (id: string) => request<Routine>("POST", `/routines/${id}/secret`),
+  routineRuns: (id: string, limit = 30) => request<{ runs: RoutineRun[] }>("GET", `/routines/${id}/runs?limit=${limit}`),
+  routineCalendar: (from: Date, to: Date) => request<{ entries: CalendarEntry[] }>("GET", `/routines/calendar?from=${from.toISOString()}&to=${to.toISOString()}`),
   markChatRead: (id: string, lastId: number) => request<{ ok: boolean }>("POST", `/chats/${id}/read`, { last_id: lastId }),
   /** Post as the owner; with files it goes as multipart. */
   postChatMessage: async (id: string, text: string, replyTo: number, images: File[]): Promise<ChatMessage> => {

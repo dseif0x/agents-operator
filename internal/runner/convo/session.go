@@ -15,8 +15,9 @@ import (
 
 // Input sources.
 const (
-	SourceOwner = "owner" // a message from the owner, queued in the hub
-	SourceChat  = "chat"  // chat messages for the agent
+	SourceOwner   = "owner"   // a message from the owner, queued in the hub
+	SourceChat    = "chat"    // chat messages for the agent
+	SourceRoutine = "routine" // a routine run, queued in the hub
 )
 
 // Pending is an input waiting for the agent.
@@ -62,6 +63,14 @@ type Session struct {
 	startErr string
 	prefix   string // makes turn ids unique across CLI restarts
 	lastAt   time.Time
+	current  Pending // the input of the running (or last) turn
+}
+
+// Current is the input the agent works on, and whether a turn runs.
+func (s *Session) Current() (Pending, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.current, s.turn != ""
 }
 
 // LastActive is when the conversation last did something: now while a
@@ -295,12 +304,13 @@ func (s *Session) dispatch(ctx context.Context, d Driver) {
 				continue // edited or cancelled meanwhile
 			}
 		}
-		if p.Source != SourceOwner {
+		if p.Source == SourceChat {
 			// The hub has no message for it yet: show what the agent got.
 			s.push(Event{Type: EventItem, Item: &Item{Key: "input:" + p.ID, Kind: KindUser, Status: StatusDone, Text: p.Text, Source: p.Source}})
 		}
 		s.mu.Lock()
 		s.turn = "pending"
+		s.current = p
 		if p.OnSent != nil {
 			s.turnSent = append(s.turnSent, p.OnSent)
 		}

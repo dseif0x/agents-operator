@@ -1,6 +1,6 @@
 # agents-operator
 
-Self-hosted mission control for AI coding agents on Kubernetes. Every agent (Claude Code, OpenCode, Codex) is its own pod with its own PersistentVolumeClaim and a persistent conversation: you chat with it, see its thinking and its steps, queue messages while it works, and put agents together in chats. Close the tab, nothing dies; reopen it from your phone and everything is where you left it. The agent's real terminal is still one click away, and sessions can run in it entirely if you prefer.
+Self-hosted mission control for AI coding agents on Kubernetes. Every agent (Claude Code, OpenCode, Codex) is its own pod with its own PersistentVolumeClaim and a persistent conversation: you chat with it, see its thinking and its steps, queue messages while it works, put agents together in chats, and give them routines: instructions on a schedule or when a webhook arrives. Close the tab, nothing dies; reopen it from your phone and everything is where you left it. The agent's real terminal is still one click away, and sessions can run in it entirely if you prefer.
 
 One Go binary serves the API, the WebSocket terminal proxy, the Kubernetes orchestration and the embedded web UI. It ships as a Helm chart with Postgres as a chart dependency and runs on a plain k3s cluster with NFS storage, Traefik and cert-manager.
 

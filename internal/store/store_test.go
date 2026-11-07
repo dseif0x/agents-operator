@@ -23,7 +23,7 @@ func stores(t *testing.T) map[string]Store {
 			t.Fatalf("open postgres: %v", err)
 		}
 		// Start from a clean slate; tests share one database.
-		_, _ = pg.pool.Exec(ctx, "TRUNCATE conversation_files, conversation_inputs, conversation_items, push_subscriptions, app_settings, chat_reads, chat_deliveries, chat_attachments, chat_messages, chat_members, chats, session_events, sessions, user_credentials, accounts, user_profiles, repo_usage, users")
+		_, _ = pg.pool.Exec(ctx, "TRUNCATE routine_runs, routines, conversation_files, conversation_inputs, conversation_items, push_subscriptions, app_settings, chat_reads, chat_deliveries, chat_attachments, chat_messages, chat_members, chats, session_events, sessions, user_credentials, accounts, user_profiles, repo_usage, users")
 		t.Cleanup(pg.Close)
 		out["postgres"] = pg
 	} else {

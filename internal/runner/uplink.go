@@ -29,6 +29,10 @@ const (
 	OpEvents     = "events"      // {"events":[...]}: what the agent did
 	OpInputClaim = "input_claim" // {"id":"<input id>"} -> {"ok":true} when it may be sent
 	OpInputFile  = "input_file"  // {"id":"<file id>"} -> UplinkFile
+	// Routine runs: the agent reports no news or a failure for the input it
+	// works on. {"input":"<input id>","reason":"..."}
+	OpRoutineNoUpdate = "routine_no_update"
+	OpRoutineFailure  = "routine_report_failure"
 )
 
 // Hub pushes.
@@ -64,6 +68,8 @@ type ConvoInput struct {
 	ID    string     `json:"id"`
 	Text  string     `json:"text"`
 	Files []ChatFile `json:"files,omitempty"`
+	// Source is "owner" or "routine".
+	Source string `json:"source,omitempty"`
 }
 
 // ChatAuthor is who wrote a chat message.

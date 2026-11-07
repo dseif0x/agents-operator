@@ -112,13 +112,22 @@ func (s *Service) SendInput(ctx context.Context, owner *store.User, id, text str
 	if text == "" && len(files) == 0 {
 		return nil, &ValidationError{"an empty message"}
 	}
+	in, err := s.queueInput(ctx, owner.ID, sess, text, convo.SourceOwner, files, nil)
+	if err != nil {
+		return nil, err
+	}
+	return s.Store.Conversations().GetItem(ctx, sess.ID, store.MainThread, "input:"+in.ID)
+}
+
+// queueInput stores an input with its item and tells the runner.
+func (s *Service) queueInput(ctx context.Context, ownerID string, sess *store.Session, text, source string, files []ChatFile, extra map[string]any) (*store.ConvInput, error) {
 	if len(text) > MaxInputText {
 		return nil, &ValidationError{fmt.Sprintf("a message is limited to %d KiB", MaxInputText>>10)}
 	}
 	if len(files) > MaxChatFiles {
 		return nil, &ValidationError{fmt.Sprintf("at most %d files per message", MaxChatFiles)}
 	}
-	in := &store.ConvInput{SessionID: sess.ID, Thread: store.MainThread, Text: text, Source: convo.SourceOwner}
+	in := &store.ConvInput{SessionID: sess.ID, Thread: store.MainThread, Text: text, Source: source}
 	for _, f := range files {
 		if len(f.Data) == 0 || len(f.Data) > MaxChatFileBytes {
 			return nil, &ValidationError{fmt.Sprintf("files are limited to %d MiB (and cannot be empty)", MaxChatFileBytes>>20)}
@@ -131,12 +140,12 @@ func (s *Service) SendInput(ctx context.Context, owner *store.User, id, text str
 				name = "image." + ext
 			}
 		}
-		in.Files = append(in.Files, store.ConvFile{OwnerID: owner.ID, Name: name, ContentType: ct, Size: len(f.Data), Data: f.Data})
+		in.Files = append(in.Files, store.ConvFile{OwnerID: ownerID, Name: name, ContentType: ct, Size: len(f.Data), Data: f.Data})
 	}
 	if err := s.Store.Conversations().AddInput(ctx, in); err != nil {
 		return nil, err
 	}
-	data := ItemData{Text: text, Source: convo.SourceOwner, Input: in.ID}
+	data := ItemData{Text: text, Source: source, Input: in.ID, Extra: extra}
 	for _, f := range in.Files {
 		data.Files = append(data.Files, InputFile{ID: f.ID, Name: f.Name, ContentType: f.ContentType, Size: f.Size})
 	}
@@ -144,11 +153,11 @@ func (s *Service) SendInput(ctx context.Context, owner *store.User, id, text str
 	if err != nil {
 		return nil, err
 	}
-	s.publishItem(owner.ID, sess.ID, it)
+	s.publishItem(ownerID, sess.ID, it)
 	if s.Uplinks != nil {
 		s.Uplinks.Notify(sess.ID)
 	}
-	return it, nil
+	return in, nil
 }
 
 // EditInput changes a queued message.
@@ -234,7 +243,7 @@ func (s *Service) QueuedInputs(ctx context.Context, sess *store.Session) ([]runn
 	}
 	out := make([]runner.ConvoInput, 0, len(ins))
 	for _, in := range ins {
-		ci := runner.ConvoInput{ID: in.ID, Text: in.Text}
+		ci := runner.ConvoInput{ID: in.ID, Text: in.Text, Source: in.Source}
 		for _, f := range in.Files {
 			ci.Files = append(ci.Files, runner.ChatFile{ID: f.ID, Name: f.Name, ContentType: f.ContentType, Size: f.Size})
 		}
@@ -323,8 +332,20 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 				}
 			}
 		case convo.EventTurnStarted:
-			// The owner's messages were marked sent when claimed.
+			// The owner's messages were marked sent when claimed; they get
+			// the turn they started (a quiet routine run folds by it).
 			sum.Turn, sum.TurnSince = ev.Turn, &now
+			s.routineTurnStarted(ctx, ev.Turn, ev.Inputs)
+			for _, id := range ev.Inputs {
+				key := "input:" + id
+				if touched[key] == nil {
+					if _, err := conv.GetItem(ctx, sess.ID, store.MainThread, key); err != nil {
+						continue // a chat message: its item comes from the runner
+					}
+				}
+				it, _ := load(key)
+				it.Turn = ev.Turn
+			}
 		case convo.EventItem:
 			if ev.Item == nil || ev.Item.Key == "" {
 				continue
@@ -386,6 +407,18 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 			}
 			if sum.Turn == ev.Turn {
 				sum.Turn, sum.TurnSince = "", nil
+			}
+			// A routine run with no news folds its answer away.
+			for _, input := range s.routineTurnEnded(ctx, ev.Turn, ev.Status, ev.Error) {
+				it, d := load("input:" + input)
+				if it.Kind == "" {
+					continue
+				}
+				if d.Extra == nil {
+					d.Extra = map[string]any{}
+				}
+				d.Extra["quiet"] = true
+				it.Data = mustJSON(d)
 			}
 			sum.LastTurnAt = &now
 			if u := ev.Usage; u != nil {
