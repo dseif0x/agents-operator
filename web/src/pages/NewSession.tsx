@@ -107,6 +107,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
   const [autonomous, setAutonomous] = useState(true);
   const [gitCredentials, setGitCredentials] = useState(true);
   const [contextCompression, setContextCompression] = useState(false);
+  const [terminalMode, setTerminalMode] = useState(false);
   const [egress, setEgress] = useState("");
   const [persona, setPersona] = useState("");
   const [handle, setHandle] = useState("");
@@ -171,6 +172,7 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         setAutonomous(s.autonomous);
         setGitCredentials(s.git_credentials ?? true);
         setContextCompression(s.context_compression ?? false);
+        setTerminalMode(s.interface === "terminal");
         setEgress((s.egress || []).join("\n"));
         setPersona(s.persona || "");
         setHandle(s.handle || "");
@@ -231,7 +233,10 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
         return;
       }
     }
-    if (agent !== "shell") req.persona = persona;
+    if (agent !== "shell") {
+      req.persona = persona;
+      req.interface = terminalMode ? "terminal" : "conversation";
+    }
     if (agent === "opencode") {
       req.agent_definition = agentDefinition;
       req.context_compression = contextCompression;
@@ -379,6 +384,15 @@ export function NewSession(props: { user: User; onLogout: () => void; edit?: str
             commit, not push or use <code>gh</code>
           </label>
         </div>
+        {agent !== "shell" && (
+          <div class="checkbox">
+            <input id="termmode" type="checkbox" checked={terminalMode} onChange={(e) => setTerminalMode((e.target as HTMLInputElement).checked)} />
+            <label for="termmode" style="margin:0;color:inherit">
+              Terminal instead of a conversation: the agent's CLI runs in a terminal you type into, as before. Off (the default), you chat
+              with the agent and see its steps; the terminal stays available for logins
+            </label>
+          </div>
+        )}
         {agent === "opencode" && (
           <div class="checkbox">
             <input id="compress" type="checkbox" checked={contextCompression} onChange={(e) => setContextCompression((e.target as HTMLInputElement).checked)} />

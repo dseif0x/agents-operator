@@ -18,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/dseif0x/agents-operator/internal/runner"
+	"github.com/dseif0x/agents-operator/internal/runner/convo"
 )
 
 // Chat is the runner's side of the chats its session is in. The hub opens
@@ -37,7 +38,10 @@ type Chat struct {
 	// QuietIdle is how long an agent without hooks must print nothing to
 	// count as idle (default 20s; 3s when its last line looks like a prompt).
 	QuietIdle time.Duration
-	Log       *slog.Logger
+	// Convo is set in conversation mode: chat messages and the owner's
+	// messages become inputs of the conversation instead of typed prompts.
+	Convo *convo.Session
+	Log   *slog.Logger
 
 	mu      sync.Mutex
 	conn    *websocket.Conn
@@ -102,6 +106,17 @@ func (c *Chat) ServeUplink(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case f.Event == runner.EventDeliver:
 			c.enqueue(f.Deliveries)
+		case f.Event == runner.EventInputs && c.Convo != nil:
+			// Fetching files goes over this connection: not on its reader.
+			go c.enqueueInputs(ctx, f.Inputs)
+		case f.Event == runner.EventInterrupt && c.Convo != nil:
+			go func() {
+				if err := c.Convo.Interrupt(); err != nil {
+					c.Log.Warn("cannot interrupt the agent", "err", err)
+				}
+			}()
+		case f.Event == runner.EventCancel && c.Convo != nil:
+			c.Convo.Cancel(f.IDs...)
 		case f.ID != 0:
 			c.mu.Lock()
 			ch := c.pending[f.ID]
@@ -195,8 +210,69 @@ func cmpOr(a, b string) string {
 	return b
 }
 
+// enqueueInputs hands the owner's messages to the conversation, with their
+// files written under ~/inputs/<input>/.
+func (c *Chat) enqueueInputs(ctx context.Context, ins []runner.ConvoInput) {
+	var ps []convo.Pending
+	for _, in := range ins {
+		p := convo.Pending{Input: convo.Input{ID: in.ID, Text: in.Text}, Source: convo.SourceOwner, Claim: true}
+		for i, f := range in.Files {
+			if path := c.fetchInputFile(ctx, in.ID, i, f); path != "" {
+				p.Files = append(p.Files, path)
+			}
+		}
+		ps = append(ps, p)
+	}
+	c.Convo.Enqueue(ps...)
+}
+
+func (c *Chat) fetchInputFile(ctx context.Context, inputID string, i int, f runner.ChatFile) string {
+	base := strings.Trim(unsafeName.ReplaceAllString(f.Name, "-"), "-.")
+	if base == "" {
+		base = "file"
+	}
+	dir := filepath.Join(c.Home, "inputs", strings.Trim(unsafeName.ReplaceAllString(inputID, "-"), "-"))
+	path := filepath.Join(dir, fmt.Sprintf("%d-%s", i+1, base))
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+	raw, err := c.Call(ctx, runner.OpInputFile, map[string]string{"id": f.ID})
+	if err != nil {
+		c.Log.Warn("cannot fetch a file of a message", "err", err)
+		return ""
+	}
+	var uf runner.UplinkFile
+	if json.Unmarshal(raw, &uf) != nil || os.MkdirAll(dir, 0o755) != nil || os.WriteFile(path, uf.Data, 0o644) != nil {
+		return ""
+	}
+	return path
+}
+
+// SendEvents passes conversation events to the hub (convo.Session.Send).
+func (c *Chat) SendEvents(ctx context.Context, events []convo.Event) error {
+	_, err := c.Call(ctx, runner.OpEvents, map[string]any{"events": events})
+	return err
+}
+
+// ClaimInput asks the hub whether an input may go to the agent now.
+func (c *Chat) ClaimInput(ctx context.Context, id string) (bool, error) {
+	raw, err := c.Call(ctx, runner.OpInputClaim, map[string]string{"id": id})
+	if err != nil {
+		return false, err
+	}
+	var r struct {
+		OK bool `json:"ok"`
+	}
+	_ = json.Unmarshal(raw, &r)
+	return r.OK, nil
+}
+
 // Run delivers queued messages whenever the agent is idle, until ctx ends.
 func (c *Chat) Run(ctx context.Context) {
+	if c.Convo != nil {
+		c.runConvo(ctx)
+		return
+	}
 	c.mu.Lock()
 	c.init()
 	wake := c.wake
@@ -227,6 +303,41 @@ func (c *Chat) Run(ctx context.Context) {
 		c.typedAt = time.Now()
 		c.mu.Unlock()
 		c.confirm(ctx, ds)
+	}
+}
+
+// runConvo hands chat messages to the conversation as they arrive; the
+// conversation's queue keeps them in order with the owner's messages.
+func (c *Chat) runConvo(ctx context.Context) {
+	c.mu.Lock()
+	c.init()
+	wake := c.wake
+	c.mu.Unlock()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-wake:
+		case <-time.After(5 * time.Second):
+		}
+		ds := c.take()
+		if len(ds) == 0 {
+			continue
+		}
+		prompt := c.prompt(ctx, ds)
+		ids := make([]string, len(ds))
+		for i, d := range ds {
+			ids[i] = fmt.Sprint(d.ID)
+		}
+		c.Convo.Enqueue(convo.Pending{
+			Input:  convo.Input{ID: "chat-" + strings.Join(ids, "-"), Text: prompt},
+			Source: convo.SourceChat,
+			OnSent: func() {
+				cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				c.confirm(cctx, ds)
+			},
+		})
 	}
 }
 

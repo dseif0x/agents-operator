@@ -57,11 +57,11 @@ function preview(m?: ChatMessage): string {
 
 const busyActivities = new Set(["thinking", "tool"]);
 
-export function Chats(props: { user: User; onLogout: () => void; chatId?: string }) {
+export function Chats(props: { user: User; onLogout: () => void; chatId?: string; embedded?: boolean; creating?: boolean }) {
   const [chats, setChats] = useState<Chat[] | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [error, setError] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(Boolean(props.creating));
   // Every message event goes to the open chat's listener: one state value
   // would drop all but the last of several events arriving together.
   const listeners = useRef(new Set<(m: ChatMessage) => void>());
@@ -130,7 +130,7 @@ export function Chats(props: { user: User; onLogout: () => void; chatId?: string
   );
 
   // Picking a chat leaves the new-chat form.
-  useEffect(() => setCreating(false), [props.chatId]);
+  useEffect(() => setCreating(Boolean(props.creating)), [props.chatId, props.creating]);
 
   const current = chats?.find((c) => c.id === props.chatId);
   const sorted = useMemo(
@@ -139,13 +139,13 @@ export function Chats(props: { user: User; onLogout: () => void; chatId?: string
   );
 
   return (
-    <div class="page chats-page">
-      <Nav user={props.user} onLogout={props.onLogout} />
+    <div class={`page chats-page ${props.embedded ? "embedded" : ""}`}>
+      {!props.embedded && <Nav user={props.user} onLogout={props.onLogout} />}
       {error && <div class="error">{error}</div>}
       {/* On a phone the layout shows either the list or the main pane
           (has-open); the new-chat form is in the main pane, so it counts. */}
       <div class={`chats-layout ${props.chatId || creating ? "has-open" : ""}`}>
-        <aside class="chat-list">
+        <aside class="chat-list" hidden={props.embedded}>
           <div class="chat-list-head">
             <b>Chats</b>
             <span style="flex:1" />

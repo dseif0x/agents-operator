@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -206,14 +207,14 @@ type pgSessions struct{ pool *pgxpool.Pool }
 const sessionCols = `id, owner_id, name, agent, repos, image_tag, pvc_size, storage_class, runtime_class, k8s_access, k8s_namespaces,
 	resources, node_selector, tolerations, env, autonomous, state, state_reason, generation,
 	created_at, updated_at, last_attached_at, last_output_at, deleted_at, no_git_credentials, egress,
-	persona, agent_definition, ai_account, handle, context_compression`
+	persona, agent_definition, ai_account, handle, context_compression, interface, conversation`
 
 func scanSession(row pgx.Row) (*Session, error) {
 	var s Session
 	err := row.Scan(&s.ID, &s.OwnerID, &s.Name, &s.Agent, &s.Repos, &s.ImageTag, &s.PVCSize, &s.StorageClass, &s.RuntimeClass, &s.K8sAccess, &s.K8sNamespaces,
 		&s.Resources, &s.NodeSelector, &s.Tolerations, &s.Env, &s.Autonomous, &s.State, &s.StateReason, &s.Generation,
 		&s.CreatedAt, &s.UpdatedAt, &s.LastAttachedAt, &s.LastOutputAt, &s.DeletedAt, &s.NoGitCredentials, &s.Egress,
-		&s.Persona, &s.AgentDefinition, &s.AIAccount, &s.Handle, &s.ContextCompression)
+		&s.Persona, &s.AgentDefinition, &s.AIAccount, &s.Handle, &s.ContextCompression, &s.Interface, &s.Conversation)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -258,12 +259,13 @@ func (r pgSessions) Create(ctx context.Context, s *Session) error {
 		s.Egress = []string{}
 	}
 	normaliseK8s(s)
+	normaliseInterface(s)
 	_, err := r.pool.Exec(ctx, `INSERT INTO sessions (`+sessionCols+`) VALUES
-		($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)`,
+		($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)`,
 		s.ID, s.OwnerID, s.Name, s.Agent, s.Repos, s.ImageTag, s.PVCSize, s.StorageClass, s.RuntimeClass, s.K8sAccess, s.K8sNamespaces,
 		s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous, s.State, s.StateReason, s.Generation,
 		s.CreatedAt, s.UpdatedAt, s.LastAttachedAt, s.LastOutputAt, s.DeletedAt, s.NoGitCredentials, s.Egress,
-		s.Persona, s.AgentDefinition, s.AIAccount, s.Handle, s.ContextCompression)
+		s.Persona, s.AgentDefinition, s.AIAccount, s.Handle, s.ContextCompression, s.Interface, s.Conversation)
 	return mapErr(err)
 }
 
@@ -304,13 +306,26 @@ func (r pgSessions) Update(ctx context.Context, s *Session) (*Session, error) {
 		s.Egress = []string{}
 	}
 	normaliseK8s(s)
+	normaliseInterface(s)
 	return scanSession(r.pool.QueryRow(ctx, `UPDATE sessions SET name=$2, repos=$3, image_tag=$4, runtime_class=$5, k8s_access=$6, k8s_namespaces=$7,
 		resources=$8, node_selector=$9, tolerations=$10, env=$11, autonomous=$12, no_git_credentials=$13, egress=$14,
-		persona=$15, agent_definition=$16, ai_account=$17, context_compression=$18, updated_at=now()
+		persona=$15, agent_definition=$16, ai_account=$17, context_compression=$18, interface=$19, updated_at=now()
 		WHERE id=$1 RETURNING `+sessionCols,
 		s.ID, s.Name, s.Repos, s.ImageTag, s.RuntimeClass, s.K8sAccess, s.K8sNamespaces, s.Resources, s.NodeSelector, s.Tolerations, s.Env, s.Autonomous,
 		s.NoGitCredentials, s.Egress, s.Persona,
-		s.AgentDefinition, s.AIAccount, s.ContextCompression))
+		s.AgentDefinition, s.AIAccount, s.ContextCompression, s.Interface))
+}
+
+// SetConversation stores the session's conversation summary.
+func (r pgSessions) SetConversation(ctx context.Context, id string, conv json.RawMessage) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE sessions SET conversation=$2 WHERE id=$1`, id, conv)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // normaliseK8s fills the access mode and namespace list so the columns never

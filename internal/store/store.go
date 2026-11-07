@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -19,6 +20,22 @@ var ErrNotFound = errors.New("not found")
 
 // ErrConflict is returned on unique violations.
 var ErrConflict = errors.New("conflict")
+
+// Session interfaces.
+const (
+	InterfaceTerminal     = "terminal"
+	InterfaceConversation = "conversation"
+)
+
+// normaliseInterface fills the interface and the summary.
+func normaliseInterface(s *Session) {
+	if s.Interface != InterfaceConversation {
+		s.Interface = InterfaceTerminal
+	}
+	if len(s.Conversation) == 0 {
+		s.Conversation = json.RawMessage(`{}`)
+	}
+}
 
 // Session states. See docs/ARCHITECTURE.md for the transitions.
 const (
@@ -218,7 +235,13 @@ type Session struct {
 	AgentDefinition string
 	// AIAccount is the account a Claude Code or Codex session signs in
 	// with; empty = the owner's default for the agent.
-	AIAccount      string
+	AIAccount string
+	// Interface is InterfaceTerminal or InterfaceConversation (the runner
+	// drives the CLI through its protocol; docs/design/conversations.md).
+	Interface string
+	// Conversation is the hub's summary of the conversation (model,
+	// context use, the running turn), JSON.
+	Conversation   json.RawMessage
 	State          string
 	StateReason    string
 	Generation     int
@@ -269,6 +292,8 @@ type Sessions interface {
 	TouchOutput(ctx context.Context, id string, at time.Time) error
 	Delete(ctx context.Context, id string) error
 	CountByState(ctx context.Context) (map[string]int, error)
+	// SetConversation replaces the conversation summary.
+	SetConversation(ctx context.Context, id string, conv json.RawMessage) error
 }
 
 // Credentials is the legacy user_credentials aggregate, kept for the
@@ -341,6 +366,7 @@ type Store interface {
 	Accounts() Accounts
 	Profiles() Profiles
 	Chats() Chats
+	Conversations() Conversations
 	Push() PushSubscriptions
 	Settings() Settings
 	Events() Events

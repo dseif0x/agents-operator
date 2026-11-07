@@ -20,6 +20,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/dseif0x/agents-operator/internal/runner"
+	"github.com/dseif0x/agents-operator/internal/runner/convo"
 )
 
 // Server serves the runner HTTP API: /ws, /healthz, /status, /scrollback.
@@ -37,7 +38,10 @@ type Server struct {
 	Hooks *Hooks
 	// Chat serves the hub's uplink (nil: no chats).
 	Chat *Chat
-	Log  *slog.Logger
+	// Convo is the conversation in conversation mode (the terminal then runs
+	// a shell); its activity is the agent's.
+	Convo *convo.Session
+	Log   *slog.Logger
 
 	clients atomic.Int64
 
@@ -104,7 +108,19 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	if t := s.loginModTime(); t.After(s.LoginBaseline) {
 		st.LoginUpdatedAt = &t
 	}
-	if s.Hooks != nil && st.Running {
+	if s.Convo != nil {
+		a := s.Convo.Activity()
+		st.Agent = s.Agent
+		st.Activity = a
+		st.NeedsAttention = a.NeedsAttention()
+		st.Tail = a.Message
+		if a.State == runner.ActivityTool {
+			st.Tail = a.Detail
+		}
+		if t := s.Convo.LastActive(); !t.IsZero() && (st.LastOutputAt == nil || t.After(*st.LastOutputAt)) {
+			st.LastOutputAt = &t
+		}
+	} else if s.Hooks != nil && st.Running {
 		if a := s.Hooks.Current(); a != nil {
 			st.Activity = a
 			st.NeedsAttention = a.NeedsAttention()

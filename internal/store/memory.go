@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"sort"
 	"strings"
@@ -18,6 +19,7 @@ type Memory struct {
 	accounts    []*Account
 	profiles    map[string]*Profile
 	chat        *memChatData
+	conv        *memConvData
 	push        *memPushData
 	events      map[string][]*Event
 	usage       map[string]map[string]int
@@ -32,6 +34,7 @@ func NewMemory() *Memory {
 		credentials: map[string]map[string]*Credential{},
 		profiles:    map[string]*Profile{},
 		chat:        newMemChatData(),
+		conv:        &memConvData{files: map[string]*ConvFile{}},
 		push:        &memPushData{subs: map[string]*PushSubscription{}, settings: map[string]string{}},
 		events:      map[string][]*Event{},
 		usage:       map[string]map[string]int{},
@@ -156,7 +159,19 @@ func (r memSessions) Create(_ context.Context, s *Session) error {
 	now := time.Now()
 	s.CreatedAt, s.UpdatedAt = now, now
 	normaliseK8s(s)
+	normaliseInterface(s)
 	r.m.sessions[s.ID] = copySession(s)
+	return nil
+}
+
+func (r memSessions) SetConversation(_ context.Context, id string, conv json.RawMessage) error {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	s, ok := r.m.sessions[id]
+	if !ok {
+		return ErrNotFound
+	}
+	s.Conversation = append(json.RawMessage(nil), conv...)
 	return nil
 }
 
@@ -230,6 +245,8 @@ func (r memSessions) Update(_ context.Context, s *Session) (*Session, error) {
 	cur.Egress = append([]string{}, s.Egress...)
 	cur.Persona, cur.AgentDefinition = s.Persona, s.AgentDefinition
 	cur.AIAccount = s.AIAccount
+	cur.Interface = s.Interface
+	normaliseInterface(cur)
 	cur.UpdatedAt = time.Now()
 	return copySession(cur), nil
 }

@@ -94,6 +94,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("GET /api/v1/me/profile", s.getProfile)
 	authed.HandleFunc("PUT /api/v1/me/profile", s.putProfile)
 	s.chatRoutes(authed)
+	s.conversationRoutes(authed)
 	s.pushRoutes(authed)
 	mux.Handle("/api/v1/", s.requireAuth(s.requireCSRF(authed)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) { writeErr(w, http.StatusNotFound, "no such route") })

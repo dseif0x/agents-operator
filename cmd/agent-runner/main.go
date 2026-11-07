@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/dseif0x/agents-operator/internal/runner"
+	"github.com/dseif0x/agents-operator/internal/runner/convo"
 	"github.com/dseif0x/agents-operator/internal/runner/server"
 	"github.com/dseif0x/agents-operator/internal/store"
 )
@@ -91,10 +92,16 @@ func run() int {
 	loginBaseline := time.Now()
 
 	autonomous := autonomousEnv()
+	// In conversation mode the agent CLI runs under a protocol driver and the
+	// terminal is a plain shell (for CLI logins and as a fallback).
+	convoMode := *cmdLine == "" && os.Getenv(runner.EnvInterface) == runner.InterfaceConversation && runner.HasConversation(*agent)
 	cmdFn := func() server.Command {
 		if *cmdLine != "" {
 			parts := strings.Fields(*cmdLine)
 			return server.Command{Path: parts[0], Args: parts[1:], Dir: ws.WorkDir(), Env: ws.Env()}
+		}
+		if convoMode {
+			return AgentCommand(runner.AgentShell, false, ws.WorkDir(), ws.Env())
 		}
 		return AgentCommand(*agent, autonomous, ws.WorkDir(), ws.Env())
 	}
@@ -116,13 +123,23 @@ func run() int {
 
 	hooks := &server.Hooks{Log: log}
 	chat := &server.Chat{Proc: proc, Agent: *agent, Home: ws.HomeDir(), Roots: []string{ws.Root, ws.TempDir()}, Log: log}
-	if *agent == runner.AgentClaude {
+	var conv *convo.Session
+	if convoMode {
+		conv = &convo.Session{
+			New:        func() convo.Driver { return newDriver(*agent, autonomous, ws, log) },
+			StateFile:  filepath.Join(ws.HomeDir(), ".agents-operator", "conversation.json"),
+			Send:       chat.SendEvents,
+			ClaimInput: chat.ClaimInput,
+			Log:        log.With("part", "conversation"),
+		}
+		chat.Convo = conv
+	} else if *agent == runner.AgentClaude {
 		// Only Claude Code reports through hooks; its Stop hook can take
 		// chat messages queued during a turn.
 		chat.Hooks = hooks
 		hooks.OnStop = chat.StopHook
 	}
-	srv := &server.Server{Proc: proc, Token: token, Agent: *agent, Home: ws.HomeDir(), LoginBaseline: loginBaseline, Hooks: hooks, Chat: chat, Log: log}
+	srv := &server.Server{Proc: proc, Token: token, Agent: *agent, Home: ws.HomeDir(), LoginBaseline: loginBaseline, Hooks: hooks, Chat: chat, Convo: conv, Log: log}
 	httpSrv := &http.Server{
 		Addr:              *listen,
 		Handler:           srv.Handler(),
@@ -147,6 +164,9 @@ func run() int {
 	loopback.Handle("/chat/", chat.Handler())
 	hookSrv := &http.Server{Addr: *hookAddr, Handler: loopback, ReadHeaderTimeout: 5 * time.Second}
 	go chat.Run(ctx)
+	if conv != nil {
+		go conv.Run(ctx)
+	}
 	if hln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", *hookAddr); err != nil {
 		log.Warn("hook listener failed; agent activity will come from the terminal tail", "addr", *hookAddr, "err", err)
 	} else {
@@ -184,6 +204,37 @@ func run() int {
 	_ = httpSrv.Shutdown(shutdownCtx)
 	proc.Close()
 	return 0
+}
+
+// newDriver makes the protocol driver of a conversation session, from the
+// same command line the terminal mode uses.
+//
+// Conversations run autonomously for now: in print mode Claude Code
+// denies every tool that needs a permission (there is no prompt to answer),
+// and the Codex and ACP drivers grant what they are asked. Approvals as
+// cards in the UI come later (docs/design/conversations.md).
+func newDriver(agent string, _ bool, ws *Workspace, log *slog.Logger) convo.Driver {
+	c := AgentCommand(agent, true, ws.WorkDir(), ws.Env())
+	cmd := convo.Command{Path: c.Path, Args: c.Args, Dir: c.Dir, Env: c.Env}
+	log = log.With("part", "conversation")
+	switch agent {
+	case runner.AgentCodex:
+		return &convo.Codex{Cmd: cmd, Dir: c.Dir, Log: log}
+	case runner.AgentOpenCode:
+		// `opencode acp` takes none of the TUI's flags; an agent definition
+		// is chosen as the session's mode.
+		mode := ""
+		for i := 0; i < len(c.Args); i++ {
+			if c.Args[i] == "--agent" && i+1 < len(c.Args) {
+				mode = c.Args[i+1]
+				i++
+			}
+		}
+		cmd.Args = []string{"acp"}
+		return &convo.ACP{Cmd: cmd, Dir: c.Dir, Mode: mode, Log: log}
+	default:
+		return &convo.Claude{Cmd: cmd, Log: log}
+	}
 }
 
 // AgentCommand is the one place that knows how to launch each agent CLI.

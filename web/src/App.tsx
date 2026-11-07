@@ -2,11 +2,10 @@ import { useEffect, useState } from "preact/hooks";
 import { api, ApiError, setCsrf, type User } from "./api";
 import { navigate, useRoute } from "./router";
 import { Login } from "./pages/Login";
-import { SessionList } from "./pages/SessionList";
 import { NewSession } from "./pages/NewSession";
 import { SessionPage } from "./pages/SessionPage";
 import { Account } from "./pages/Account";
-import { Chats } from "./pages/Chats";
+import { Shell } from "./shell/Shell";
 import { lastPath, rememberPath, reportPresence } from "./pwa";
 
 export function App() {
@@ -58,7 +57,7 @@ export function App() {
   };
 
   switch (route.path) {
-    case "/sessions/:id":
+    case "/sessions/:id/terminal":
       return <SessionPage id={route.params.id} />;
     case "/new":
       return <NewSession user={user} onLogout={logout} />;
@@ -66,11 +65,8 @@ export function App() {
       return <NewSession user={user} onLogout={logout} edit={route.params.id} />;
     case "/account":
       return <Account user={user} onLogout={logout} />;
-    case "/chats":
-      return <Chats user={user} onLogout={logout} />;
-    case "/chats/:id":
-      return <Chats user={user} onLogout={logout} chatId={route.params.id} />;
     default:
-      return <SessionList user={user} onLogout={logout} />;
+      // "/", "/sessions/:id", "/chats", "/chats/:id": the workspace.
+      return <Shell user={user} route={route} onLogout={logout} />;
   }
 }

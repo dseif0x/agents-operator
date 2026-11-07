@@ -24,10 +24,25 @@ const (
 	OpChatSend   = "chat_send"
 	OpAttachment = "attachment" // {"id":"<attachment id>"} -> UplinkFile
 	OpDelivered  = "delivered"  // {"ids":[1,2]}
+
+	// Conversation sessions (docs/design/conversations.md).
+	OpEvents     = "events"      // {"events":[...]}: what the agent did
+	OpInputClaim = "input_claim" // {"id":"<input id>"} -> {"ok":true} when it may be sent
+	OpInputFile  = "input_file"  // {"id":"<file id>"} -> UplinkFile
 )
 
-// EventDeliver is the hub's push of queued messages.
-const EventDeliver = "deliver"
+// Hub pushes.
+const (
+	// EventDeliver is the hub's push of queued chat messages.
+	EventDeliver = "deliver"
+	// EventInputs pushes the owner's queued messages to a conversation
+	// session; the runner claims each before the agent gets it.
+	EventInputs = "inputs"
+	// EventInterrupt stops the running turn.
+	EventInterrupt = "interrupt"
+	// EventCancel drops queued inputs (IDs) the runner holds.
+	EventCancel = "cancel"
+)
 
 // UplinkFrame is one JSON text frame of the uplink, in either direction.
 type UplinkFrame struct {
@@ -40,6 +55,15 @@ type UplinkFrame struct {
 
 	Event      string         `json:"event,omitempty"`
 	Deliveries []ChatDelivery `json:"deliveries,omitempty"`
+	Inputs     []ConvoInput   `json:"inputs,omitempty"`
+	IDs        []string       `json:"ids,omitempty"`
+}
+
+// ConvoInput is a message from the owner for a conversation session.
+type ConvoInput struct {
+	ID    string     `json:"id"`
+	Text  string     `json:"text"`
+	Files []ChatFile `json:"files,omitempty"`
 }
 
 // ChatAuthor is who wrote a chat message.

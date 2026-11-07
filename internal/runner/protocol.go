@@ -154,6 +154,17 @@ const (
 	AgentShell = "shell"
 )
 
+// Session interfaces.
+const (
+	InterfaceTerminal     = "terminal"
+	InterfaceConversation = "conversation"
+)
+
+// HasConversation reports whether an agent can run as a conversation.
+func HasConversation(agent string) bool {
+	return agent == AgentClaude || agent == AgentCodex || agent == AgentOpenCode
+}
+
 // Agents lists every agent the runner image understands.
 var Agents = []string{AgentClaude, AgentOpenCode, AgentCodex, AgentShell}
 
@@ -272,6 +283,10 @@ const (
 	// system prompt: --append-system-prompt for Claude Code, a section of
 	// ~/.codex/AGENTS.md for Codex, an instructions file for OpenCode.
 	EnvPersona = "AGENT_PERSONA"
+	// EnvInterface is "conversation" when the runner drives the agent CLI
+	// through its structured protocol (docs/design/conversations.md) and
+	// the terminal runs a shell; anything else is the terminal mode.
+	EnvInterface = "AGENT_INTERFACE"
 	// EnvHandle is the session's chat handle ("eager_turing").
 	EnvHandle = "AGENT_HANDLE"
 	// EnvAgentDefinition is an OpenClaude session's agent definition and
