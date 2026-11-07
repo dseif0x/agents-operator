@@ -1464,8 +1464,22 @@
   .sh-slot {
     flex: 1;
   }
-  .sh-slot .sh-chip {
+  /* phones: the context gauge gives way, the model switcher stays */
+  .sh-slot .sh-ctx {
     display: none;
+  }
+  .sh-slot .sh-chip {
+    max-width: 120px;
+    padding: 0 8px;
+  }
+  .sh-slot .sh-chip b {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sh-slot .sh-menu {
+    right: -40px;
+    max-width: calc(100vw - 24px);
   }
 }
 
