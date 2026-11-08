@@ -107,10 +107,10 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
   const [autonomous, setAutonomous] = useState(true);
   const [gitCredentials, setGitCredentials] = useState(true);
   const [contextCompression, setContextCompression] = useState(false);
-  const [terminalMode, setTerminalMode] = useState(false);
   const [egress, setEgress] = useState("");
+  // Persona and agent definition are no longer in the form; an edit sends
+  // back what the session has.
   const [persona, setPersona] = useState("");
-  const [handle, setHandle] = useState("");
   const [agentDefinition, setAgentDefinition] = useState("");
   const [aiAccount, setAIAccount] = useState("");
   const [accounts, setAccounts] = useState<Account[] | null>(null);
@@ -174,10 +174,8 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
         setAutonomous(s.autonomous);
         setGitCredentials(s.git_credentials ?? true);
         setContextCompression(s.context_compression ?? false);
-        setTerminalMode(s.interface === "terminal");
         setEgress((s.egress || []).join("\n"));
         setPersona(s.persona || "");
-        setHandle(s.handle || "");
         setAgentDefinition(s.agent_definition || "");
         setAIAccount(s.ai_account || "");
         setEditable(s.state !== "deleting");
@@ -237,7 +235,7 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
     }
     if (agent !== "shell") {
       req.persona = persona;
-      req.interface = terminalMode ? "terminal" : "conversation";
+      req.interface = "conversation";
     }
     if (agent === "opencode") {
       req.agent_definition = agentDefinition;
@@ -418,15 +416,6 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
             commit, not push or use <code>gh</code>
           </label>
         </div>
-        {agent !== "shell" && (
-          <div class="checkbox">
-            <input id="termmode" type="checkbox" checked={terminalMode} onChange={(e) => setTerminalMode((e.target as HTMLInputElement).checked)} />
-            <label for="termmode" style="margin:0;color:inherit">
-              Terminal instead of a conversation: the agent's CLI runs in a terminal you type into, as before. Off (the default), you chat
-              with the agent and see its steps; the terminal stays available for logins
-            </label>
-          </div>
-        )}
         {agent === "opencode" && (
           <div class="checkbox">
             <input id="compress" type="checkbox" checked={contextCompression} onChange={(e) => setContextCompression((e.target as HTMLInputElement).checked)} />
@@ -438,43 +427,6 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
               instead of OpenCode's compaction: the model folds older parts of the conversation into summaries as the context fills
               and can unfold them again
             </label>
-          </div>
-        )}
-        {agent !== "shell" && (
-          <div>
-            <label for="persona">
-              Persona{handle && <span class="muted"> · chat handle @{handle}</span>}
-            </label>
-            <textarea
-              id="persona"
-              value={persona}
-              onInput={(e) => setPersona((e.target as HTMLTextAreaElement).value)}
-              placeholder="Personality and role, e.g. “You are the reviewer. Be blunt, ask for tests.”"
-              rows={4}
-            />
-            <div class="muted" style="font-size:12px;margin-top:3px">
-              Added to the agent's own system prompt from the next start. In chats, others see this persona and mention the session by its
-              handle.
-            </div>
-          </div>
-        )}
-        {agent === "opencode" && (
-          <div>
-            <label for="agentdef">Agent definition</label>
-            <textarea
-              id="agentdef"
-              value={agentDefinition}
-              onInput={(e) => setAgentDefinition((e.target as HTMLTextAreaElement).value)}
-              placeholder={"---\nname: my-agent\ndescription: What this agent is for\nmodel: unjailed/glm-5.3-uncensored\n---\nYou are …"}
-              rows={6}
-              spellcheck={false}
-            />
-            <div class="muted" style="font-size:12px;margin-top:3px">
-              Optional. An OpenCode agent: front matter with <code>name</code> and <code>description</code> (optionally OpenCode agent settings
-              such as <code>model</code>, <code>temperature</code> or <code>permission</code>), then the agent's prompt. OpenCode starts as that
-              agent (<code>--agent</code>), whose prompt replaces the built-in one; the persona above is added after it. Both apply from the
-              next start.
-            </div>
           </div>
         )}
         {!!(defaults?.egress_allowed?.length || egress) && (
