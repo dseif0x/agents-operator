@@ -19,8 +19,6 @@ type UserCredentials struct {
 	Accounts []*store.Account
 	Values   map[string][]byte
 	Profile  *store.Profile
-	// Skills is the user's skill library.
-	Skills []*store.Skill
 }
 
 func (u UserCredentials) value(a *store.Account) []byte {
@@ -182,7 +180,6 @@ func credentialEnv(data map[string][]byte, s *store.Session, uc UserCredentials)
 		data[runner.EnvAIAccounts], _ = json.Marshal(described)
 	}
 	mcpEnv(data, s, uc)
-	skillEnv(data, s, uc.Skills)
 }
 
 var mcpNameChars = regexp.MustCompile(`[^a-z0-9_-]+`)
@@ -218,21 +215,6 @@ func mcpEnv(data map[string][]byte, s *store.Session, uc UserCredentials) {
 	}
 	if len(servers) > 0 {
 		data[runner.EnvMCPServers], _ = json.Marshal(servers)
-	}
-}
-
-// skillEnv adds the skills the session picked (runner.EnvSkills).
-func skillEnv(data map[string][]byte, s *store.Session, library []*store.Skill) {
-	var skills []runner.SkillDef
-	for _, id := range s.Skills {
-		for _, sk := range library {
-			if sk.ID == id {
-				skills = append(skills, runner.SkillDef{Name: sk.Name, Description: sk.Description, Instructions: sk.Instructions})
-			}
-		}
-	}
-	if len(skills) > 0 {
-		data[runner.EnvSkills], _ = json.Marshal(skills)
 	}
 }
 

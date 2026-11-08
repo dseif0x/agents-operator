@@ -73,6 +73,10 @@ const (
 	EventMemories = "memories"
 	// EventSendNow gives queued inputs (IDs) to the agent right away.
 	EventSendNow = "send_now"
+	// EventSkills replaces the skills the session gets (Skills): on every
+	// connect and whenever the owner changes them. The runner writes them
+	// where the CLIs look; Claude Code picks changes up while it runs.
+	EventSkills = "skills"
 	// EventBackground moves the agent's running foreground commands to the
 	// background (Ctrl+B in Claude Code).
 	EventBackground = "background"
@@ -110,7 +114,10 @@ type UplinkFrame struct {
 	Model      string         `json:"model,omitempty"`
 	Memories   []MemoryNote   `json:"memories,omitempty"`
 	// HasMemories marks a memories event (an empty list is one too).
-	HasMemories bool `json:"has_memories,omitempty"`
+	HasMemories bool       `json:"has_memories,omitempty"`
+	Skills      []SkillDef `json:"skills,omitempty"`
+	// HasSkills marks a skills event (an empty list is one too).
+	HasSkills bool `json:"has_skills,omitempty"`
 }
 
 // ConvoInput is a message from the owner for a conversation session.

@@ -333,8 +333,6 @@ const (
 	// []MCPServer; each token is in its own variable (EnvMCPTokenPrefix).
 	EnvMCPServers     = "AGENTS_OPERATOR_MCP_SERVERS"
 	EnvMCPTokenPrefix = "AGENTS_OPERATOR_MCP_TOKEN_"
-	// EnvSkills lists the skills the session gets, JSON []SkillDef.
-	EnvSkills = "AGENTS_OPERATOR_SKILLS"
 	// EnvAIKeyPrefix starts the variables holding those keys.
 	EnvAIKeyPrefix = "AGENTS_OPERATOR_KEY_"
 	// EnvPrivateFile is set by `agent-runner init`: the file holding the

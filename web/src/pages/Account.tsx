@@ -434,7 +434,7 @@ function SkillsCard(props: { onError: (msg: string) => void; onNotice: (msg: str
     load();
   }, []);
   const remove = async (s: Skill) => {
-    if (!confirm(`Delete the skill ${s.name}? Agents that have it lose it when they next start.`)) return;
+    if (!confirm(`Delete the skill ${s.name}? Agents that have it lose it right away.`)) return;
     try {
       await api.deleteSkill(s.id);
       load();
@@ -454,7 +454,8 @@ function SkillsCard(props: { onError: (msg: string) => void; onNotice: (msg: str
       </div>
       <p class="muted" style="margin:6px 0 10px;font-size:13px">
         Instructions an agent loads when they fit the task (Agent Skills: a SKILL.md for Claude Code, Codex and OpenCode). Pick them per
-        agent in its settings; they apply when the agent restarts.
+        agent in its settings. Running agents get new and changed skills right away; Claude Code picks them up mid-session, Codex and
+        OpenCode when they next start.
       </p>
       {editing !== null && (
         <SkillForm
@@ -506,7 +507,7 @@ function SkillForm(props: { skill?: Skill; onCancel: () => void; onSaved: (msg: 
       const input = { name, description, instructions };
       if (s) await api.updateSkill(s.id, input);
       else await api.createSkill(input);
-      props.onSaved(s ? "Skill saved. Agents with it get the change when they next start." : "Skill added. Pick it in an agent's settings.");
+      props.onSaved(s ? "Skill saved. Running agents with it get the change right away." : "Skill added. Pick it in an agent's settings.");
     } catch (err) {
       setError((err as Error).message);
     } finally {

@@ -534,11 +534,10 @@ func TestBuildSecretMCPServersAndSkills(t *testing.T) {
 	uc.Values[store.AccountSecretKey("ha")] = []byte("tok-ha")
 	uc.Values[store.AccountSecretKey("ha2")] = []byte("tok-ha2")
 	uc.Values[store.AccountSecretKey("off")] = []byte("tok-off")
-	uc.Skills = []*store.Skill{{ID: "sk1", Name: "energy-report", Description: "d", Instructions: "i"}, {ID: "sk2", Name: "other", Description: "d", Instructions: "i"}}
 	s := testSession()
 	s.Agent = runner.AgentShell
 	s.MCPServers = []string{"ha", "ha2", "gone", "oai"} // a deleted id and a non-MCP account are skipped
-	s.Skills = []string{"sk1", "missing"}
+	s.Skills = []string{"sk1"}
 	data := BuildSecret(s, testCfg(), "tok", uc).Data
 	var servers []runner.MCPServer
 	if err := json.Unmarshal(data[runner.EnvMCPServers], &servers); err != nil {
@@ -555,8 +554,10 @@ func TestBuildSecretMCPServersAndSkills(t *testing.T) {
 	if strings.Contains(string(data[runner.EnvAIAccounts]), "mcp_server") || data[runner.EnvAIKeyPrefix+"HOME_ASSISTANT"] != nil {
 		t.Fatalf("an MCP server became an AI account: %s", data[runner.EnvAIAccounts])
 	}
-	var skills []runner.SkillDef
-	if err := json.Unmarshal(data[runner.EnvSkills], &skills); err != nil || len(skills) != 1 || skills[0].Name != "energy-report" {
-		t.Fatalf("skills = %+v, %v", skills, err)
+	// Skills come over the uplink, not in the Secret.
+	for k := range data {
+		if strings.Contains(k, "SKILL") {
+			t.Fatalf("skills in the Secret: %s", k)
+		}
 	}
 }

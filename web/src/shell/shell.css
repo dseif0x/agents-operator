@@ -1380,7 +1380,9 @@
     padding: 6px 8px calc(8px + var(--sab));
   }
 
-  .sh-side-foot {
+  /* phones have no rail: theme, Account, Routines and Log out live here
+     (more specific than the rule below, which hides it on wider screens) */
+  .sh .sh-side-foot {
     display: flex;
   }
 }

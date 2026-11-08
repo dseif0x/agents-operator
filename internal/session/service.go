@@ -318,7 +318,7 @@ var reservedEnv = map[string]bool{
 	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvAgentGitCredentials: true, runner.EnvContextCompression: true, runner.EnvInterface: true, runner.EnvRepos: true,
 	runner.EnvWorkspace: true, runner.EnvListen: true, "HOME": true, "PATH": true,
 	runner.EnvGitSSH: true, runner.EnvGitHTTPS: true, runner.EnvGitHubToken: true, runner.EnvAIAccounts: true,
-	runner.EnvMCPServers: true, runner.EnvSkills: true,
+	runner.EnvMCPServers:  true,
 	runner.EnvGitUserName: true, runner.EnvGitUserEmail: true, runner.EnvPrivateFile: true,
 	runner.EnvK8sAccess: true, runner.EnvK8sNamespaces: true, runner.EnvEgress: true,
 	runner.EnvSandboxNamespace: true, runner.EnvSandboxHost: true, runner.EnvSandboxSecurity: true,
@@ -694,6 +694,9 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 		return nil, err
 	}
 	s.event(ctx, id, "user", "settings changed by "+owner.Username)
+	if req.Skills != nil {
+		s.pushSkills(ctx, updated) // skills apply right away
+	}
 	s.recordRepoUsage(ctx, owner.ID, sess.Repos, repos)
 	s.SessionChanged(ctx, updated)
 	return updated, nil
@@ -773,16 +776,16 @@ func (s *Service) checkSkills(ctx context.Context, ownerID string, ids []string)
 		out = append(out, id)
 	}
 	if size > MaxSessionSkillBytes {
-		return nil, &ValidationError{fmt.Sprintf("the skills of a session are limited to %d KiB together", MaxSessionSkillBytes>>10)}
+		return nil, &ValidationError{fmt.Sprintf("the skills of a session are limited to %d MiB together", MaxSessionSkillBytes>>20)}
 	}
 	return out, nil
 }
 
-// Limits on what a session gets: the runner receives them in environment
-// variables, of which one may hold at most 128 KiB.
+// Limits on what a session gets. Skills reach the runner over the uplink,
+// whose frames may be 80 MiB (runner.UplinkMaxFrame).
 const (
 	MaxSessionMCPServers = 20
-	MaxSessionSkillBytes = 96 << 10
+	MaxSessionSkillBytes = 24 << 20
 )
 
 func nonNil(s []string) []string {
