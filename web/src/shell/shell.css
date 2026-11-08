@@ -2571,10 +2571,49 @@ button.sh-chip {
 }
 
 @media (max-width: 760px) {
-  .sh-slot .sh-bg-chip {
-    max-width: 64px;
-    overflow: hidden;
+  /* a phone shows the spinner and the count */
+  .sh-slot .sh-bg-chip .lbl {
+    display: none;
   }
+  .sh-bg-row {
+    max-width: none;
+  }
+}
+
+/* a newer UI is out */
+.update-banner {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom) + 96px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 24px);
+  padding: 8px 8px 8px 14px;
+  border-radius: 12px;
+  background: var(--sh-strong, #ececec);
+  color: var(--sh-on-strong, #111);
+  font-size: 14px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+}
+
+.update-banner button {
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(127, 127, 127, 0.2);
+  color: inherit;
+}
+
+.update-banner button.x {
+  padding: 6px 9px;
+  font-weight: 400;
+  background: none;
 }
 
 /* a reply quotes one short line */

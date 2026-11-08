@@ -1,3 +1,4 @@
+import { checkForUpdate } from "./update";
 // Thin fetch wrapper for /api/v1. Cookie auth, CSRF header on writes.
 
 export interface User {
@@ -550,12 +551,16 @@ const openListeners = new Set<() => void>();
 let source: EventSource | null = null;
 let retry = 1000;
 let subscribers = 0;
+// reconnecting marks a connection after an error (the hub went away).
+let reconnecting = false;
 
 function connect() {
   if (source || subscribers === 0) return;
   const es = new EventSource("/api/v1/sessions/events");
   source = es;
   es.onopen = () => {
+    if (retry > 1000 || reconnecting) checkForUpdate(true);
+    reconnecting = false;
     retry = 1000;
     openListeners.forEach((fn) => fn());
   };
@@ -573,6 +578,7 @@ function connect() {
   es.onerror = () => {
     es.close();
     if (source === es) source = null;
+    reconnecting = true;
     setTimeout(connect, retry);
     retry = Math.min(retry * 2, 30000);
   };
