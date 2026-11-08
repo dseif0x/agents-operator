@@ -7,6 +7,7 @@ import { copyCode, mentionedHandles, renderMessage } from "../markdown";
 import { loadDraft, saveDraft } from "../drafts";
 import { Avatar as ShellAvatar } from "../shell/Avatar";
 import { TurnSteps } from "../shell/AgentChat";
+import { previewKind, TextPreview } from "../attachments";
 
 // Chats: groups of the owner's agent sessions, like a group chat. The list
 // is on the left (the whole screen on a phone until a chat is open), the
@@ -487,6 +488,7 @@ function Message(props: {
 }) {
   const { m } = props;
   const owner = m.author.kind === "owner";
+  const [preview, setPreview] = useState<ChatMessage["attachments"][number] | null>(null);
   const html = useMemo(() => renderMessage(m.text, props.members), [m.text, props.members]);
   const queued = Object.entries(m.deliveries)
     .filter(([, st]) => st === "queued")
@@ -536,15 +538,44 @@ function Message(props: {
           <div class="chat-files">
             {m.attachments
               .filter((a) => !isImage(a))
-              .map((a) => (
-                <a class="chat-file" href={a.url} download={a.name} title={`Download ${a.name}`}>
-                  <span class="chat-file-icon">📎</span>
-                  <span class="chat-file-name">{a.name}</span>
-                  <span class="muted chat-file-size">{sizeLabel(a.size)}</span>
-                </a>
-              ))}
+              .map((a) => {
+                const kind = previewKind(a.content_type, a.name);
+                if (kind === "video") return <video class="cv-media" src={a.url} controls playsInline preload="metadata" title={a.name} />;
+                if (kind === "audio")
+                  return (
+                    <div class="cv-audio">
+                      <span>{a.name}</span>
+                      <audio src={a.url} controls preload="metadata" />
+                    </div>
+                  );
+                const inner = (
+                  <>
+                    <span class="chat-file-icon">{kind === "text" ? "📄" : "📎"}</span>
+                    <span class="chat-file-name">{a.name}</span>
+                    <span class="muted chat-file-size">{sizeLabel(a.size)}</span>
+                  </>
+                );
+                if (kind === "text")
+                  return (
+                    <button type="button" class="chat-file" title={`Preview ${a.name}`} onClick={() => setPreview(a)}>
+                      {inner}
+                    </button>
+                  );
+                if (kind === "pdf")
+                  return (
+                    <a class="chat-file" href={a.url} target="_blank" rel="noopener" title={`Open ${a.name}`}>
+                      {inner}
+                    </a>
+                  );
+                return (
+                  <a class="chat-file" href={a.url} download={a.name} title={`Download ${a.name}`}>
+                    {inner}
+                  </a>
+                );
+              })}
           </div>
         )}
+        {preview && <TextPreview name={preview.name} url={preview.url} size={preview.size} onClose={() => setPreview(null)} />}
         {queued.length > 0 && <div class="muted chat-queued">queued for {queued.join(", ")}</div>}
       </div>
       <button class="btn small chat-reply" onClick={props.onReply} title="Reply">

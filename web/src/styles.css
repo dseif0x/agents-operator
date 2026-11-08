@@ -102,6 +102,58 @@ textarea:focus {
   outline-offset: -1px;
 }
 
+/* Checkboxes are drawn here: the input rules above (background, padding,
+   full width) must not reach them, and iOS draws its own control otherwise. */
+input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid var(--fg-muted);
+  border-radius: 6px;
+  background: transparent;
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+input[type="checkbox"]::after {
+  content: "";
+  width: 10px;
+  height: 5px;
+  border-left: 2px solid var(--accent-fg);
+  border-bottom: 2px solid var(--accent-fg);
+  transform: translateY(-1px) rotate(-45deg);
+  opacity: 0;
+}
+
+input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+input[type="checkbox"]:checked::after {
+  opacity: 1;
+}
+
+input[type="checkbox"]:focus {
+  outline: none;
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input[type="checkbox"]:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 textarea {
   font-family: var(--mono);
   font-size: 13px;
@@ -384,7 +436,7 @@ label {
 }
 
 .checkbox input {
-  width: auto;
+  width: 20px;
 }
 
 details summary {
@@ -938,7 +990,7 @@ kbd {
 }
 
 .member-pick input {
-  width: auto;
+  width: 20px;
 }
 
 .chat-view {

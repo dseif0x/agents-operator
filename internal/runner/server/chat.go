@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/dseif0x/agents-operator/internal/filetype"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/runner/convo"
 )
@@ -791,9 +791,5 @@ func (c *Chat) readFileMax(path string, max int64) (runner.UplinkFile, error) {
 	if len(data) == 0 {
 		return f, fmt.Errorf("%s is empty", path)
 	}
-	ct := http.DetectContentType(data)
-	if byName := mime.TypeByExtension(filepath.Ext(real)); byName != "" && max > 10<<20 {
-		ct = byName
-	}
-	return runner.UplinkFile{Name: filepath.Base(real), ContentType: ct, Data: data}, nil
+	return runner.UplinkFile{Name: filepath.Base(real), ContentType: filetype.Detect(real, data), Data: data}, nil
 }

@@ -5,6 +5,7 @@ import { createPortal } from "preact/compat";
 import { api, subscribeItems, type ConvItem, type Session } from "../api";
 import { Link, navigate } from "../router";
 import { copyCode, renderMessage } from "../markdown";
+import { previewKind, TextPreview } from "../attachments";
 import { Avatar } from "./Avatar";
 import { Icon } from "./icons";
 import { agentLabel, agentStatus, longTime, shortTime } from "./format";
@@ -327,21 +328,54 @@ function fileSize(n: number): string {
 /** Attachments: images inline (tap for full size), anything else a download. */
 function FileList({ sessionId, files, agent, small }: { sessionId: string; files: ItemFile[]; agent?: boolean; small?: boolean }) {
   const url = (f: ItemFile) => `/api/v1/sessions/${sessionId}/files/${f.id}`;
+  const [preview, setPreview] = useState<ItemFile | null>(null);
+  const chip = (f: ItemFile, icon: string) => (
+    <>
+      <Icon name={icon} size={16} />
+      <span>{f.name}</span>
+      {agent && <span class="size">{fileSize(f.size)}</span>}
+    </>
+  );
   return (
-    <div class={`cv-files ${agent ? "agent" : ""} ${small ? "small" : ""}`}>
-      {files.map((f) =>
-        f.content_type.startsWith("image/") && f.content_type !== "image/svg+xml" ? (
-          <a key={f.id} class="cv-file image" href={url(f)} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}>
-            <img src={url(f)} alt={f.name} loading="lazy" />
-          </a>
-        ) : (
-          <a key={f.id} class="cv-file" href={url(f)} download={f.name} onClick={(e) => e.stopPropagation()}>
-            <Icon name="file" size={16} />
-            <span>{f.name}</span>
-            {agent && <span class="size">{fileSize(f.size)}</span>}
-          </a>
-        ),
-      )}
+    <div class={`cv-files ${agent ? "agent" : ""} ${small ? "small" : ""}`} onClick={(e) => e.stopPropagation()}>
+      {files.map((f) => {
+        switch (previewKind(f.content_type, f.name)) {
+          case "image":
+            return (
+              <a key={f.id} class="cv-file image" href={url(f)} target="_blank" rel="noopener">
+                <img src={url(f)} alt={f.name} loading="lazy" />
+              </a>
+            );
+          case "video":
+            return <video key={f.id} class="cv-media" src={url(f)} controls playsInline preload="metadata" title={f.name} />;
+          case "audio":
+            return (
+              <div key={f.id} class="cv-audio">
+                <span>{f.name}</span>
+                <audio src={url(f)} controls preload="metadata" />
+              </div>
+            );
+          case "pdf":
+            return (
+              <a key={f.id} class="cv-file" href={url(f)} target="_blank" rel="noopener">
+                {chip(f, "file")}
+              </a>
+            );
+          case "text":
+            return (
+              <button key={f.id} type="button" class="cv-file" onClick={() => setPreview(f)}>
+                {chip(f, "eye")}
+              </button>
+            );
+          default:
+            return (
+              <a key={f.id} class="cv-file" href={url(f)} download={f.name}>
+                {chip(f, "file")}
+              </a>
+            );
+        }
+      })}
+      {preview && <TextPreview name={preview.name} url={url(preview)} size={preview.size} onClose={() => setPreview(null)} />}
     </div>
   );
 }

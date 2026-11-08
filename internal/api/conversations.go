@@ -229,20 +229,5 @@ func (s *Server) inputFile(w http.ResponseWriter, r *http.Request) {
 		s.mapErr(w, err)
 		return
 	}
-	// As for chat attachments: images inline, anything else a download.
-	disposition, ctype := "attachment", "application/octet-stream"
-	if session.IsChatImage(f.ContentType) {
-		disposition, ctype = "inline", f.ContentType
-	}
-	w.Header().Set("Content-Type", ctype)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	if cd := mime.FormatMediaType(disposition, map[string]string{"filename": session.CleanFileName(f.Name)}); cd != "" && f.Name != "" {
-		w.Header().Set("Content-Disposition", cd)
-	} else {
-		w.Header().Set("Content-Disposition", disposition)
-	}
-	w.Header().Set("Content-Length", strconv.Itoa(len(f.Data)))
-	_, _ = w.Write(f.Data)
+	serveStoredFile(w, r, f.Name, f.ContentType, f.Data)
 }
