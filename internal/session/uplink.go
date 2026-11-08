@@ -390,6 +390,12 @@ func (u *Uplinks) do(ctx context.Context, sessionID string, f runner.UplinkFrame
 		}
 		_ = json.Unmarshal(f.Args, &a)
 		return u.Svc.AgentMemory(ctx, sess, f.Op, a.Text, a.ID)
+	case runner.OpShareFile:
+		var a runner.ShareFileArgs
+		if err := json.Unmarshal(f.Args, &a); err != nil {
+			return nil, &ValidationError{"bad arguments"}
+		}
+		return u.Svc.AgentShareFiles(ctx, sess, a)
 	case runner.OpDelivered:
 		var a struct {
 			IDs []int64 `json:"ids"`

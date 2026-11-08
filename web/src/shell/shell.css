@@ -988,6 +988,29 @@
   background: none;
 }
 
+/* files from the agent: left-aligned, with sizes */
+.cv-files.agent {
+  justify-content: flex-start;
+  margin-top: 6px;
+}
+
+.cv-file .size {
+  color: var(--sh-muted);
+  font-size: 12px;
+  flex: none;
+}
+
+/* pictures the agent looked at, under its folded steps */
+.cv-files.small {
+  padding: 6px 12px 10px;
+  margin-top: 0;
+}
+
+.cv-files.small .cv-file img {
+  max-width: 120px;
+  max-height: 90px;
+}
+
 .cv-load-more {
   align-self: center;
 }

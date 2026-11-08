@@ -150,7 +150,20 @@ type Item struct {
 	Tool   *Tool  `json:"tool,omitempty"`
 	// Source is where a user item came from (SourceChat, ...).
 	Source string `json:"source,omitempty"`
+	// Files are files the item shows (images in a tool's result); the hub
+	// stores them and keeps references.
+	Files []File `json:"files,omitempty"`
 }
+
+// File is a file of an item, with its bytes.
+type File struct {
+	Name        string `json:"name"`
+	ContentType string `json:"content_type"`
+	Data        []byte `json:"data"`
+}
+
+// MaxItemFile bounds a file sent with an item (larger ones are left out).
+const MaxItemFile = 10 << 20
 
 // Tool describes a tool call.
 type Tool struct {

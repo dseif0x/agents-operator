@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -106,5 +107,56 @@ func TestConversationPush(t *testing.T) {
 		if n.Title != w.Title || n.Body != w.Body || n.URL != "/sessions/"+sess.ID || n.Tag != "session-"+sess.ID {
 			t.Fatalf("notification %d = %+v, want %+v", i, n, w)
 		}
+	}
+}
+
+func TestAgentFiles(t *testing.T) {
+	svc, _, u := newService(t)
+	ctx := context.Background()
+	sess, err := svc.Create(ctx, u, CreateRequest{Name: "impl", Agent: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A picture the agent read shows on its step.
+	png := []byte("\x89PNG\r\n\x1a\nfake")
+	if err := svc.ApplyEvents(ctx, sess, []convo.Event{{Type: convo.EventTurnStarted, Turn: "t1"},
+		{Type: convo.EventItem, Turn: "t1", Item: &convo.Item{Key: "tool1", Kind: convo.KindTool, Status: convo.StatusDone, Tool: &convo.Tool{Output: "[image]"}, Files: []convo.File{{Name: "home.png", ContentType: "image/png", Data: png}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	it, err := svc.Store.Conversations().GetItem(ctx, sess.ID, "main", "tool1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d ItemData
+	_ = json.Unmarshal(it.Data, &d)
+	if len(d.Files) != 1 || d.Files[0].Name != "home.png" {
+		t.Fatalf("tool files = %+v", d.Files)
+	}
+	f, err := svc.OwnerInputFile(ctx, u.ID, sess.ID, d.Files[0].ID)
+	if err != nil || string(f.Data) != string(png) {
+		t.Fatalf("file = %+v, %v", f, err)
+	}
+	// Files the agent shares: an item of their own in the turn.
+	res, err := svc.AgentShareFiles(ctx, sess, runner.ShareFileArgs{Turn: "t1", Text: "the build log", Files: []runner.UplinkFile{{Name: "build.log", ContentType: "text/plain; charset=utf-8", Data: []byte("ok\n")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := res.(map[string]any); m["shared"].([]string)[0] != "build.log" {
+		t.Fatalf("result = %+v", res)
+	}
+	items, _ := svc.Store.Conversations().TurnItems(ctx, sess.ID, "main", "t1")
+	var shared *ItemData
+	for _, it := range items {
+		if it.Kind == KindFiles {
+			var d ItemData
+			_ = json.Unmarshal(it.Data, &d)
+			shared = &d
+		}
+	}
+	if shared == nil || shared.Text != "the build log" || len(shared.Files) != 1 || shared.Files[0].ContentType != "text/plain; charset=utf-8" {
+		t.Fatalf("shared = %+v", shared)
+	}
+	if _, err := svc.AgentShareFiles(ctx, sess, runner.ShareFileArgs{Files: []runner.UplinkFile{{Name: "empty"}}}); err == nil {
+		t.Fatal("an empty file was shared")
 	}
 }

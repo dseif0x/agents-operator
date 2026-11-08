@@ -37,7 +37,22 @@ const (
 	OpMemorySave   = "memory_save"
 	OpMemoryForget = "memory_forget"
 	OpMemoryList   = "memory_list"
+	// OpShareFile sends files to the owner in the conversation:
+	// ShareFileArgs -> {"ok":true}.
+	OpShareFile = "share_file"
 )
+
+// ShareFileArgs are the arguments of OpShareFile.
+type ShareFileArgs struct {
+	Files []UplinkFile `json:"files"`
+	// Text is a caption for the files.
+	Text string `json:"text,omitempty"`
+	// Turn is the conversation turn the agent shares from.
+	Turn string `json:"turn,omitempty"`
+}
+
+// MaxShareFile bounds a file the agent shares with the owner.
+const MaxShareFile = 25 << 20
 
 // Hub pushes.
 const (

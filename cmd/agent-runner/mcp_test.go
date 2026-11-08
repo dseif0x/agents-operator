@@ -57,7 +57,7 @@ func TestMCPServer(t *testing.T) {
 	if init["protocolVersion"] != "2025-03-26" || init["capabilities"].(map[string]any)["tools"] == nil {
 		t.Fatalf("initialize = %v", init)
 	}
-	if tools := resps[1]["result"].(map[string]any)["tools"].([]any); len(tools) != 9 { // four chat tools, two routine tools, three memory tools
+	if tools := resps[1]["result"].(map[string]any)["tools"].([]any); len(tools) != 10 { // four chat tools, two routine tools, three memory tools, share_file
 		t.Fatalf("tools = %v", tools)
 	}
 	text := func(i int) (string, bool) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -550,6 +551,12 @@ type claudeBlockJSON struct {
 	ToolUseID string          `json:"tool_use_id"`
 	Content   json.RawMessage `json:"content"`
 	IsError   bool            `json:"is_error"`
+	// image blocks
+	Source *struct {
+		Type      string `json:"type"`
+		MediaType string `json:"media_type"`
+		Data      string `json:"data"`
+	} `json:"source,omitempty"`
 }
 
 type claudeStreamEvent struct {
@@ -833,7 +840,8 @@ func (c *Claude) toolResults(m claudeMessage, parent string) {
 			status = StatusFailed
 		}
 		out := resultText(b.Content)
-		c.emit(Event{Type: EventItem, Turn: turn, Item: &Item{Key: b.ToolUseID, Kind: KindTool, Status: status, Parent: parent, Tool: &Tool{Output: trim(out), Error: b.IsError}}})
+		c.emit(Event{Type: EventItem, Turn: turn, Item: &Item{Key: b.ToolUseID, Kind: KindTool, Status: status, Parent: parent, Tool: &Tool{Output: trim(out), Error: b.IsError},
+			Files: resultImages(b.Content, c.toolTitle(b.ToolUseID))}})
 		if m := bgStartRE.FindStringSubmatch(out); m != nil && !b.IsError {
 			c.mu.Lock()
 			c.background[m[1]] = firstNonEmpty(c.toolTitles[b.ToolUseID], "background task")
@@ -937,6 +945,42 @@ func resultText(raw json.RawMessage) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+// resultImages are the images of a tool result (Read of a picture, a
+// screenshot), so the owner sees what the agent saw.
+func resultImages(raw json.RawMessage, title string) []File {
+	var blocks []claudeBlockJSON
+	if json.Unmarshal(raw, &blocks) != nil {
+		return nil
+	}
+	var files []File
+	for _, b := range blocks {
+		if b.Type != "image" || b.Source == nil || b.Source.Type != "base64" {
+			continue
+		}
+		data, err := base64.StdEncoding.DecodeString(b.Source.Data)
+		if err != nil || len(data) == 0 || len(data) > MaxItemFile {
+			continue
+		}
+		ct := b.Source.MediaType
+		if ct == "" {
+			ct = http.DetectContentType(data)
+		}
+		name := "image"
+		if base := filepath.Base(title); title != "" && base != "." && base != "/" {
+			name = base
+		}
+		files = append(files, File{Name: name, ContentType: ct, Data: data})
+	}
+	return files
+}
+
+// toolTitle is the title a tool call was shown with.
+func (c *Claude) toolTitle(id string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.toolTitles[id]
 }
 
 func claudeToolKind(name string) string {

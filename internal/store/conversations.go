@@ -85,6 +85,8 @@ type Conversations interface {
 	// SetInputState moves a queued input to state; it reports false when the
 	// input was not queued any more.
 	SetInputState(ctx context.Context, sessionID, id, state string) (bool, error)
+	// AddFile stores a file of no input (one the agent shares or reads).
+	AddFile(ctx context.Context, f *ConvFile) error
 	// GetFile returns a file with its data.
 	GetFile(ctx context.Context, sessionID, id string) (*ConvFile, error)
 }

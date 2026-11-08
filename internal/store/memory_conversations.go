@@ -145,6 +145,17 @@ func (r memConversations) AddInput(_ context.Context, in *ConvInput) error {
 	return nil
 }
 
+func (r memConversations) AddFile(_ context.Context, f *ConvFile) error {
+	r.d.mu.Lock()
+	defer r.d.mu.Unlock()
+	if f.ID == "" {
+		f.ID = NewID()
+	}
+	cp := *f
+	r.d.files[f.ID] = &cp
+	return nil
+}
+
 func (r memConversations) find(sessionID, id string) *ConvInput {
 	for _, in := range r.d.inputs {
 		if in.SessionID == sessionID && in.ID == id {
