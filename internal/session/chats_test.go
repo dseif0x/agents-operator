@@ -102,7 +102,7 @@ func TestChatAddressing(t *testing.T) {
 	_ = svc.MarkDelivered(ctx, review, []int64{m.ID})
 
 	// An agent's untagged message: everyone else (not the author).
-	am, err := svc.AgentPost(ctx, review, "launch", "LGTM with one nit.", 0, nil)
+	am, err := svc.AgentPost(ctx, review, "launch", "LGTM with one nit.", 0, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestChatAddressing(t *testing.T) {
 	if len(m.Deliveries) != 2 || m.Deliveries[tst.ID] != "" {
 		t.Fatalf("with a muted member = %+v", m.Deliveries)
 	}
-	if mm, _ := svc.AgentPost(ctx, tst, c.ID, "hello?", 0, nil); len(mm.Deliveries) != 0 {
+	if mm, _ := svc.AgentPost(ctx, tst, c.ID, "hello?", 0, nil, ""); len(mm.Deliveries) != 0 {
 		t.Fatalf("muted member's message delivered: %+v", mm.Deliveries)
 	}
 	// A muted chat delivers nothing.
@@ -177,7 +177,7 @@ func TestChatAddressing(t *testing.T) {
 	}
 	// A session sees only its own chats.
 	other, _ := svc.Create(ctx, u, CreateRequest{Name: "outsider", Agent: "claude"})
-	if _, err := svc.AgentPost(ctx, other, "launch", "hi", 0, nil); err == nil {
+	if _, err := svc.AgentPost(ctx, other, "launch", "hi", 0, nil, ""); err == nil {
 		t.Fatal("an outsider posted")
 	}
 }

@@ -170,6 +170,10 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, " / ")
 }
 
+// ErrNoSteer is returned by Steer when the CLI cannot take a message
+// during a turn.
+var ErrNoSteer = errors.New("the agent cannot take a message during a turn")
+
 // ErrBusy is returned by Send while a turn runs.
 var ErrBusy = errors.New("a turn is running")
 

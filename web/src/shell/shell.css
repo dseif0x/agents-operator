@@ -2332,3 +2332,247 @@ button.sh-chip {
   color: var(--sh-muted);
 }
 .cv-warn { color: var(--sh-warn); }
+
+/* ---- chats in the workspace: OpenBot-style channel ---- */
+.sh .chat-view {
+  background: var(--sh-bg);
+}
+
+.sh .chat-head {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--sh-border);
+  background: var(--sh-bg);
+}
+
+.sh .chat-head .btn {
+  border-radius: 9px;
+}
+
+.sh .chat-body {
+  padding: 16px 0 8px;
+}
+
+.sh .chat-msg {
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 3px 18px;
+  gap: 10px;
+  background: none;
+}
+
+.sh .chat-msg:hover {
+  background: none;
+}
+
+.sh .chat-msg-avatar {
+  width: 34px;
+  flex: none;
+}
+
+.sh .chat-msg-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  max-width: 82%;
+}
+
+.sh .chat-msg-head {
+  font-size: 12.5px;
+}
+
+.sh .chat-text {
+  background: var(--sh-bubble);
+  border-radius: 18px;
+  padding: 8px 14px;
+  line-height: 1.5;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.sh .chat-msg.mine {
+  flex-direction: row-reverse;
+}
+
+.sh .chat-msg.mine .chat-msg-avatar {
+  display: none;
+}
+
+.sh .chat-msg.mine .chat-msg-main {
+  align-items: flex-end;
+  margin-left: auto;
+}
+
+.sh .chat-msg.mine .chat-text {
+  background: var(--sh-bubble-own);
+}
+
+.sh .chat-msg .cv-steps {
+  min-width: min(420px, 100%);
+}
+
+.sh .chat-quote {
+  border-left: 3px solid var(--sh-border);
+  background: none;
+  color: var(--sh-muted);
+}
+
+.sh .composer {
+  max-width: 900px;
+  margin: 0 auto 10px;
+  width: calc(100% - 24px);
+  border: 1px solid var(--sh-border);
+  border-radius: 16px;
+  background: var(--sh-panel);
+  padding: 8px 10px;
+}
+
+.sh .composer textarea {
+  background: transparent;
+  border: 0;
+  font-family: var(--sh-font);
+  font-size: 15px;
+  min-height: 0;
+}
+
+.sh .composer textarea:focus {
+  outline: none;
+}
+
+/* waiting for replies */
+.chat-replies {
+  max-width: 900px;
+  margin: 0 auto;
+  width: calc(100% - 44px);
+  border: 1px solid var(--sh-border);
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  background: var(--sh-panel);
+  padding: 6px 0;
+}
+
+.chat-replies-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 3px 12px 5px;
+  color: var(--sh-fg);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.chat-replies-head .muted {
+  margin-left: auto;
+}
+
+.chat-reply-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.chat-reply-row .detail {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reply-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--sh-muted);
+  flex: none;
+}
+
+.reply-st.replied {
+  color: var(--sh-ok);
+}
+
+.reply-st.waiting_you {
+  color: var(--sh-warn);
+}
+
+@media (max-width: 760px) {
+  .sh .chat-msg-main {
+    max-width: 88%;
+  }
+  .chat-replies {
+    width: calc(100% - 24px);
+  }
+}
+
+/* model menu: long lists scroll, with a search */
+.sh-model-menu {
+  width: min(360px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+}
+
+.sh-menu-scroll {
+  max-height: min(60vh, 460px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sh .sh-menu-search {
+  width: 100%;
+  min-height: 0;
+  margin-bottom: 4px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--sh-border);
+  background: var(--sh-bg);
+  color: var(--sh-fg);
+  font: inherit;
+  font-family: var(--sh-font);
+  font-size: 14px;
+  outline: none;
+}
+
+.sh-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* background work */
+.sh-bg-chip .cv-spin {
+  width: 11px;
+  height: 11px;
+}
+
+.sh-bg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  min-width: 0;
+  max-width: 340px;
+}
+
+.sh-bg-row code {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .sh-slot .sh-bg-chip {
+    max-width: 64px;
+    overflow: hidden;
+  }
+}

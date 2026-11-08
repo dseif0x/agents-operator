@@ -148,6 +148,26 @@ func (c *Codex) Start(ctx context.Context, ref string) error {
 	return nil
 }
 
+// Steer adds a message to the running turn (turn/steer).
+func (c *Codex) Steer(in Input) error {
+	c.mu.Lock()
+	thread, tid := c.thread, c.codexTID
+	c.mu.Unlock()
+	if tid == "" {
+		return ErrNoSteer
+	}
+	input := []map[string]any{{"type": "text", "text": in.Text, "text_elements": []any{}}}
+	for _, f := range in.Files {
+		input = append(input, map[string]any{"type": "localImage", "path": f})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := c.call(ctx, "turn/steer", map[string]any{"threadId": thread, "expectedTurnId": tid, "input": input}); err != nil {
+		return ErrNoSteer
+	}
+	return nil
+}
+
 // SetModel uses model from the next turn on.
 func (c *Codex) SetModel(model string) error {
 	c.mu.Lock()

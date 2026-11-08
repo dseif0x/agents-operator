@@ -32,6 +32,8 @@ type ConvSummary struct {
 	Error string `json:"error,omitempty"`
 	// Models are what the owner can switch to.
 	Models []convo.Model `json:"models,omitempty"`
+	// Background is what the agent left running in the background.
+	Background []convo.Background `json:"background,omitempty"`
 	// Totals over the conversation.
 	InputTokens  int64   `json:"input_tokens,omitempty"`
 	OutputTokens int64   `json:"output_tokens,omitempty"`
@@ -94,6 +96,18 @@ func (s *Service) publishItem(ownerID, sessionID string, it *store.ConvItem) {
 	if s.Broker != nil {
 		s.Broker.Publish(ownerID, Event{Type: "item", ID: sessionID, Item: it})
 	}
+}
+
+// TurnItems returns the items of one turn (the work behind a chat reply).
+func (s *Service) TurnItems(ctx context.Context, ownerID, id, turn string) ([]*store.ConvItem, error) {
+	if _, err := s.Get(ctx, ownerID, id); err != nil {
+		return nil, err
+	}
+	items, err := s.Store.Conversations().TurnItems(ctx, id, store.MainThread, turn)
+	if items == nil {
+		items = []*store.ConvItem{}
+	}
+	return items, err
 }
 
 // Items returns a page of a session's conversation.
@@ -221,6 +235,27 @@ func (s *Service) CancelInput(ctx context.Context, owner *store.User, id, inputI
 	s.publishItem(owner.ID, sess.ID, &store.ConvItem{SessionID: sess.ID, Thread: store.MainThread, Key: key, Kind: convo.KindUser, Status: ItemDeleted})
 	if us, ok := s.Uplinks.(uplinkSender); ok {
 		us.Send(sess.ID, runner.UplinkFrame{Event: runner.EventCancel, IDs: []string{inputID}})
+	}
+	return nil
+}
+
+// SendNow gives a queued message to the agent right away (into its running
+// turn, or by stopping the turn where the CLI cannot take one).
+func (s *Service) SendNow(ctx context.Context, owner *store.User, id, inputID string) error {
+	sess, err := s.convSession(ctx, owner.ID, id)
+	if err != nil {
+		return err
+	}
+	in, err := s.Store.Conversations().GetInput(ctx, sess.ID, inputID)
+	if err != nil {
+		return err
+	}
+	if in.State != store.InputQueued {
+		return &ValidationError{"the agent already has this message"}
+	}
+	us, ok := s.Uplinks.(uplinkSender)
+	if !ok || !us.Send(sess.ID, runner.UplinkFrame{Event: runner.EventSendNow, IDs: []string{inputID}}) {
+		return &ValidationError{"the agent is not connected; it gets the message when it runs"}
 	}
 	return nil
 }
@@ -385,6 +420,8 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 				d.Tool = mergeTool(d.Tool, e.Tool)
 			}
 			it.Data = mustJSON(d)
+		case convo.EventBackground:
+			sum.Background = ev.Background
 		case convo.EventRequest:
 			if ev.Request == nil {
 				continue

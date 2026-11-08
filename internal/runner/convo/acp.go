@@ -219,6 +219,9 @@ func (a *ACP) switchModel(ctx context.Context, model string) error {
 	return err
 }
 
+// Steer: ACP has no way to add to a running prompt.
+func (a *ACP) Steer(Input) error { return ErrNoSteer }
+
 // SetModel switches the session's model.
 func (a *ACP) SetModel(model string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

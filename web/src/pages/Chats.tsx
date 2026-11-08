@@ -5,6 +5,8 @@ import { PushPrompt } from "../components/Notifications";
 import { Link, navigate } from "../router";
 import { copyCode, mentionedHandles, renderMessage } from "../markdown";
 import { loadDraft, saveDraft } from "../drafts";
+import { Avatar as ShellAvatar } from "../shell/Avatar";
+import { TurnSteps } from "../shell/AgentChat";
 
 // Chats: groups of the owner's agent sessions, like a group chat. The list
 // is on the left (the whole screen on a phone until a chat is open), the
@@ -17,19 +19,11 @@ function hue(id: string): number {
   return h;
 }
 
-function initials(name: string): string {
-  const parts = name.split(/[\s._-]+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase();
-}
 
 function Avatar(props: { id: string; name: string; owner?: boolean }) {
-  if (props.owner) return <span class="chat-avatar owner">you</span>;
-  return (
-    <span class="chat-avatar" style={`background:hsl(${hue(props.id)} 55% 42%)`}>
-      {initials(props.name)}
-    </span>
-  );
+  return <ShellAvatar id={props.id} size={34} owner={props.owner} />;
 }
+
 
 /** Images (by the type the hub sniffed) are shown inline; other files are downloads. */
 const imageTypes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
@@ -462,11 +456,7 @@ function ChatView(props: {
         </div>
         {info && <ChatInfo chat={chat} sessions={props.sessions} onChanged={props.onChanged} onClose={() => setInfo(false)} />}
       </div>
-      {working.length > 0 && (
-        <div class="chat-working muted">
-          {working.map((m) => m.name).join(", ")} {working.length === 1 ? "is" : "are"} working…
-        </div>
-      )}
+      <ReplyPanel messages={messages} members={members} working={working} />
       <Composer
         chat={chat}
         replyTo={replyTo}
@@ -533,6 +523,7 @@ function Message(props: {
             ↪ {props.parent ? `${props.parent.author.kind === "owner" ? "You" : props.parent.author.name}: ${props.parent.text.slice(0, 140)}` : `message #${m.reply_to}`}
           </a>
         )}
+        {!owner && m.turn && m.author.session_id && <TurnSteps sessionId={m.author.session_id} turn={m.turn} />}
         {m.text && <div class="chat-text md" dangerouslySetInnerHTML={{ __html: html }} />}
         {m.attachments.some(isImage) && (
           <div class="chat-images">
@@ -924,5 +915,63 @@ function ChatInfo(props: { chat: Chat; sessions: Session[]; onChanged: (c: Chat)
       </p>
       {error && <div class="error">{error}</div>}
     </aside>
+  );
+}
+
+/** Who is on the newest message of yours: working, replied, waiting for
+ * you, or not reached yet (like OpenBot's "Waiting for replies"). */
+function ReplyPanel(props: { messages: ChatMessage[]; members: ChatMember[]; working: ChatMember[] }) {
+  const [open, setOpen] = useState(true);
+  const lastMine = [...props.messages].reverse().find((m) => m.author.kind === "owner");
+  type Row = { m: ChatMember; status: "working" | "replied" | "waiting_you" | "queued" | "idle"; reply?: ChatMessage };
+  const rows: Row[] = [];
+  for (const m of props.members) {
+    if (m.muted) continue;
+    const addressed = lastMine && (lastMine.everyone || lastMine.mentions.includes(m.session_id));
+    const reply = lastMine && props.messages.find((x) => x.id > lastMine.id && x.author.session_id === m.session_id);
+    const busy = m.state === "running" && (m.activity === "thinking" || m.activity === "tool");
+    const waitingYou = m.state === "running" && m.activity === "needs_permission";
+    const queued = lastMine && lastMine.deliveries[m.session_id] === "queued";
+    let status: Row["status"] = "idle";
+    if (waitingYou) status = "waiting_you";
+    else if (busy) status = "working";
+    else if (reply) status = "replied";
+    else if (queued) status = "queued";
+    if (status === "idle" && !addressed) continue;
+    if (status === "replied" && !addressed) continue;
+    rows.push({ m, status, reply: reply || undefined });
+  }
+  const pending = rows.filter((r) => r.status !== "replied" && r.status !== "idle");
+  if (!rows.length || (!pending.length && props.working.length === 0)) return null;
+  const replied = rows.filter((r) => r.status === "replied").length;
+  const label: Record<Row["status"], string> = { working: "Working", replied: "Replied", waiting_you: "Waiting for you", queued: "Not started yet", idle: "No reply" };
+  return (
+    <div class="chat-replies">
+      <button class="chat-replies-head" onClick={() => setOpen((o) => !o)}>
+        <span class="cv-spin" />
+        <b>Waiting for replies</b>
+        <span class="muted">
+          {replied}/{rows.length}
+        </span>
+      </button>
+      {open &&
+        rows.map((r) => (
+          <div class="chat-reply-row">
+            <ShellAvatar id={r.m.session_id} size={18} />
+            <b>{r.m.name}</b>
+            <span class="muted detail">{r.status === "working" && r.m.activity_detail ? r.m.activity_detail : r.status === "replied" && r.reply ? r.reply.text.replace(/\s+/g, " ").slice(0, 90) : ""}</span>
+            {r.status === "waiting_you" ? (
+              <Link href={`/sessions/${r.m.session_id}`} class={`reply-st ${r.status}`}>
+                {label[r.status]} →
+              </Link>
+            ) : (
+              <span class={`reply-st ${r.status}`}>
+                {label[r.status]}
+                {r.status === "working" && <span class="cv-spin" />}
+              </span>
+            )}
+          </div>
+        ))}
+    </div>
   );
 }

@@ -77,7 +77,8 @@ func (f *fakeDriver) end(status string) {
 	}
 }
 
-func (f *fakeDriver) Interrupt() error { f.end(convo.StatusInterrupted); return nil }
+func (f *fakeDriver) Interrupt() error        { f.end(convo.StatusInterrupted); return nil }
+func (f *fakeDriver) Steer(convo.Input) error { return convo.ErrNoSteer }
 func (f *fakeDriver) Respond(id string, r convo.Response) error {
 	f.mu.Lock()
 	turn := f.turn

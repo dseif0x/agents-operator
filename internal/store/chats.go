@@ -43,7 +43,9 @@ type ChatMessage struct {
 	Everyone    bool
 	ReplyTo     int64
 	Attachments []ChatAttachment
-	CreatedAt   time.Time
+	// Turn is the conversation turn an agent's message came from.
+	Turn      string
+	CreatedAt time.Time
 }
 
 // ChatAttachment describes an image of a message; the bytes are fetched

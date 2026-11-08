@@ -67,6 +67,14 @@ func (r pgConversations) ListItems(ctx context.Context, sessionID, thread string
 	return scanItems(rows)
 }
 
+func (r pgConversations) TurnItems(ctx context.Context, sessionID, thread, turn string) ([]*ConvItem, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+itemCols+` FROM conversation_items WHERE session_id=$1 AND thread=$2 AND turn=$3 ORDER BY id`, sessionID, thread, turn)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return scanItems(rows)
+}
+
 func (r pgConversations) RunningItems(ctx context.Context, sessionID, thread, turn string) ([]*ConvItem, error) {
 	rows, err := r.pool.Query(ctx, `SELECT `+itemCols+` FROM conversation_items WHERE session_id=$1 AND thread=$2 AND turn=$3 AND status='running' ORDER BY id`, sessionID, thread, turn)
 	if err != nil {

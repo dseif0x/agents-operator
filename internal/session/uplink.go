@@ -329,7 +329,7 @@ func (u *Uplinks) do(ctx context.Context, sessionID string, f runner.UplinkFrame
 		for _, img := range a.Images {
 			images = append(images, ChatFile{Name: img.Name, Data: img.Data})
 		}
-		return u.Svc.AgentPost(ctx, sess, a.Chat, a.Text, a.ReplyTo, images)
+		return u.Svc.AgentPost(ctx, sess, a.Chat, a.Text, a.ReplyTo, images, a.Turn)
 	case runner.OpAttachment:
 		var a struct {
 			ID string `json:"id"`

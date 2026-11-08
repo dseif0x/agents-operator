@@ -68,6 +68,8 @@ type Conversations interface {
 	// ListItems returns up to limit items before the id before (0: the
 	// newest), oldest first.
 	ListItems(ctx context.Context, sessionID, thread string, before int64, limit int) ([]*ConvItem, error)
+	// TurnItems returns the items of a turn, oldest first.
+	TurnItems(ctx context.Context, sessionID, thread, turn string) ([]*ConvItem, error)
 	// RunningItems returns the items of a turn still running.
 	RunningItems(ctx context.Context, sessionID, thread, turn string) ([]*ConvItem, error)
 
