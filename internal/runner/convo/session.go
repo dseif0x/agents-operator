@@ -275,6 +275,22 @@ func (s *Session) Interrupt() error {
 	return d.Interrupt()
 }
 
+// Background moves the agent's running foreground commands to the
+// background, where the CLI can (Claude Code); the turn goes on.
+func (s *Session) Background() error {
+	s.mu.Lock()
+	d, turn := s.driver, s.turn
+	s.mu.Unlock()
+	if d == nil || turn == "" {
+		return nil
+	}
+	b, ok := d.(Backgrounder)
+	if !ok {
+		return ErrNoBackground
+	}
+	return b.Background()
+}
+
 // Turn is the running turn's id as the hub knows it ("" between turns).
 func (s *Session) Turn() string {
 	s.mu.Lock()

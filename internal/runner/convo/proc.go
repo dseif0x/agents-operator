@@ -174,6 +174,17 @@ func lastLines(s string, n int) string {
 // during a turn.
 var ErrNoSteer = errors.New("the agent cannot take a message during a turn")
 
+// Backgrounder is a driver whose CLI can move running foreground commands
+// to the background (Claude Code's Ctrl+B), so the turn goes on.
+type Backgrounder interface {
+	// Background moves the running foreground commands to the background.
+	Background() error
+}
+
+// ErrNoBackground is returned when the agent cannot move commands to the
+// background.
+var ErrNoBackground = errors.New("this agent cannot move commands to the background")
+
 // ErrBusy is returned by Send while a turn runs.
 var ErrBusy = errors.New("a turn is running")
 

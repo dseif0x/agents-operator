@@ -22,6 +22,7 @@ const paths: Record<string, JSX.Element> = {
   ),
   chats: <path d="M21 14a2 2 0 0 1-2 2H8l-5 4V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
   sliders: <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4" />,
+  toBackground: <path d="M12 3v11M7 9l5 5 5-5M4 20h16" />,
   moon: <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />,
   sun: (
     <>

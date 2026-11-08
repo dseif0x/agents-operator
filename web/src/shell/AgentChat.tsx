@@ -96,6 +96,10 @@ export function AgentChat({ session }: { session: Session }) {
   const blocks = useMemo(() => toBlocks((items ?? []).filter((it) => !(it.kind === "user" && it.status === "queued"))), [items]);
   const conv = session.conversation ?? {};
   const working = Boolean(conv.turn) && session.state === "running";
+  // A command runs in the foreground that Claude Code can move to the
+  // background (its Ctrl+B).
+  const foreground =
+    working && session.agent === "claude" && (items ?? []).some((it) => it.kind === "tool" && it.status === "running" && it.data.tool?.kind === "command" && !it.data.parent);
   const status = agentStatus(session);
 
   const header = (
@@ -166,7 +170,7 @@ export function AgentChat({ session }: { session: Session }) {
             {working && <Working session={session} />}
           </div>
         </div>
-        <Bottom session={session} queued={queued} working={working} onSent={() => (stick.current = true)} />
+        <Bottom session={session} queued={queued} working={working} foreground={foreground} onSent={() => (stick.current = true)} />
       </div>
       {panel && <InfoPanel session={session} onClose={() => setPanel(false)} />}
     </div>
@@ -496,7 +500,7 @@ function StateBanner({ session }: { session: Session }) {
   );
 }
 
-function Bottom({ session, queued, working, onSent }: { session: Session; queued: ConvItem[]; working: boolean; onSent: () => void }) {
+function Bottom({ session, queued, working, foreground, onSent }: { session: Session; queued: ConvItem[]; working: boolean; foreground: boolean; onSent: () => void }) {
   const [text, setText] = useState(() => {
     try {
       return localStorage.getItem(draftKey(session.id)) ?? "";
@@ -565,6 +569,27 @@ function Bottom({ session, queued, working, onSent }: { session: Session; queued
       setErr((e as Error).message);
     }
   };
+
+  const toBackground = async () => {
+    setErr("");
+    try {
+      await api.background(session.id);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+  // Ctrl+B, as in Claude Code's terminal.
+  useEffect(() => {
+    if (!foreground) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toBackground();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [foreground, session.id]);
 
   const touch = matchMedia("(pointer: coarse)").matches;
   const empty = !text.trim() && files.length === 0;
@@ -676,6 +701,11 @@ function Bottom({ session, queued, working, onSent }: { session: Session; queued
                   }
                 }}
               />
+              {foreground && (
+                <button class="cv-round" title="Move the running command to the background (Ctrl+B)" onClick={toBackground}>
+                  <Icon name="toBackground" size={16} />
+                </button>
+              )}
               {working && empty ? (
                 <button class="cv-round send" title="Stop" onClick={stop}>
                   <Icon name="stop" size={16} />

@@ -452,6 +452,7 @@ export const api = {
   editInput: (id: string, input: string, text: string) => request<ConvItem>("PATCH", `/sessions/${id}/inputs/${input}`, { text }),
   sendNow: (id: string, input: string) => request<{ ok: boolean }>("POST", `/sessions/${id}/inputs/${input}/now`),
   cancelInput: (id: string, input: string) => request<{ ok: boolean }>("DELETE", `/sessions/${id}/inputs/${input}`),
+  background: (id: string) => request<{ ok: boolean }>("POST", `/sessions/${id}/background`),
   interrupt: (id: string) => request<{ ok: boolean }>("POST", `/sessions/${id}/interrupt`),
   answerRequest: (id: string, requestId: string, r: { option?: string; answers?: Record<string, string>; message?: string }) =>
     request<ConvItem>("POST", `/sessions/${id}/requests/${encodeURIComponent(requestId)}`, r),

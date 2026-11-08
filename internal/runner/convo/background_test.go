@@ -34,3 +34,23 @@ func TestClaudeBackgroundFromTranscript(t *testing.T) {
 		t.Fatal("the finished task was not noticed")
 	}
 }
+
+func TestClaudeBackgroundTasksChanged(t *testing.T) {
+	c := &Claude{events: make(chan Event, 10), background: map[string]string{"stale": "old"}}
+	c.handle(claudeLine{Type: "system", Subtype: "background_tasks_changed", Tasks: []claudeTask{{TaskID: "bdbqydcky", Description: "Sleep 90 seconds"}}})
+	ev := <-c.events
+	if ev.Type != EventBackground || len(ev.Background) != 1 || ev.Background[0].ID != "bdbqydcky" || ev.Background[0].Title != "Sleep 90 seconds" {
+		t.Fatalf("event = %+v", ev)
+	}
+	c.handle(claudeLine{Type: "system", Subtype: "background_tasks_changed"})
+	if ev := <-c.events; len(ev.Background) != 0 {
+		t.Fatalf("event = %+v", ev)
+	}
+}
+
+func TestClaudeManualBackgroundResult(t *testing.T) {
+	out := "Command was manually backgrounded by user with ID: bdbqydcky. Output is being written to: /tmp/x.output."
+	if m := bgStartRE.FindStringSubmatch(out); m == nil || m[1] != "bdbqydcky" {
+		t.Fatalf("match = %v", m)
+	}
+}

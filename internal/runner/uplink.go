@@ -58,6 +58,9 @@ const (
 	EventMemories = "memories"
 	// EventSendNow gives queued inputs (IDs) to the agent right away.
 	EventSendNow = "send_now"
+	// EventBackground moves the agent's running foreground commands to the
+	// background (Ctrl+B in Claude Code).
+	EventBackground = "background"
 )
 
 // MemoryNote is one of the agent's memories.

@@ -276,6 +276,26 @@ func (s *Service) Interrupt(ctx context.Context, owner *store.User, id string) e
 	return nil
 }
 
+// Background moves the agent's running foreground commands to the
+// background (Claude Code's Ctrl+B); the turn goes on.
+func (s *Service) Background(ctx context.Context, owner *store.User, id string) error {
+	sess, err := s.convSession(ctx, owner.ID, id)
+	if err != nil {
+		return err
+	}
+	if sess.State != store.StateRunning {
+		return ErrInvalidTransition
+	}
+	if sess.Agent != "claude" {
+		return &ValidationError{"only Claude Code can move commands to the background"}
+	}
+	us, ok := s.Uplinks.(uplinkSender)
+	if !ok || !us.Send(sess.ID, runner.UplinkFrame{Event: runner.EventBackground}) {
+		return &ValidationError{"the session's agent is not connected yet; try again in a few seconds"}
+	}
+	return nil
+}
+
 // QueuedInputs is what the uplink pushes to a conversation session.
 func (s *Service) QueuedInputs(ctx context.Context, sess *store.Session) ([]runner.ConvoInput, error) {
 	ins, err := s.Store.Conversations().QueuedInputs(ctx, sess.ID)
