@@ -100,6 +100,9 @@ type Service struct {
 	// change the poller last acted on, so each rotation is exported once.
 	loginSynced sync.Map // session id -> time.Time
 	now         func() time.Time
+	// chatTurns are conversation turns started by chat messages (no push
+	// when they end).
+	chatTurns sync.Map
 }
 
 // Live is the last status polled from a session's runner.
