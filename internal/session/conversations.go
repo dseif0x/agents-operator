@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
+	"github.com/dseif0x/agents-operator/internal/filetype"
 	"github.com/dseif0x/agents-operator/internal/push"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/runner/convo"
@@ -153,7 +153,7 @@ func (s *Service) queueInput(ctx context.Context, ownerID string, sess *store.Se
 		if len(f.Data) == 0 || len(f.Data) > MaxChatFileBytes {
 			return nil, &ValidationError{fmt.Sprintf("files are limited to %d MiB (and cannot be empty)", MaxChatFileBytes>>20)}
 		}
-		ct := http.DetectContentType(f.Data)
+		ct := filetype.Detect(f.Name, f.Data)
 		name := CleanFileName(f.Name)
 		if name == "" {
 			name = "file"
@@ -592,8 +592,8 @@ func (s *Service) AgentShareFiles(ctx context.Context, sess *store.Session, a ru
 			return nil, &ValidationError{fmt.Sprintf("%s is empty or larger than %d MiB", f.Name, runner.MaxShareFile>>20)}
 		}
 		ct := f.ContentType
-		if ct == "" {
-			ct = http.DetectContentType(f.Data)
+		if ct == "" || ct == "application/octet-stream" {
+			ct = filetype.Detect(f.Name, f.Data)
 		}
 		cf := &store.ConvFile{SessionID: sess.ID, OwnerID: sess.OwnerID, Name: CleanFileName(f.Name), ContentType: ct, Size: len(f.Data), Data: f.Data}
 		if err := conv.AddFile(ctx, cf); err != nil {

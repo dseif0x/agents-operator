@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/dseif0x/agents-operator/internal/filetype"
 	"github.com/dseif0x/agents-operator/internal/push"
 	"github.com/dseif0x/agents-operator/internal/store"
 )
@@ -57,6 +57,24 @@ const (
 // ChatImageTypes are the sniffed types shown inline as images. Files of
 // any other type are attachments to download.
 var ChatImageTypes = map[string]string{"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+
+// InlineMediaTypes are played or viewed in the browser (a video player, an
+// audio player, the PDF viewer) instead of downloaded. Never HTML or SVG:
+// those would run in the hub's origin.
+var InlineMediaTypes = map[string]bool{
+	"video/mp4": true, "video/webm": true, "video/quicktime": true,
+	"audio/mpeg": true, "audio/mp4": true, "audio/aac": true, "audio/wav": true, "audio/wave": true, "audio/x-wav": true,
+	"audio/ogg": true, "audio/webm": true, "audio/flac": true,
+	"application/pdf": true,
+}
+
+// InlineType reports whether a stored file is served for the browser to
+// show (images, media, PDF) rather than as a download of opaque bytes.
+func InlineType(contentType string) bool {
+	ct, _, _ := strings.Cut(contentType, ";")
+	ct = strings.TrimSpace(strings.ToLower(ct))
+	return IsChatImage(ct) || InlineMediaTypes[ct]
+}
 
 // IsChatImage reports whether a stored attachment is shown as an image.
 func IsChatImage(contentType string) bool {
@@ -589,9 +607,10 @@ func (s *Service) post(ctx context.Context, owner *store.User, c *store.Chat, au
 		if len(img.Data) == 0 || len(img.Data) > MaxChatFileBytes {
 			return nil, &ValidationError{fmt.Sprintf("files are limited to %d MiB (and cannot be empty)", MaxChatFileBytes>>20)}
 		}
-		// The type is sniffed, never taken from the uploader. Images are
-		// shown inline; anything else is only ever served as a download.
-		ct := http.DetectContentType(img.Data)
+		// The type is sniffed; the name only fills in where sniffing cannot
+		// tell (QuickTime video, audio, Markdown). What is shown inline is
+		// decided when serving (images, media, PDF; never HTML or SVG).
+		ct := filetype.Detect(img.Name, img.Data)
 		name := CleanFileName(img.Name)
 		if name == "" {
 			name = "file"

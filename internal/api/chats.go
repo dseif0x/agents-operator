@@ -210,22 +210,5 @@ func (s *Server) chatAttachment(w http.ResponseWriter, r *http.Request) {
 		s.mapErr(w, err)
 		return
 	}
-	// Images (sniffed on upload) are shown inline; every other file is a
-	// download of opaque bytes, so a browser never renders an uploaded HTML
-	// page or script from the hub's origin. Never let a browser guess.
-	disposition, ctype := "attachment", "application/octet-stream"
-	if session.IsChatImage(a.ContentType) {
-		disposition, ctype = "inline", a.ContentType
-	}
-	w.Header().Set("Content-Type", ctype)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	if cd := mime.FormatMediaType(disposition, map[string]string{"filename": session.CleanFileName(a.Name)}); cd != "" && a.Name != "" {
-		w.Header().Set("Content-Disposition", cd)
-	} else {
-		w.Header().Set("Content-Disposition", disposition)
-	}
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	_, _ = w.Write(data)
+	serveStoredFile(w, r, a.Name, a.ContentType, data)
 }
