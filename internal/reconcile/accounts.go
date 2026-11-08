@@ -19,6 +19,8 @@ type UserCredentials struct {
 	Accounts []*store.Account
 	Values   map[string][]byte
 	Profile  *store.Profile
+	// Skills is the user's skill library.
+	Skills []*store.Skill
 }
 
 func (u UserCredentials) value(a *store.Account) []byte {
@@ -166,7 +168,7 @@ func credentialEnv(data map[string][]byte, s *store.Session, uc UserCredentials)
 	used := map[string]bool{}
 	for _, a := range usable {
 		switch {
-		case store.GitAccountKind(a.Kind), a.Kind == store.AcctClaudeLogin, a.Kind == store.AcctCodexLogin:
+		case store.GitAccountKind(a.Kind), a.Kind == store.AcctClaudeLogin, a.Kind == store.AcctCodexLogin, a.Kind == store.AcctMCPServer:
 			continue
 		case s.Agent == runner.AgentOpenCode && slices.Contains(ProviderKinds, a.Kind), s.Agent == runner.AgentShell:
 		default:
@@ -178,6 +180,59 @@ func credentialEnv(data map[string][]byte, s *store.Session, uc UserCredentials)
 	}
 	if len(described) > 0 {
 		data[runner.EnvAIAccounts], _ = json.Marshal(described)
+	}
+	mcpEnv(data, s, uc)
+	skillEnv(data, s, uc.Skills)
+}
+
+var mcpNameChars = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+// mcpEnv adds the MCP servers the session picked: their description
+// (runner.EnvMCPServers) and each token in a variable of its own.
+func mcpEnv(data map[string][]byte, s *store.Session, uc UserCredentials) {
+	usable := uc.usable()
+	var servers []runner.MCPServer
+	names := map[string]bool{"chat": true} // the runner's own server
+	for _, id := range s.MCPServers {
+		var a *store.Account
+		for _, u := range usable {
+			if u.ID == id && u.Kind == store.AcctMCPServer {
+				a = u
+			}
+		}
+		if a == nil || a.BaseURL == "" {
+			continue // deleted since, or without a token
+		}
+		base := strings.Trim(mcpNameChars.ReplaceAllString(strings.ToLower(a.Name), "-"), "-")
+		if base == "" {
+			base = "mcp"
+		}
+		name := base
+		for i := 2; names[name]; i++ {
+			name = base + "-" + strconv.Itoa(i)
+		}
+		names[name] = true
+		env := runner.EnvMCPTokenPrefix + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+		data[env] = uc.value(a)
+		servers = append(servers, runner.MCPServer{Name: name, URL: a.BaseURL, TokenEnv: env})
+	}
+	if len(servers) > 0 {
+		data[runner.EnvMCPServers], _ = json.Marshal(servers)
+	}
+}
+
+// skillEnv adds the skills the session picked (runner.EnvSkills).
+func skillEnv(data map[string][]byte, s *store.Session, library []*store.Skill) {
+	var skills []runner.SkillDef
+	for _, id := range s.Skills {
+		for _, sk := range library {
+			if sk.ID == id {
+				skills = append(skills, runner.SkillDef{Name: sk.Name, Description: sk.Description, Instructions: sk.Instructions})
+			}
+		}
+	}
+	if len(skills) > 0 {
+		data[runner.EnvSkills], _ = json.Marshal(skills)
 	}
 }
 

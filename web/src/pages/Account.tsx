@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { api, type Account as AccountInfo, type AccountInput, type Profile, type User } from "../api";
+import { api, type Account as AccountInfo, type AccountInput, type Profile, type Skill, type User } from "../api";
 import { Nav } from "../components/Nav";
 import { NotificationsCard } from "../components/Notifications";
 import { timeAgo } from "../util";
@@ -7,7 +7,7 @@ import { timeAgo } from "../util";
 /** What each account kind is, which fields it has and how sessions use it. */
 const KINDS: Record<
   string,
-  { label: string; help: string; git?: boolean; baseURL?: "optional" | "required"; models?: boolean; username?: boolean; multiline?: boolean; login?: boolean; placeholder?: string }
+  { label: string; help: string; git?: boolean; baseURL?: "optional" | "required"; models?: boolean; username?: boolean; multiline?: boolean; login?: boolean; placeholder?: string; mcp?: boolean }
 > = {
   anthropic_api_key: {
     label: "Anthropic API key",
@@ -44,6 +44,13 @@ const KINDS: Record<
     git: true,
     username: true,
   },
+  mcp_server: {
+    label: "MCP server",
+    help: "A remote MCP server (streamable HTTP) with a bearer token, such as Home Assistant's Model Context Protocol Server integration and a long-lived access token. Sessions that pick it in their settings get its tools in Claude Code, Codex and OpenCode; the token stays in an environment variable. A server on your network needs Local network access to its address in the session.",
+    baseURL: "required",
+    mcp: true,
+    placeholder: "Long-lived access token",
+  },
   git_ssh: {
     label: "SSH key",
     help: "Written to the session (0600) with an ssh config entry for the host, which git uses.",
@@ -55,6 +62,9 @@ const KINDS: Record<
 
 const AI_KINDS = ["anthropic_api_key", "claude_oauth_token", "openai_api_key", "openai_compatible", "unjailed"];
 const GIT_KINDS = ["git_https", "git_ssh"];
+const MCP_KINDS = ["mcp_server"];
+
+type Group = "ai" | "git" | "mcp";
 
 /** The agents that sign in with one account, and the kinds each can use. */
 const SIGN_IN: { agent: string; label: string; kinds: string[] }[] = [
@@ -72,7 +82,7 @@ export function Account(props: { user: User; onLogout: () => void; embedded?: bo
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   // The form open: a new account of a group, or an existing one.
-  const [editing, setEditing] = useState<null | { group: "ai" | "git"; account?: AccountInfo }>(null);
+  const [editing, setEditing] = useState<null | { group: Group; account?: AccountInfo }>(null);
 
   useEffect(() => {
     Promise.all([api.accounts(), api.profile()])
@@ -109,7 +119,8 @@ export function Account(props: { user: User; onLogout: () => void; embedded?: bo
     }
   };
 
-  const ai = accounts.filter((a) => !GIT_KINDS.includes(a.kind));
+  const ai = accounts.filter((a) => !GIT_KINDS.includes(a.kind) && !MCP_KINDS.includes(a.kind));
+  const mcp = accounts.filter((a) => MCP_KINDS.includes(a.kind));
   const git = accounts.filter((a) => GIT_KINDS.includes(a.kind));
   const defaultOf = (agent: string) => {
     const s = SIGN_IN.find((x) => x.agent === agent)!;
@@ -133,7 +144,7 @@ export function Account(props: { user: User; onLogout: () => void; embedded?: bo
           </div>
         </div>
         <div class="account-actions">
-          <button type="button" class="btn small" onClick={() => setEditing({ group: k?.git ? "git" : "ai", account: a })}>
+          <button type="button" class="btn small" onClick={() => setEditing({ group: k?.git ? "git" : k?.mcp ? "mcp" : "ai", account: a })}>
             Edit
           </button>
           <button type="button" class="btn small danger" onClick={() => remove(a)}>
@@ -144,11 +155,11 @@ export function Account(props: { user: User; onLogout: () => void; embedded?: bo
     );
   };
 
-  const form = (group: "ai" | "git") =>
+  const form = (group: Group) =>
     editing?.group === group && (
       <AccountForm
         key={editing.account?.id ?? "new-" + group}
-        kinds={group === "ai" ? AI_KINDS : GIT_KINDS}
+        kinds={group === "ai" ? AI_KINDS : group === "git" ? GIT_KINDS : MCP_KINDS}
         account={editing.account}
         onCancel={() => setEditing(null)}
         onSaved={(list, msg) => {
@@ -224,6 +235,26 @@ export function Account(props: { user: User; onLogout: () => void; embedded?: bo
           {git.map(row)}
         </section>
 
+        <section class="card">
+          <div class="row" style="justify-content:space-between;align-items:center">
+            <h3 style="margin:0">MCP servers</h3>
+            {editing?.group !== "mcp" && (
+              <button type="button" class="btn small primary" onClick={() => setEditing({ group: "mcp" })}>
+                Add server
+              </button>
+            )}
+          </div>
+          <p class="muted" style="margin:6px 0 10px;font-size:13px">
+            Tools from other services (Home Assistant, a ticket tracker…) for your agents. Pick them per agent in its settings; they apply
+            when the agent restarts.
+          </p>
+          {form("mcp")}
+          {mcp.length === 0 && editing?.group !== "mcp" && <div class="muted">No MCP servers yet.</div>}
+          {mcp.map(row)}
+        </section>
+
+        <SkillsCard onError={setError} onNotice={flash} />
+
         <IdentityForm profile={profile} onSave={(p) => saveProfile(p, "Git identity saved.")} />
         <NotificationsCard />
       </div>
@@ -288,16 +319,25 @@ function AccountForm(props: {
       ) : (
         <label>
           Name
-          <input value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} placeholder="Work, Personal, LiteLLM…" autocomplete="off" />
+          <input value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} placeholder={k.mcp ? "Home Assistant" : "Work, Personal, LiteLLM…"} autocomplete="off" />
         </label>
       )}
       {k.baseURL && (
         <label>
-          Base URL{k.baseURL === "optional" && " (optional)"}
+          {k.mcp ? "URL" : "Base URL"}
+          {k.baseURL === "optional" && " (optional)"}
           <input
             value={baseURL}
             onInput={(e) => setBaseURL((e.target as HTMLInputElement).value)}
-            placeholder={kind === "unjailed" ? "https://unjailedai.com/v1" : kind === "anthropic_api_key" ? "https://api.anthropic.com" : "http://litellm:4000/v1"}
+            placeholder={
+              k.mcp
+                ? "http://home-assistant.home-assistant:8080/api/mcp"
+                : kind === "unjailed"
+                  ? "https://unjailedai.com/v1"
+                  : kind === "anthropic_api_key"
+                    ? "https://api.anthropic.com"
+                    : "http://litellm:4000/v1"
+            }
             autocomplete="off"
           />
         </label>
@@ -316,7 +356,7 @@ function AccountForm(props: {
       )}
       {!k.login && (
         <label>
-          {k.multiline ? "Private key" : kind === "git_https" ? "Token" : "Key"}
+          {k.multiline ? "Private key" : kind === "git_https" || k.mcp ? "Token" : "Key"}
           {a && " (empty: keep the current one)"}
           {k.multiline ? (
             <textarea value={value} onInput={(e) => setValue((e.target as HTMLTextAreaElement).value)} placeholder={k.placeholder} rows={4} />
@@ -369,6 +409,141 @@ function IdentityForm(props: { profile: Profile; onSave: (p: Profile) => void })
       <div class="row" style="margin-top:12px">
         <button class="btn primary" disabled={!changed}>
           Save
+        </button>
+      </div>
+    </form>
+  );
+}
+
+const SKILL_TEMPLATE = `Steps the agent follows when the skill fits, for example:
+
+1. Use the home-assistant tools to read yesterday's energy sensors.
+2. Compare with the day before.
+3. Answer in three short lines: total kWh, the biggest consumer, anything unusual.`;
+
+/** The owner's skill library: instructions an agent loads when they fit the task. */
+function SkillsCard(props: { onError: (msg: string) => void; onNotice: (msg: string) => void }) {
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [editing, setEditing] = useState<Skill | "new" | null>(null);
+  const load = () =>
+    api
+      .skills()
+      .then((r) => setSkills(r.skills))
+      .catch((e) => props.onError((e as Error).message));
+  useEffect(() => {
+    load();
+  }, []);
+  const remove = async (s: Skill) => {
+    if (!confirm(`Delete the skill ${s.name}? Agents that have it lose it when they next start.`)) return;
+    try {
+      await api.deleteSkill(s.id);
+      load();
+    } catch (e) {
+      props.onError((e as Error).message);
+    }
+  };
+  return (
+    <section class="card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h3 style="margin:0">Skills</h3>
+        {editing === null && (
+          <button type="button" class="btn small primary" onClick={() => setEditing("new")}>
+            Add skill
+          </button>
+        )}
+      </div>
+      <p class="muted" style="margin:6px 0 10px;font-size:13px">
+        Instructions an agent loads when they fit the task (Agent Skills: a SKILL.md for Claude Code, Codex and OpenCode). Pick them per
+        agent in its settings; they apply when the agent restarts.
+      </p>
+      {editing !== null && (
+        <SkillForm
+          key={editing === "new" ? "new" : editing.id}
+          skill={editing === "new" ? undefined : editing}
+          onCancel={() => setEditing(null)}
+          onSaved={(msg) => {
+            setEditing(null);
+            load();
+            props.onNotice(msg);
+          }}
+        />
+      )}
+      {skills.length === 0 && editing === null && <div class="muted">No skills yet.</div>}
+      {skills.map((s) => (
+        <div class="account-row">
+          <div class="account-main">
+            <b>{s.name}</b>
+            <div class="muted account-sub">
+              {s.description} · changed {timeAgo(s.updated_at)}
+            </div>
+          </div>
+          <div class="account-actions">
+            <button type="button" class="btn small" onClick={() => setEditing(s)}>
+              Edit
+            </button>
+            <button type="button" class="btn small danger" onClick={() => remove(s)}>
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function SkillForm(props: { skill?: Skill; onCancel: () => void; onSaved: (msg: string) => void }) {
+  const s = props.skill;
+  const [name, setName] = useState(s?.name ?? "");
+  const [description, setDescription] = useState(s?.description ?? "");
+  const [instructions, setInstructions] = useState(s?.instructions ?? "");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: Event) => {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const input = { name, description, instructions };
+      if (s) await api.updateSkill(s.id, input);
+      else await api.createSkill(input);
+      props.onSaved(s ? "Skill saved. Agents with it get the change when they next start." : "Skill added. Pick it in an agent's settings.");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form class="account-form" onSubmit={submit}>
+      <label>
+        Name
+        <input value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} placeholder="energy-report" autocomplete="off" spellcheck={false} />
+      </label>
+      <div class="muted" style="font-size:12px;margin:2px 0 6px">
+        Lower case letters, digits and hyphens.
+      </div>
+      <label>
+        Description
+        <input
+          value={description}
+          onInput={(e) => setDescription((e.target as HTMLInputElement).value)}
+          placeholder="Summarises yesterday's energy use from Home Assistant. Use when asked for an energy report or recap."
+        />
+      </label>
+      <div class="muted" style="font-size:12px;margin:2px 0 6px">
+        What the skill does and when to use it: the agent decides from this whether to load it.
+      </div>
+      <label>
+        Instructions
+        <textarea value={instructions} onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)} placeholder={SKILL_TEMPLATE} rows={10} />
+      </label>
+      {error && <div class="error">{error}</div>}
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" disabled={busy}>
+          {busy ? "Saving…" : s ? "Save" : "Add"}
+        </button>
+        <button type="button" class="btn" onClick={props.onCancel}>
+          Cancel
         </button>
       </div>
     </form>

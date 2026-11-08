@@ -164,6 +164,11 @@ type CreateRequest struct {
 	// it: OpenCode gets every provider account, the shell every account.
 	// On an edit, absent keeps the current value.
 	AIAccount *string `json:"ai_account"`
+	// MCPServers are ids of the owner's MCP server accounts, Skills ids of
+	// skills in the owner's library, that the agent gets. On an edit,
+	// absent keeps the current lists.
+	MCPServers *[]string `json:"mcp_servers"`
+	Skills     *[]string `json:"skills"`
 }
 
 // MaxK8sNamespaces caps the namespaces a session may write to.
@@ -313,6 +318,7 @@ var reservedEnv = map[string]bool{
 	runner.EnvRunnerToken: true, runner.EnvAgent: true, runner.EnvAutonomous: true, runner.EnvAgentGitCredentials: true, runner.EnvContextCompression: true, runner.EnvInterface: true, runner.EnvRepos: true,
 	runner.EnvWorkspace: true, runner.EnvListen: true, "HOME": true, "PATH": true,
 	runner.EnvGitSSH: true, runner.EnvGitHTTPS: true, runner.EnvGitHubToken: true, runner.EnvAIAccounts: true,
+	runner.EnvMCPServers: true, runner.EnvSkills: true,
 	runner.EnvGitUserName: true, runner.EnvGitUserEmail: true, runner.EnvPrivateFile: true,
 	runner.EnvK8sAccess: true, runner.EnvK8sNamespaces: true, runner.EnvEgress: true,
 	runner.EnvSandboxNamespace: true, runner.EnvSandboxHost: true, runner.EnvSandboxSecurity: true,
@@ -321,7 +327,7 @@ var reservedEnv = map[string]bool{
 
 // reservedEnvPrefixes start variables the hub sets that cannot be
 // overridden per session either: login seeds and account keys.
-var reservedEnvPrefixes = []string{runner.EnvSeedPrefix, runner.EnvSeedAccountPrefix, runner.EnvAIKeyPrefix}
+var reservedEnvPrefixes = []string{runner.EnvSeedPrefix, runner.EnvSeedAccountPrefix, runner.EnvAIKeyPrefix, runner.EnvMCPTokenPrefix}
 
 func reservedEnvKey(k string) bool {
 	return reservedEnv[k] || slices.ContainsFunc(reservedEnvPrefixes, func(p string) bool { return strings.HasPrefix(k, p) })
@@ -565,6 +571,17 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 	if err := s.checkAIAccount(ctx, owner.ID, req.Agent, aiAccount); err != nil {
 		return nil, err
 	}
+	var mcpServers, skills []string
+	if req.MCPServers != nil {
+		if mcpServers, err = s.checkMCPServers(ctx, owner.ID, *req.MCPServers); err != nil {
+			return nil, err
+		}
+	}
+	if req.Skills != nil {
+		if skills, err = s.checkSkills(ctx, owner.ID, *req.Skills); err != nil {
+			return nil, err
+		}
+	}
 	autonomous := s.Defaults.Autonomous
 	if req.Autonomous != nil {
 		autonomous = *req.Autonomous
@@ -586,6 +603,7 @@ func (s *Service) Create(ctx context.Context, owner *store.User, req CreateReque
 		NodeSelector: req.NodeSelector, Tolerations: req.Tolerations, Env: req.Env, Autonomous: autonomous,
 		NoGitCredentials: noGit, Egress: req.Egress, Persona: req.Persona, AgentDefinition: req.AgentDefinition, K8sAccess: req.K8sAccess, K8sNamespaces: req.K8sNamespaces,
 		AIAccount: aiAccount, ContextCompression: compression, Interface: iface, State: store.StateCreating,
+		MCPServers: mcpServers, Skills: skills,
 	}
 	// A handle another request took in the meantime is a conflict: pick again.
 	for attempt := 0; ; attempt++ {
@@ -661,6 +679,16 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 		}
 		next.AIAccount = *req.AIAccount
 	}
+	if req.MCPServers != nil {
+		if next.MCPServers, err = s.checkMCPServers(ctx, owner.ID, *req.MCPServers); err != nil {
+			return nil, err
+		}
+	}
+	if req.Skills != nil {
+		if next.Skills, err = s.checkSkills(ctx, owner.ID, *req.Skills); err != nil {
+			return nil, err
+		}
+	}
 	updated, err := s.Store.Sessions().Update(ctx, &next)
 	if err != nil {
 		return nil, err
@@ -700,6 +728,68 @@ func (s *Service) checkAIAccount(ctx context.Context, ownerID, agent, id string)
 		return &ValidationError{"ai_account is not an account " + agent + " can sign in with"}
 	}
 	return err
+}
+
+// checkMCPServers validates the MCP server accounts a session gets: the
+// owner's accounts of kind mcp_server, each once.
+func (s *Service) checkMCPServers(ctx context.Context, ownerID string, ids []string) ([]string, error) {
+	out := []string{}
+	for _, id := range ids {
+		if slices.Contains(out, id) {
+			continue
+		}
+		a, err := s.Store.Accounts().Get(ctx, ownerID, id)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && a.Kind != store.AcctMCPServer) {
+			return nil, &ValidationError{"mcp_servers lists something that is not one of your MCP servers"}
+		}
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	if len(out) > MaxSessionMCPServers {
+		return nil, &ValidationError{fmt.Sprintf("at most %d MCP servers per session", MaxSessionMCPServers)}
+	}
+	return out, nil
+}
+
+// checkSkills validates the skills a session gets: skills of the owner's
+// library, each once.
+func (s *Service) checkSkills(ctx context.Context, ownerID string, ids []string) ([]string, error) {
+	out := []string{}
+	size := 0
+	for _, id := range ids {
+		if slices.Contains(out, id) {
+			continue
+		}
+		sk, err := s.Store.Skills().Get(ctx, ownerID, id)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, &ValidationError{"skills lists something that is not in your skill library"}
+		}
+		if err != nil {
+			return nil, err
+		}
+		size += len(sk.Instructions) + len(sk.Description)
+		out = append(out, id)
+	}
+	if size > MaxSessionSkillBytes {
+		return nil, &ValidationError{fmt.Sprintf("the skills of a session are limited to %d KiB together", MaxSessionSkillBytes>>10)}
+	}
+	return out, nil
+}
+
+// Limits on what a session gets: the runner receives them in environment
+// variables, of which one may hold at most 128 KiB.
+const (
+	MaxSessionMCPServers = 20
+	MaxSessionSkillBytes = 96 << 10
+)
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // recordRepoUsage counts repositories that are new to the session.
@@ -1197,6 +1287,8 @@ type View struct {
 	K8sAccess       string   `json:"k8s_access"`
 	K8sNamespaces   []string `json:"k8s_namespaces"`
 	AIAccount       string   `json:"ai_account"`
+	MCPServers      []string `json:"mcp_servers"`
+	Skills          []string `json:"skills"`
 	// SandboxNamespace and SandboxHost describe the session's sandbox
 	// cluster (sandbox mode only): its host namespace and the DNS name its
 	// Ingress hosts go under.
@@ -1228,7 +1320,7 @@ func (s *Service) View(sess *store.Session) View {
 		ImageTag: sess.ImageTag, PVCSize: sess.PVCSize, StorageClass: sess.StorageClass, RuntimeClass: sess.RuntimeClass, Resources: sess.Resources,
 		NodeSelector: sess.NodeSelector, Tolerations: sess.Tolerations, Env: sess.Env, Autonomous: sess.Autonomous,
 		GitCredentials: !sess.NoGitCredentials, ContextCompression: sess.ContextCompression, Egress: sess.Egress, Persona: sess.Persona, Handle: sess.Handle, AgentDefinition: sess.AgentDefinition, K8sAccess: cmp.Or(sess.K8sAccess, store.K8sAccessOff), K8sNamespaces: sess.K8sNamespaces,
-		AIAccount: sess.AIAccount, Interface: cmp.Or(sess.Interface, store.InterfaceTerminal), Conversation: sess.Conversation, State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
+		AIAccount: sess.AIAccount, MCPServers: nonNil(sess.MCPServers), Skills: nonNil(sess.Skills), Interface: cmp.Or(sess.Interface, store.InterfaceTerminal), Conversation: sess.Conversation, State: sess.State, StateReason: sess.StateReason, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 		LastAttachedAt: sess.LastAttachedAt, LastOutputAt: sess.LastOutputAt, PodName: reconcile.ObjectName(sess.ID),
 	}
 	if v.K8sAccess == store.K8sAccessSandbox && s.Defaults.K8sSandbox {

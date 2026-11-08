@@ -250,7 +250,7 @@ func AgentCommand(agent string, autonomous bool, dir string, env []string) serve
 		}
 		// The chat tools; allowed without a prompt, they only talk to the
 		// session's own chats.
-		if cfg := mcpConfigFile(envValue(env, "HOME")); cfg != "" {
+		if cfg := mcpConfigFile(envValue(env, "HOME"), sessionMCPServers(env)); cfg != "" {
 			args = append(args, "--mcp-config", cfg, "--allowedTools", "mcp__"+mcpServerName)
 		}
 		return server.Command{Path: "claude", Args: args, Dir: dir, Env: withoutEnv(env, runner.EnvPersona)}
@@ -266,6 +266,7 @@ func AgentCommand(agent string, autonomous bool, dir string, env []string) serve
 		// The persona is in the generated ~/.codex/AGENTS.md (writeAgentsFile);
 		// the chat tools are configured on the command line.
 		args := []string{"-c", "mcp_servers." + mcpServerName + `.command="agent-runner"`, "-c", "mcp_servers." + mcpServerName + `.args=["mcp"]`}
+		args = append(args, codexMCPArgs(sessionMCPServers(env))...)
 		return server.Command{Path: "codex", Args: args, Dir: dir, Env: withoutEnv(env, runner.EnvPersona)}
 	default:
 		return server.Command{Path: "bash", Args: []string{"-l"}, Dir: dir, Env: withoutEnv(env, runner.EnvPersona)}

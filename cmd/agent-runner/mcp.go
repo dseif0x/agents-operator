@@ -365,8 +365,12 @@ func formatChatResult(name string, raw json.RawMessage) string {
 
 // mcpConfigFile writes the Claude Code MCP configuration that starts this
 // server and returns its path ("" on failure).
-func mcpConfigFile(home string) string {
-	cfg := map[string]any{"mcpServers": map[string]any{mcpServerName: map[string]any{"type": "stdio", "command": "agent-runner", "args": []string{"mcp"}}}}
+func mcpConfigFile(home string, extra []runner.MCPServer) string {
+	servers := map[string]any{mcpServerName: map[string]any{"type": "stdio", "command": "agent-runner", "args": []string{"mcp"}}}
+	for _, s := range extra {
+		servers[s.Name] = claudeMCPEntry(s)
+	}
+	cfg := map[string]any{"mcpServers": servers}
 	b, _ := json.MarshalIndent(cfg, "", "  ")
 	path := writeSessionFileIn(home, "mcp.json", string(b))
 	return path

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { api, type Account, type K8sAccess, type CreateSessionRequest, type GitHubRepo, type Repo, type Session, type SessionDefaults, type Toleration, type User } from "../api";
+import { api, type Account, type K8sAccess, type CreateSessionRequest, type GitHubRepo, type Repo, type Session, type SessionDefaults, type Skill, type Toleration, type User } from "../api";
 import { Nav } from "../components/Nav";
 import { Link, navigate } from "../router";
 
@@ -114,6 +114,10 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
   const [agentDefinition, setAgentDefinition] = useState("");
   const [aiAccount, setAIAccount] = useState("");
   const [accounts, setAccounts] = useState<Account[] | null>(null);
+  // The owner's MCP servers and skills this agent gets.
+  const [skillLibrary, setSkillLibrary] = useState<Skill[]>([]);
+  const [mcpServers, setMCPServers] = useState<string[]>([]);
+  const [skills, setSkills] = useState<string[]>([]);
   const [accountDefaults, setAccountDefaults] = useState<Record<string, string>>({});
   const [editable, setEditable] = useState<boolean | null>(editing ? null : true);
   // After saving the settings of a running session: restart now or later.
@@ -148,6 +152,10 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
         setAccountDefaults(p.defaults);
       })
       .catch(() => setAccounts([]));
+    api
+      .skills()
+      .then((r) => setSkillLibrary(r.skills))
+      .catch(() => undefined);
     loadGitHub();
   }, []);
 
@@ -178,6 +186,8 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
         setPersona(s.persona || "");
         setAgentDefinition(s.agent_definition || "");
         setAIAccount(s.ai_account || "");
+        setMCPServers(s.mcp_servers || []);
+        setSkills(s.skills || []);
         setEditable(s.state !== "deleting");
       })
       .catch((e) => setError((e as Error).message));
@@ -222,6 +232,10 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
     setBusy(true);
     const req: CreateSessionRequest = { name, agent, repos: parsed.repos, autonomous, git_credentials: gitCredentials, k8s_access: k8sAccess };
     if (SIGN_IN_KINDS[agent]) req.ai_account = aiAccount;
+    if (agent !== "shell") {
+      req.mcp_servers = mcpServers;
+      req.skills = skills;
+    }
     if (k8sAccess === "namespace") {
       req.k8s_namespaces = k8sNamespaces
         .split(/[\s,]+/)
@@ -429,6 +443,24 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
             </label>
           </div>
         )}
+        {agent !== "shell" && (
+          <>
+            <Picks
+              label="MCP servers"
+              empty="No MCP servers yet."
+              items={(accounts ?? []).filter((a) => a.kind === "mcp_server").map((a) => ({ id: a.id, name: a.name, detail: a.base_url ?? "" }))}
+              value={mcpServers}
+              onChange={setMCPServers}
+            />
+            <Picks
+              label="Skills"
+              empty="No skills yet."
+              items={skillLibrary.map((s) => ({ id: s.id, name: s.name, detail: s.description }))}
+              value={skills}
+              onChange={setSkills}
+            />
+          </>
+        )}
         {!!(defaults?.egress_allowed?.length || egress) && (
           <div>
             <label for="egress">Local network access</label>
@@ -628,6 +660,32 @@ function AccountChoice(props: {
           <option value={a.id}>{a.name}</option>
         ))}
       </select>
+    </div>
+  );
+}
+
+/** A checklist of the owner's MCP servers or skills for the agent. */
+function Picks(props: { label: string; empty: string; items: { id: string; name: string; detail: string }[]; value: string[]; onChange: (ids: string[]) => void }) {
+  const toggle = (id: string, on: boolean) => props.onChange(on ? [...props.value, id] : props.value.filter((x) => x !== id));
+  return (
+    <div>
+      <label>{props.label}</label>
+      {props.items.length === 0 ? (
+        <div class="muted" style="font-size:13px">
+          {props.empty} Add them in <Link href="/account">Account</Link>.
+        </div>
+      ) : (
+        <div class="member-picks">
+          {props.items.map((it) => (
+            <label class="member-pick">
+              <input type="checkbox" checked={props.value.includes(it.id)} onChange={(e) => toggle(it.id, (e.target as HTMLInputElement).checked)} />
+              <span>
+                {it.name} {it.detail && <span class="muted">· {it.detail}</span>}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -22,6 +22,7 @@ type Memory struct {
 	conv        *memConvData
 	routines    *memRoutineData
 	mems        *memMemoryData
+	skills      *memSkillData
 	push        *memPushData
 	events      map[string][]*Event
 	usage       map[string]map[string]int
@@ -39,6 +40,7 @@ func NewMemory() *Memory {
 		conv:        &memConvData{files: map[string]*ConvFile{}},
 		routines:    &memRoutineData{},
 		mems:        &memMemoryData{},
+		skills:      &memSkillData{},
 		push:        &memPushData{subs: map[string]*PushSubscription{}, settings: map[string]string{}},
 		events:      map[string][]*Event{},
 		usage:       map[string]map[string]int{},
@@ -249,6 +251,7 @@ func (r memSessions) Update(_ context.Context, s *Session) (*Session, error) {
 	cur.Egress = append([]string{}, s.Egress...)
 	cur.Persona, cur.AgentDefinition = s.Persona, s.AgentDefinition
 	cur.AIAccount = s.AIAccount
+	cur.MCPServers, cur.Skills = append([]string{}, s.MCPServers...), append([]string{}, s.Skills...)
 	cur.Interface = s.Interface
 	normaliseInterface(cur)
 	cur.UpdatedAt = time.Now()
