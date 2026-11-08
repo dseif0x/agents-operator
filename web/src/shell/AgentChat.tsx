@@ -511,13 +511,14 @@ function StateBanner({ session }: { session: Session }) {
   const label: Record<string, string> = {
     creating: "Starting the agent…",
     stopping: "Stopping…",
+    restarting: `Restarting the agent${session.state_reason?.startsWith("restarting: ") ? " (" + session.state_reason.slice(12) + ")" : ""}…`,
     stopped: "This agent is stopped. Messages you send wait until it runs again.",
     failed: `The agent failed${session.state_reason ? ": " + session.state_reason : ""}.`,
     deleting: "Deleting…",
   };
   return (
     <div class={`cv-banner ${session.state === "failed" ? "bad" : ""}`}>
-      {session.state === "creating" || session.state === "stopping" ? <span class="cv-spin" /> : <Icon name={session.state === "failed" ? "alert" : "power"} size={17} />}
+      {session.state === "creating" || session.state === "stopping" || session.state === "restarting" ? <span class="cv-spin" /> : <Icon name={session.state === "failed" ? "alert" : "power"} size={17} />}
       <span class="text">{label[session.state] ?? session.state}</span>
       {(session.state === "stopped" || session.state === "failed") && (
         <button class="sh-btn small primary" disabled={busy} onClick={start}>
@@ -802,9 +803,9 @@ function SessionMenu({ session }: { session: Session }) {
       </button>
       {open && (
         <div class="sh-menu">
-          {running ? (
-            <button onClick={() => act(() => api.stopSession(session.id))}>
-              <Icon name="power" size={16} /> Stop agent
+          {running || session.state === "restarting" ? (
+            <button disabled={session.state === "restarting"} onClick={() => act(() => api.restartSession(session.id))}>
+              <Icon name="refresh" size={16} /> Restart agent
             </button>
           ) : (
             <button onClick={() => act(() => api.startSession(session.id))}>

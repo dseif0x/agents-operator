@@ -82,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("DELETE /api/v1/sessions/{id}", s.deleteSession)
 	authed.HandleFunc("POST /api/v1/sessions/{id}/start", s.startSession)
 	authed.HandleFunc("POST /api/v1/sessions/{id}/stop", s.stopSession)
+	authed.HandleFunc("POST /api/v1/sessions/{id}/restart", s.restartSession)
 	authed.HandleFunc("POST /api/v1/sessions/{id}/restart-agent", s.restartAgent)
 	authed.HandleFunc("POST /api/v1/sessions/{id}/save-login", s.saveLogin)
 	authed.HandleFunc("GET /api/v1/sessions/{id}/ws", s.sessionWS)
@@ -390,6 +391,15 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	sess, err := s.Sessions.Start(r.Context(), p.User, r.PathValue("id"))
+	if err != nil {
+		s.mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, s.Sessions.View(sess))
+}
+
+func (s *Server) restartSession(w http.ResponseWriter, r *http.Request) {
+	sess, err := s.Sessions.Restart(r.Context(), principal(r).User, r.PathValue("id"))
 	if err != nil {
 		s.mapErr(w, err)
 		return

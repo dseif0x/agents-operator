@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -217,22 +218,51 @@ func TestStopKeepsPVCAndStartRotatesToken(t *testing.T) {
 	}
 }
 
-func TestPodFailureMarksFailedAndRestartReplacesPod(t *testing.T) {
+func TestPodFailureRestartsAndCrashLoopFails(t *testing.T) {
 	h := newHarness(t)
 	s := newSession(h)
 	h.converge(s.ID)
 
-	p := h.pod(s.ID)
-	p.Status.Phase = corev1.PodFailed
-	p.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: ContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137, Reason: "OOMKilled"}}}}
-	if _, err := h.cs.CoreV1().Pods(h.ns).UpdateStatus(h.ctx, p, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
+	die := func() {
+		t.Helper()
+		p := h.pod(s.ID)
+		p.Status.Phase = corev1.PodFailed
+		p.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: ContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137, Reason: "OOMKilled"}}}}
+		if _, err := h.cs.CoreV1().Pods(h.ns).UpdateStatus(h.ctx, p, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		h.eventually("failed pod in cache", func() bool { return PodTerminal(h.r.observe(s.ID).pod) })
+		h.reconcile(s.ID)
 	}
-	h.eventually("failed pod in cache", func() bool { return PodTerminal(h.r.observe(s.ID).pod) })
-	h.reconcile(s.ID)
+	// A pod that dies is replaced: restarting, the old pod goes, creating.
+	for i := 1; i <= crashLimit; i++ {
+		die()
+		if got := h.session(s.ID); got.State != store.StateRestarting || got.StateReason != "restarting: container exited with code 137 (OOMKilled)" {
+			t.Fatalf("crash %d: state = %s (%s)", i, got.State, got.StateReason)
+		}
+		h.reconcile(s.ID) // deletes the dead pod
+		h.eventually("dead pod gone", func() bool { return h.r.observe(s.ID).pod == nil })
+		h.reconcile(s.ID) // -> creating
+		if got := h.session(s.ID); got.State != store.StateCreating {
+			t.Fatalf("crash %d: state after the pod went = %s", i, got.State)
+		}
+		// The new generation: secret rotated, then a new pod.
+		h.eventually("new pod", func() bool {
+			h.reconcile(s.ID)
+			p := h.r.observe(s.ID).pod
+			return p != nil && p.DeletionTimestamp == nil && !PodTerminal(p)
+		})
+		h.markReady(s.ID)
+		h.reconcile(s.ID)
+		if got := h.session(s.ID); got.State != store.StateRunning {
+			t.Fatalf("crash %d: not running again: %s", i, got.State)
+		}
+	}
+	// One crash too many within the window: failed, the pod kept for logs.
+	die()
 	got := h.session(s.ID)
-	if got.State != store.StateFailed || got.StateReason != "container exited with code 137 (OOMKilled)" {
-		t.Fatalf("state = %s (%s)", got.State, got.StateReason)
+	if got.State != store.StateFailed || !strings.Contains(got.StateReason, "died 4 times") {
+		t.Fatalf("crash loop: state = %s (%s)", got.State, got.StateReason)
 	}
 	if h.pod(s.ID) == nil {
 		t.Fatal("failed pod must be kept for logs")
@@ -245,11 +275,11 @@ func TestPodFailureMarksFailedAndRestartReplacesPod(t *testing.T) {
 	h.reconcile(s.ID) // rotates the secret and deletes the stale pod in one pass
 	h.eventually("secret rotated and old pod gone", func() bool {
 		o := h.r.observe(s.ID)
-		return o.secret != nil && o.secret.Annotations[k8s.AnnotationGeneration] == "2" && o.pod == nil
+		return o.secret != nil && o.secret.Annotations[k8s.AnnotationGeneration] == strconv.Itoa(h.session(s.ID).Generation) && o.pod == nil
 	})
 	h.reconcile(s.ID) // creates new pod
 	h.eventually("new pod", func() bool { return h.r.observe(s.ID).pod != nil })
-	if np := h.pod(s.ID); np.Annotations[k8s.AnnotationGeneration] != "2" || np.Status.Phase == corev1.PodFailed {
+	if np := h.pod(s.ID); np.Status.Phase == corev1.PodFailed {
 		t.Fatal("pod not replaced")
 	}
 }
@@ -307,7 +337,7 @@ func TestOrphansAreRemovedAfterGrace(t *testing.T) {
 	}
 }
 
-func TestRunningPodDisappearsIsFailed(t *testing.T) {
+func TestRunningPodDisappearsRestarts(t *testing.T) {
 	h := newHarness(t)
 	s := newSession(h)
 	h.converge(s.ID)
@@ -316,12 +346,16 @@ func TestRunningPodDisappearsIsFailed(t *testing.T) {
 	}
 	h.eventually("pod gone", func() bool { return h.r.observe(s.ID).pod == nil })
 	h.reconcile(s.ID)
-	if got := h.session(s.ID); got.State != store.StateFailed || got.StateReason != "pod disappeared" {
+	if got := h.session(s.ID); got.State != store.StateRestarting || got.StateReason != "restarting: pod disappeared" {
 		t.Fatalf("state = %s (%s)", got.State, got.StateReason)
+	}
+	h.reconcile(s.ID)
+	if got := h.session(s.ID); got.State != store.StateCreating {
+		t.Fatalf("state = %s", got.State)
 	}
 	_, err := h.cs.CoreV1().Pods(h.ns).Get(h.ctx, ObjectName(s.ID), metav1.GetOptions{})
 	if !apierrors.IsNotFound(err) {
-		t.Fatal("pod should stay gone")
+		t.Fatal("no pod before the creating pass")
 	}
 }
 
