@@ -144,9 +144,9 @@ func (r pgChats) Post(ctx context.Context, m *ChatMessage, files []NewAttachment
 	if m.ReplyTo > 0 {
 		replyTo = m.ReplyTo
 	}
-	if err := tx.QueryRow(ctx, `INSERT INTO chat_messages (chat_id, author_session, author_name, text, mentions, everyone, reply_to)
-		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, created_at`,
-		m.ChatID, nullable(m.AuthorSession), m.AuthorName, m.Text, m.Mentions, m.Everyone, replyTo).Scan(&m.ID, &m.CreatedAt); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO chat_messages (chat_id, author_session, author_name, text, mentions, everyone, reply_to, turn)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, created_at`,
+		m.ChatID, nullable(m.AuthorSession), m.AuthorName, m.Text, m.Mentions, m.Everyone, replyTo, m.Turn).Scan(&m.ID, &m.CreatedAt); err != nil {
 		return mapErr(err)
 	}
 	m.Attachments = nil
@@ -167,14 +167,14 @@ func (r pgChats) Post(ctx context.Context, m *ChatMessage, files []NewAttachment
 	return mapErr(tx.Commit(ctx))
 }
 
-const messageCols = `id, chat_id, COALESCE(author_session::text, ''), author_name, text, mentions, everyone, COALESCE(reply_to, 0), created_at`
+const messageCols = `id, chat_id, COALESCE(author_session::text, ''), author_name, text, mentions, everyone, COALESCE(reply_to, 0), created_at, turn`
 
 func (r pgChats) scanMessages(ctx context.Context, rows pgx.Rows) ([]*ChatMessage, error) {
 	defer rows.Close()
 	var out []*ChatMessage
 	for rows.Next() {
 		var m ChatMessage
-		if err := rows.Scan(&m.ID, &m.ChatID, &m.AuthorSession, &m.AuthorName, &m.Text, &m.Mentions, &m.Everyone, &m.ReplyTo, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ChatID, &m.AuthorSession, &m.AuthorName, &m.Text, &m.Mentions, &m.Everyone, &m.ReplyTo, &m.CreatedAt, &m.Turn); err != nil {
 			return nil, mapErr(err)
 		}
 		out = append(out, &m)

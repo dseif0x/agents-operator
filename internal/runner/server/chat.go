@@ -124,6 +124,10 @@ func (c *Chat) ServeUplink(w http.ResponseWriter, r *http.Request) {
 					c.Log.Warn("cannot answer the agent's request", "err", err)
 				}
 			}(f.RequestID)
+		case f.Event == runner.EventSendNow && c.Convo != nil:
+			for _, id := range f.IDs {
+				go c.Convo.SendNow(context.Background(), id)
+			}
 		case f.Event == runner.EventMemories && c.Convo != nil:
 			notes := make([]convo.Note, 0, len(f.Memories))
 			for _, m := range f.Memories {
@@ -690,6 +694,9 @@ func (c *Chat) local(ctx context.Context, op string, body []byte) (json.RawMessa
 			return nil, errors.New("bad arguments")
 		}
 		send := runner.ChatSendArgs{Chat: a.Chat, Text: a.Text, ReplyTo: a.ReplyTo}
+		if c.Convo != nil {
+			send.Turn = c.Convo.Turn()
+		}
 		for _, p := range append(a.Files, a.Images...) {
 			f, err := c.readFile(p)
 			if err != nil {

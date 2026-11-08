@@ -83,6 +83,18 @@ func (r memConversations) ListItems(_ context.Context, sessionID, thread string,
 	return out, nil
 }
 
+func (r memConversations) TurnItems(_ context.Context, sessionID, thread, turn string) ([]*ConvItem, error) {
+	r.d.mu.Lock()
+	defer r.d.mu.Unlock()
+	var out []*ConvItem
+	for _, cur := range r.d.items {
+		if cur.SessionID == sessionID && cur.Thread == thread && cur.Turn == turn && turn != "" {
+			out = append(out, copyItem(cur))
+		}
+	}
+	return out, nil
+}
+
 func (r memConversations) RunningItems(_ context.Context, sessionID, thread, turn string) ([]*ConvItem, error) {
 	r.d.mu.Lock()
 	defer r.d.mu.Unlock()

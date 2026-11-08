@@ -10,6 +10,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -43,6 +44,12 @@ type Claude struct {
 	window  int64
 	// Permission and question requests waiting for the owner.
 	pendingReqs map[string]claudeControl
+	// initID is the initialize control request (its answer has the models).
+	initID string
+	models []Model
+	// Background work: by task id; toolTitles names tool calls.
+	background map[string]string
+	toolTitles map[string]string
 }
 
 // claudeControl is a control request from the CLI.
@@ -86,15 +93,79 @@ func (c *Claude) Start(ctx context.Context, ref string) error {
 	c.matched = map[string]int{}
 	c.order = map[string][]int{}
 	c.pendingReqs = map[string]claudeControl{}
+	c.background = map[string]string{}
+	c.toolTitles = map[string]string{}
+	c.models = claudeModels
 	go c.read()
+	// The CLI's own model list (what the SDK's supportedModels reads).
+	c.initID = "init-" + randKey()
+	_ = c.p.send(map[string]any{"type": "control_request", "request_id": c.initID, "request": map[string]any{"subtype": "initialize"}})
 	return nil
 }
+
+// Steer writes a message during the running turn; Claude Code reads it at
+// its next step.
+func (c *Claude) Steer(in Input) error {
+	if c.currentTurn() == "" {
+		return ErrNoSteer
+	}
+	content := []map[string]any{}
+	text := in.Text
+	for _, f := range in.Files {
+		if block := imageBlock(f); block != nil {
+			content = append(content, block)
+		} else {
+			text += "\n[file: " + f + "]"
+		}
+	}
+	content = append([]map[string]any{{"type": "text", "text": text}}, content...)
+	return c.p.send(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}})
+}
+
+// ensureTurn starts a turn for output the CLI produces on its own (after
+// a background task finished, it continues without a message from us).
+func (c *Claude) ensureTurn() string {
+	c.mu.Lock()
+	if c.turn != "" {
+		t := c.turn
+		c.mu.Unlock()
+		return t
+	}
+	c.turnSeq++
+	c.turn = fmt.Sprintf("c%d", c.turnSeq)
+	c.interrupted = false
+	turn := c.turn
+	c.mu.Unlock()
+	c.emit(Event{Type: EventTurnStarted, Turn: turn})
+	return turn
+}
+
+// emitBackground sends the background list.
+func (c *Claude) emitBackground() {
+	c.mu.Lock()
+	list := make([]Background, 0, len(c.background))
+	for id, title := range c.background {
+		list = append(list, Background{ID: id, Title: title})
+	}
+	c.mu.Unlock()
+	if list == nil {
+		list = []Background{}
+	}
+	c.emit(Event{Type: EventBackground, Turn: c.currentTurn(), Background: list})
+}
+
+var (
+	bgStartRE = regexp.MustCompile(`(?:running in background with ID|Monitor started \(task|Started background task|task ID):?\s*([A-Za-z0-9_-]{4,})`)
+	bgDoneRE  = regexp.MustCompile(`(?s)<task-id>([^<]+)</task-id>.*?<status>([^<]+)</status>`)
+	bgSumRE   = regexp.MustCompile(`(?s)<summary>([^<]+)</summary>`)
+)
 
 // claudeModels are the aliases Claude Code understands.
 var claudeModels = []Model{{ID: "opus", Name: "Opus"}, {ID: "sonnet", Name: "Sonnet"}, {ID: "haiku", Name: "Haiku"}}
 
 // SetModel switches the model with a control request.
 func (c *Claude) SetModel(model string) error {
+	var models []Model
 	c.mu.Lock()
 	c.ctrlSeq++
 	id := fmt.Sprintf("model-%d", c.ctrlSeq)
@@ -103,7 +174,10 @@ func (c *Claude) SetModel(model string) error {
 		return err
 	}
 	c.Model = model
-	c.emit(Event{Type: EventInfo, Info: &Info{Model: model, Models: claudeModels}})
+	c.mu.Lock()
+	models = c.models
+	c.mu.Unlock()
+	c.emit(Event{Type: EventInfo, Info: &Info{Model: model, Models: models}})
 	return nil
 }
 
@@ -394,6 +468,10 @@ func (c *Claude) read() {
 			c.control(line)
 			continue
 		}
+		if l.Type == "control_response" {
+			c.controlResponse(line)
+			continue
+		}
 		c.handle(l)
 	}
 	err := c.p.wait()
@@ -413,7 +491,10 @@ func (c *Claude) handle(l claudeLine) {
 	case "system":
 		switch l.Subtype {
 		case "init":
-			c.emit(Event{Type: EventInfo, Info: &Info{Model: l.Model, Ref: l.SessionID, Models: claudeModels}})
+			c.mu.Lock()
+			models := c.models
+			c.mu.Unlock()
+			c.emit(Event{Type: EventInfo, Info: &Info{Model: l.Model, Ref: l.SessionID, Models: models}})
 		case "compact_boundary":
 			if turn := c.currentTurn(); turn != "" {
 				c.emit(Event{Type: EventItem, Turn: turn, Item: &Item{Key: "compact-" + randKey(), Kind: KindNotice, Status: StatusDone, Text: "Context compacted"}})
@@ -427,16 +508,23 @@ func (c *Claude) handle(l claudeLine) {
 		if json.Unmarshal(l.Event, &ev) != nil {
 			return
 		}
+		if ev.Type == "message_start" {
+			c.ensureTurn()
+		}
 		c.stream(ev)
 	case "assistant":
 		var m claudeMessage
 		if json.Unmarshal(l.Message, &m) != nil {
 			return
 		}
+		c.ensureTurn()
 		c.assistant(m, parent)
 	case "user":
 		var m claudeMessage
 		if json.Unmarshal(l.Message, &m) != nil {
+			return
+		}
+		if parent == "" && c.notification(m) {
 			return
 		}
 		c.toolResults(m, parent)
@@ -508,6 +596,16 @@ func (c *Claude) stream(ev claudeStreamEvent) {
 			item.Tool = &Tool{Name: b.Name, Kind: claudeToolKind(b.Name)}
 		}
 		c.emit(Event{Type: EventItem, Turn: turn, Item: item})
+	case "content_block_stop":
+		// Text and thinking are done when their block ends (tools when their
+		// result comes): a block whose full message carries no text (hidden
+		// thinking) would otherwise spin until the turn ends.
+		c.mu.Lock()
+		blk := c.blocks[ev.Index]
+		c.mu.Unlock()
+		if blk != nil && blk.kind != KindTool {
+			c.emit(Event{Type: EventItem, Turn: turn, Item: &Item{Key: blk.key, Kind: blk.kind, Status: StatusDone}})
+		}
 	case "content_block_delta":
 		c.mu.Lock()
 		blk := c.blocks[ev.Index]
@@ -584,7 +682,11 @@ func (c *Claude) assistant(m claudeMessage, parent string) {
 			if parent == "" {
 				c.keyFor(m.ID, KindTool, pos) // mark the streamed block used
 			}
-			c.emit(Event{Type: EventItem, Turn: turn, Item: &Item{Key: b.ID, Kind: KindTool, Status: StatusRunning, Parent: parent, Tool: claudeTool(b.Name, b.Input)}})
+			t := claudeTool(b.Name, b.Input)
+			c.mu.Lock()
+			c.toolTitles[b.ID] = firstNonEmpty(t.Title, t.Name)
+			c.mu.Unlock()
+			c.emit(Event{Type: EventItem, Turn: turn, Item: &Item{Key: b.ID, Kind: KindTool, Status: StatusRunning, Parent: parent, Tool: t}})
 		}
 	}
 }
@@ -607,8 +709,89 @@ func (c *Claude) toolResults(m claudeMessage, parent string) {
 		if b.IsError {
 			status = StatusFailed
 		}
-		c.emit(Event{Type: EventItem, Turn: turn, Item: &Item{Key: b.ToolUseID, Kind: KindTool, Status: status, Parent: parent, Tool: &Tool{Output: trim(resultText(b.Content)), Error: b.IsError}}})
+		out := resultText(b.Content)
+		c.emit(Event{Type: EventItem, Turn: turn, Item: &Item{Key: b.ToolUseID, Kind: KindTool, Status: status, Parent: parent, Tool: &Tool{Output: trim(out), Error: b.IsError}}})
+		if m := bgStartRE.FindStringSubmatch(out); m != nil && !b.IsError {
+			c.mu.Lock()
+			c.background[m[1]] = firstNonEmpty(c.toolTitles[b.ToolUseID], "background task")
+			c.mu.Unlock()
+			c.emitBackground()
+		}
 	}
+}
+
+// controlResponse reads the answer to our initialize request: the models.
+func (c *Claude) controlResponse(line []byte) {
+	var r struct {
+		Response struct {
+			RequestID string `json:"request_id"`
+			Response  struct {
+				Models []struct {
+					Value       string `json:"value"`
+					DisplayName string `json:"displayName"`
+				} `json:"models"`
+			} `json:"response"`
+		} `json:"response"`
+	}
+	if json.Unmarshal(line, &r) != nil || r.Response.RequestID == "" || r.Response.RequestID != c.initID {
+		return
+	}
+	var models []Model
+	for _, m := range r.Response.Response.Models {
+		if m.Value != "" {
+			models = append(models, Model{ID: m.Value, Name: firstNonEmpty(m.DisplayName, m.Value)})
+		}
+	}
+	if len(models) == 0 {
+		return
+	}
+	c.mu.Lock()
+	c.models = models
+	model := c.Model
+	c.mu.Unlock()
+	c.emit(Event{Type: EventInfo, Info: &Info{Model: model, Models: models}})
+}
+
+// notification handles a message the CLI gives itself, a background
+// task's notification: it ends that task and shows as a notice. It reports
+// whether the message was one.
+func (c *Claude) notification(m claudeMessage) bool {
+	var text string
+	if json.Unmarshal(m.Content, &text) != nil {
+		var blocks []claudeBlockJSON
+		if json.Unmarshal(m.Content, &blocks) != nil {
+			return false
+		}
+		for _, b := range blocks {
+			if b.Type == "text" {
+				text += b.Text
+			}
+		}
+	}
+	if !strings.Contains(text, "<task-notification>") {
+		return false
+	}
+	turn := c.ensureTurn()
+	changed := false
+	for _, mm := range bgDoneRE.FindAllStringSubmatch(text, -1) {
+		if st := strings.ToLower(mm[2]); st != "running" {
+			c.mu.Lock()
+			if _, ok := c.background[mm[1]]; ok {
+				delete(c.background, mm[1])
+				changed = true
+			}
+			c.mu.Unlock()
+		}
+	}
+	summary := "A background task reported back"
+	if sm := bgSumRE.FindStringSubmatch(text); sm != nil {
+		summary = strings.TrimSpace(sm[1])
+	}
+	c.emit(Event{Type: EventItem, Turn: turn, Item: &Item{Key: "notify-" + randKey(), Kind: KindNotice, Status: StatusDone, Text: summary}})
+	if changed {
+		c.emitBackground()
+	}
+	return true
 }
 
 // resultText flattens a tool result's content (a string or blocks).

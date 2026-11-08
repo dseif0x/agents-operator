@@ -56,6 +56,8 @@ const (
 	EventSetModel = "set_model"
 	// EventMemories replaces the agent's memories (Memories).
 	EventMemories = "memories"
+	// EventSendNow gives queued inputs (IDs) to the agent right away.
+	EventSendNow = "send_now"
 )
 
 // MemoryNote is one of the agent's memories.
@@ -160,6 +162,9 @@ type ChatSendArgs struct {
 	// Images carries the attached files of any type (the wire name is from
 	// when only images were allowed).
 	Images []UplinkFile `json:"images,omitempty"`
+	// Turn is the conversation turn the agent posts from (conversation
+	// sessions), so the chat can show the work behind the message.
+	Turn string `json:"turn,omitempty"`
 }
 
 // ChatRefArgs name a chat (OpChatInfo) and, for OpChatRead, a window.

@@ -23,7 +23,17 @@ const (
 	EventRequest = "request"
 	// EventRequestDone: a request was answered or is moot.
 	EventRequestDone = "request_done"
+	// EventBackground: the work the agent left running in the background
+	// (Background is the whole list now).
+	EventBackground = "background"
 )
+
+// Background is one thing the agent runs in the background: a command, a
+// watcher, a sub-agent.
+type Background struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
 
 // Item kinds.
 const (
@@ -69,6 +79,8 @@ type Event struct {
 	Usage   *Usage   `json:"usage,omitempty"`
 	Info    *Info    `json:"info,omitempty"`
 	Request *Request `json:"request,omitempty"`
+	// Background is set (possibly empty) on background events.
+	Background []Background `json:"background,omitempty"`
 }
 
 // Request kinds.
@@ -205,6 +217,10 @@ type Driver interface {
 	Respond(id string, r Response) error
 	// SetModel switches the model for the next turns.
 	SetModel(model string) error
+	// Steer gives the agent a message during the running turn; ErrNoSteer
+	// when the CLI cannot take one (the session then stops the turn and
+	// sends it as the next).
+	Steer(in Input) error
 	// Events delivers the conversation; it is closed when the CLI exits.
 	Events() <-chan Event
 	// Wait waits for the CLI to exit.

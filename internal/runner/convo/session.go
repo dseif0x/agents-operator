@@ -3,6 +3,7 @@ package convo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -118,6 +119,50 @@ func (s *Session) memoryBlock() string {
 	return b.String()
 }
 
+// SendNow gives the agent a queued input right away: into the running turn
+// where the CLI can take it, else by stopping the turn and sending it next.
+func (s *Session) SendNow(ctx context.Context, id string) {
+	s.mu.Lock()
+	var p Pending
+	found := false
+	for i, q := range s.queue {
+		if q.ID == id {
+			p, found = q, true
+			s.queue = append(s.queue[:i:i], s.queue[i+1:]...)
+			break
+		}
+	}
+	d, turn := s.driver, s.turn
+	s.mu.Unlock()
+	if !found {
+		return
+	}
+	if d == nil || turn == "" || turn == "pending" {
+		s.mu.Lock()
+		s.queue = append([]Pending{p}, s.queue...)
+		s.mu.Unlock()
+		s.kick(s.wake)
+		return
+	}
+	if p.Claim && s.ClaimInput != nil {
+		if ok, err := s.ClaimInput(ctx, p.ID); err != nil || !ok {
+			return
+		}
+	}
+	if err := d.Steer(p.Input); err == nil {
+		if p.OnSent != nil {
+			go p.OnSent()
+		}
+		return
+	}
+	// No steering: stop the turn and send it as the next one.
+	p.Claim = false
+	s.mu.Lock()
+	s.queue = append([]Pending{p}, s.queue...)
+	s.mu.Unlock()
+	_ = d.Interrupt()
+}
+
 // Respond answers a request of the agent.
 func (s *Session) Respond(id string, r Response) error {
 	s.mu.Lock()
@@ -228,6 +273,16 @@ func (s *Session) Interrupt() error {
 		return nil
 	}
 	return d.Interrupt()
+}
+
+// Turn is the running turn's id as the hub knows it ("" between turns).
+func (s *Session) Turn() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turn == "pending" {
+		return ""
+	}
+	return s.turn
 }
 
 // Busy reports whether a turn runs.
@@ -414,10 +469,16 @@ func (s *Session) dispatch(ctx context.Context, d Driver) {
 		}
 		s.mu.Unlock()
 		if err := d.Send(p.Input); err != nil {
-			s.Log.Warn("cannot send an input to the agent", "err", err)
 			s.mu.Lock()
 			if s.turn == "pending" {
 				s.turn = ""
+			}
+			if errors.Is(err, ErrBusy) {
+				// The agent started a turn of its own meanwhile: send it next.
+				p.Claim = false
+				s.queue = append([]Pending{p}, s.queue...)
+			} else {
+				s.Log.Warn("cannot send an input to the agent", "err", err)
 			}
 			s.mu.Unlock()
 		}

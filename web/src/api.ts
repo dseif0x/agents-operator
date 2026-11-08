@@ -96,6 +96,8 @@ export interface ConvSummary {
   error?: string;
   /** Models the owner can switch to. */
   models?: { id: string; name?: string }[];
+  /** What the agent left running in the background (commands, watchers). */
+  background?: { id: string; title: string }[];
   input_tokens?: number;
   output_tokens?: number;
   cost_usd?: number;
@@ -429,6 +431,7 @@ export const api = {
     if (opts.limit) q.set("limit", String(opts.limit));
     return request<{ messages: ChatMessage[] }>("GET", `/chats/${id}/messages?${q}`);
   },
+  turnItems: (id: string, turn: string) => request<{ items: ConvItem[] }>("GET", `/sessions/${id}/items?turn=${encodeURIComponent(turn)}`),
   items: (id: string, before = 0, limit = 200) => request<{ items: ConvItem[] }>("GET", `/sessions/${id}/items?before=${before}&limit=${limit}`),
   /** A message to a conversation session's agent; with files it goes as multipart. */
   sendInput: async (id: string, text: string, files: File[] = []): Promise<ConvItem> => {
@@ -447,6 +450,7 @@ export const api = {
     return data as ConvItem;
   },
   editInput: (id: string, input: string, text: string) => request<ConvItem>("PATCH", `/sessions/${id}/inputs/${input}`, { text }),
+  sendNow: (id: string, input: string) => request<{ ok: boolean }>("POST", `/sessions/${id}/inputs/${input}/now`),
   cancelInput: (id: string, input: string) => request<{ ok: boolean }>("DELETE", `/sessions/${id}/inputs/${input}`),
   interrupt: (id: string) => request<{ ok: boolean }>("POST", `/sessions/${id}/interrupt`),
   answerRequest: (id: string, requestId: string, r: { option?: string; answers?: Record<string, string>; message?: string }) =>
@@ -494,6 +498,8 @@ export interface ChatMember {
   state: SessionState;
   /** What the agent is doing right now (hook activity), when known. */
   activity?: string;
+  /** Its detail: the tool, or the permission asked for. */
+  activity_detail?: string;
   muted: boolean;
 }
 
@@ -517,6 +523,8 @@ export interface ChatMessage {
   attachments: ChatAttachment[];
   /** Recipient session id -> "queued" | "delivered". */
   deliveries: Record<string, string>;
+  /** The conversation turn an agent's message came from (its steps: items?turn=). */
+  turn?: string;
   created_at: string;
 }
 

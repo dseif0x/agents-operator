@@ -28,7 +28,7 @@ func TestChatPush(t *testing.T) {
 	if _, err := svc.PostChatMessage(ctx, u, c.ID, "owner speaking", 0, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.AgentPost(ctx, ss[1], c.ID, "## Done\n**LGTM**, merged `fix/x`.", 0, nil); err != nil {
+	if _, err := svc.AgentPost(ctx, ss[1], c.ID, "## Done\n**LGTM**, merged `fix/x`.", 0, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(fp.sent) != 1 {

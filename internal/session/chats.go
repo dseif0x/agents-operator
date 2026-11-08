@@ -107,9 +107,11 @@ type MemberView struct {
 	Agent     string `json:"agent"`
 	Persona   string `json:"persona"`
 	State     string `json:"state"`
-	// Activity is what the agent is doing right now, when known.
-	Activity string `json:"activity,omitempty"`
-	Muted    bool   `json:"muted"`
+	// Activity is what the agent is doing right now, when known, and
+	// ActivityDetail its detail (the tool, the permission asked for).
+	Activity       string `json:"activity,omitempty"`
+	ActivityDetail string `json:"activity_detail,omitempty"`
+	Muted          bool   `json:"muted"`
 }
 
 // AuthorView is who wrote a message.
@@ -142,7 +144,10 @@ type MessageView struct {
 	Attachments []AttachmentView `json:"attachments"`
 	// Deliveries maps recipient session id to "queued" or "delivered".
 	Deliveries map[string]string `json:"deliveries"`
-	CreatedAt  time.Time         `json:"created_at"`
+	// Turn is the conversation turn an agent's message came from: its
+	// steps are GET /sessions/{author}/items?turn=<turn>.
+	Turn      string    `json:"turn,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ChatInput creates or changes a chat; nil fields are left as they are.
@@ -354,6 +359,7 @@ func (s *Service) chatView(ctx context.Context, owner *store.User, c *store.Chat
 		mv := MemberView{SessionID: sess.ID, Name: sess.Name, Handle: sess.Handle, Agent: sess.Agent, Persona: sess.Persona, State: sess.State, Muted: m.Muted}
 		if live, ok := s.Live(sess.ID); ok && live.Status.Activity != nil && sess.State == store.StateRunning {
 			mv.Activity = live.Status.Activity.State
+			mv.ActivityDetail = live.Status.Activity.Detail
 		}
 		v.membersBy[sess.ID] = len(v.Members)
 		v.Members = append(v.Members, mv)
@@ -400,7 +406,7 @@ func (s *Service) messageViews(ctx context.Context, owner *store.User, chat *Cha
 	}
 	out := make([]MessageView, 0, len(msgs))
 	for _, m := range msgs {
-		mv := MessageView{ID: m.ID, ChatID: m.ChatID, Text: m.Text, Mentions: m.Mentions, Everyone: m.Everyone, ReplyTo: m.ReplyTo,
+		mv := MessageView{ID: m.ID, ChatID: m.ChatID, Text: m.Text, Mentions: m.Mentions, Everyone: m.Everyone, ReplyTo: m.ReplyTo, Turn: m.Turn,
 			Attachments: []AttachmentView{}, Deliveries: byMsg[m.ID], CreatedAt: m.CreatedAt}
 		if mv.Mentions == nil {
 			mv.Mentions = []string{}
@@ -543,7 +549,7 @@ func Address(m *store.ChatMessage, recipient string) string {
 
 // post validates and stores a message by the owner (author nil) or a
 // session, queues it for its recipients and tells everyone.
-func (s *Service) post(ctx context.Context, owner *store.User, c *store.Chat, author *store.Session, text string, replyTo int64, images []ChatFile) (*MessageView, error) {
+func (s *Service) post(ctx context.Context, owner *store.User, c *store.Chat, author *store.Session, text string, replyTo int64, images []ChatFile, turn ...string) (*MessageView, error) {
 	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
 	if !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
 		return nil, &ValidationError{"messages are plain UTF-8 text"}
@@ -590,6 +596,9 @@ func (s *Service) post(ctx context.Context, owner *store.User, c *store.Chat, au
 		return nil, err
 	}
 	m := &store.ChatMessage{ChatID: c.ID, Text: text}
+	if author != nil && len(turn) > 0 {
+		m.Turn = turn[0]
+	}
 	if author != nil {
 		m.AuthorSession, m.AuthorName = author.ID, author.Name
 	}
@@ -763,12 +772,12 @@ func (s *Service) AgentReadChat(ctx context.Context, sess *store.Session, ref st
 }
 
 // AgentPost posts as a session.
-func (s *Service) AgentPost(ctx context.Context, sess *store.Session, ref, text string, replyTo int64, images []ChatFile) (*MessageView, error) {
+func (s *Service) AgentPost(ctx context.Context, sess *store.Session, ref, text string, replyTo int64, images []ChatFile, turn string) (*MessageView, error) {
 	c, err := s.agentChat(ctx, sess, ref)
 	if err != nil {
 		return nil, err
 	}
-	return s.post(ctx, s.owner(ctx, sess), c, sess, text, replyTo, images)
+	return s.post(ctx, s.owner(ctx, sess), c, sess, text, replyTo, images, turn)
 }
 
 // AgentAttachment returns an image of a chat the session is in.

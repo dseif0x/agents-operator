@@ -17,6 +17,7 @@ func (s *Server) conversationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/sessions/{id}/inputs", s.sendInput)
 	mux.HandleFunc("PATCH /api/v1/sessions/{id}/inputs/{input}", s.editInput)
 	mux.HandleFunc("DELETE /api/v1/sessions/{id}/inputs/{input}", s.cancelInput)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/inputs/{input}/now", s.sendNow)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/files/{file}", s.inputFile)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/interrupt", s.interrupt)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/requests/{request}", s.answerRequest)
@@ -106,6 +107,15 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) conversationItems(w http.ResponseWriter, r *http.Request) {
+	if turn := r.URL.Query().Get("turn"); turn != "" {
+		items, err := s.Sessions.TurnItems(r.Context(), principal(r).User.ID, r.PathValue("id"), turn)
+		if err != nil {
+			s.mapErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+		return
+	}
 	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	items, err := s.Sessions.Items(r.Context(), principal(r).User.ID, r.PathValue("id"), before, limit)
@@ -182,6 +192,14 @@ func (s *Server) editInput(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cancelInput(w http.ResponseWriter, r *http.Request) {
 	if err := s.Sessions.CancelInput(r.Context(), principal(r).User, r.PathValue("id"), r.PathValue("input")); err != nil {
+		s.mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) sendNow(w http.ResponseWriter, r *http.Request) {
+	if err := s.Sessions.SendNow(r.Context(), principal(r).User, r.PathValue("id"), r.PathValue("input")); err != nil {
 		s.mapErr(w, err)
 		return
 	}

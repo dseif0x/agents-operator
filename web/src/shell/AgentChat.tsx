@@ -104,6 +104,7 @@ export function AgentChat({ session }: { session: Session }) {
         <Avatar id={id} size={22} status={status} />
         <span>{session.name}</span>
       </span>
+      {(conv.background?.length ?? 0) > 0 && <BackgroundChip items={conv.background!} />}
       {conv.model && <ModelPicker session={session} />}
       <ContextRing used={conv.context} size={conv.context_window} />
       <SessionMenu session={session} />
@@ -344,6 +345,23 @@ function stepTitle(it: ConvItem): string {
   if (it.kind === "text") return (it.data.text ?? "").split("\n")[0].slice(0, 120) || "Sub-agent";
   const t = it.data.tool;
   return t?.title || t?.name || "Tool";
+}
+
+/** The work behind an agent's chat message: the steps of its turn. */
+export function TurnSteps({ sessionId, turn }: { sessionId: string; turn: string }) {
+  const [items, setItems] = useState<ConvItem[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .turnItems(sessionId, turn)
+      .then((r) => live && setItems(r.items.filter((it) => it.kind === "tool" || it.kind === "thinking")))
+      .catch(() => live && setItems([]));
+    return () => {
+      live = false;
+    };
+  }, [sessionId, turn]);
+  if (!items?.length) return null;
+  return <Steps items={items} />;
 }
 
 function Steps({ items }: { items: ConvItem[] }) {
@@ -588,6 +606,11 @@ function Bottom({ session, queued, working, onSent }: { session: Session; queued
               return (
                 <div class="cv-queue-item">
                   <span class="t">{q.data.text || (q.data.files?.length ? `${q.data.files.length} file(s)` : "")}</span>
+                  {working && (
+                    <button class="sh-btn small" title="Give it to the agent now, during its turn" onClick={() => api.sendNow(session.id, input).catch((e) => setErr((e as Error).message))}>
+                      Send now
+                    </button>
+                  )}
                   <button class="sh-icon-btn" title="Edit" onClick={() => setEditing({ key: q.key, text: q.data.text ?? "" })}>
                     <Icon name="pencil" size={15} />
                   </button>
@@ -1011,6 +1034,8 @@ function ModelPicker({ session }: { session: Session }) {
   }, [open]);
   const models = conv.models ?? [];
   const current = models.find((m) => m.id === conv.model);
+  const [q, setQ] = useState("");
+  const shown = q ? models.filter((m) => `${m.id} ${m.name ?? ""}`.toLowerCase().includes(q.toLowerCase())) : models;
   return (
     <div class="sh-menu-wrap" ref={ref}>
       <button class="sh-chip" title="Model" onClick={() => models.length && setOpen((o) => !o)} disabled={!models.length}>
@@ -1018,8 +1043,13 @@ function ModelPicker({ session }: { session: Session }) {
         {models.length > 0 && <Icon name="chevronDown" size={13} />}
       </button>
       {open && (
-        <div class="sh-menu">
-          {models.map((m) => (
+        <div class="sh-menu sh-model-menu">
+          {models.length > 8 && (
+            <input class="sh-menu-search" placeholder="Search models" value={q} autoFocus onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
+          )}
+          <div class="sh-menu-scroll">
+          {shown.length === 0 && <div class="rt-hint" style={{ padding: 8 }}>No model matches.</div>}
+          {shown.map((m) => (
             <button
               onClick={async () => {
                 setOpen(false);
@@ -1032,10 +1062,11 @@ function ModelPicker({ session }: { session: Session }) {
                 }
               }}
             >
-              <span style={{ width: 16 }}>{m.id === conv.model && <Icon name="check" size={14} />}</span>
-              {m.name || m.id}
+              <span style={{ width: 16, flex: "none" }}>{m.id === conv.model && <Icon name="check" size={14} />}</span>
+              <span class="sh-model-name">{m.name || m.id}</span>
             </button>
           ))}
+          </div>
           {err && <div class="rt-hint" style={{ padding: 8 }}>{err}</div>}
         </div>
       )}
@@ -1125,6 +1156,41 @@ function Memories({ session }: { session: Session }) {
             </button>
           </div>
         ),
+      )}
+    </div>
+  );
+}
+
+/** What the agent left running in the background, until it reports back. */
+function BackgroundChip({ items }: { items: { id: string; title: string }[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    addEventListener("mousedown", close);
+    return () => removeEventListener("mousedown", close);
+  }, [open]);
+  return (
+    <div class="sh-menu-wrap" ref={ref}>
+      <button class="sh-chip sh-bg-chip" title="Running in the background" onClick={() => setOpen((o) => !o)}>
+        <span class="cv-spin" />
+        {items.length} in background
+      </button>
+      {open && (
+        <div class="sh-menu">
+          <div class="rt-hint" style={{ padding: "4px 10px 6px" }}>
+            The agent comes back to these when they finish.
+          </div>
+          {items.map((b) => (
+            <div class="sh-bg-row">
+              <span class="cv-spin" />
+              <code>{b.title}</code>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
