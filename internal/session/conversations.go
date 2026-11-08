@@ -449,6 +449,17 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 			if e.Tool != nil {
 				d.Tool = mergeTool(d.Tool, e.Tool)
 			}
+			for _, f := range e.Files {
+				if len(f.Data) == 0 || len(f.Data) > convo.MaxItemFile {
+					continue
+				}
+				cf := &store.ConvFile{SessionID: sess.ID, OwnerID: sess.OwnerID, Name: CleanFileName(f.Name), ContentType: f.ContentType, Size: len(f.Data), Data: f.Data}
+				if err := conv.AddFile(ctx, cf); err != nil {
+					s.Log.Warn("cannot store a file of the agent", "session", sess.ID, "err", err)
+					continue
+				}
+				d.Files = append(d.Files, InputFile{ID: cf.ID, Name: cf.Name, ContentType: cf.ContentType, Size: cf.Size})
+			}
 			it.Data = mustJSON(d)
 		case convo.EventBackground:
 			sum.Background = ev.Background
@@ -560,6 +571,46 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 		s.SessionChanged(ctx, sess)
 	}
 	return nil
+}
+
+// KindFiles is an item with files the agent shared with the owner.
+const KindFiles = "files"
+
+// AgentShareFiles stores files the agent sends to its owner and shows them
+// in the conversation, in the turn they come from.
+func (s *Service) AgentShareFiles(ctx context.Context, sess *store.Session, a runner.ShareFileArgs) (any, error) {
+	if len(a.Files) == 0 {
+		return nil, &ValidationError{"no files"}
+	}
+	if len(a.Files) > 10 {
+		return nil, &ValidationError{"at most 10 files at a time"}
+	}
+	conv := s.Store.Conversations()
+	d := ItemData{Text: strings.TrimSpace(a.Text)}
+	for _, f := range a.Files {
+		if len(f.Data) == 0 || len(f.Data) > runner.MaxShareFile {
+			return nil, &ValidationError{fmt.Sprintf("%s is empty or larger than %d MiB", f.Name, runner.MaxShareFile>>20)}
+		}
+		ct := f.ContentType
+		if ct == "" {
+			ct = http.DetectContentType(f.Data)
+		}
+		cf := &store.ConvFile{SessionID: sess.ID, OwnerID: sess.OwnerID, Name: CleanFileName(f.Name), ContentType: ct, Size: len(f.Data), Data: f.Data}
+		if err := conv.AddFile(ctx, cf); err != nil {
+			return nil, err
+		}
+		d.Files = append(d.Files, InputFile{ID: cf.ID, Name: cf.Name, ContentType: cf.ContentType, Size: cf.Size})
+	}
+	it, err := conv.UpsertItem(ctx, &store.ConvItem{SessionID: sess.ID, Thread: store.MainThread, Key: "files:" + store.NewID(), Turn: a.Turn, Kind: KindFiles, Status: convo.StatusDone, Data: mustJSON(d)})
+	if err != nil {
+		return nil, err
+	}
+	s.publishItem(sess.OwnerID, sess.ID, it)
+	names := make([]string, 0, len(d.Files))
+	for _, f := range d.Files {
+		names = append(names, f.Name)
+	}
+	return map[string]any{"ok": true, "shared": names}, nil
 }
 
 // notifyConvo pushes a notification about a conversation session to its

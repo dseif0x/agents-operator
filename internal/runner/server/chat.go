@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -656,6 +657,29 @@ func (c *Chat) local(ctx context.Context, op string, body []byte) (json.RawMessa
 			args = json.RawMessage(`{}`)
 		}
 		return c.Call(ctx, op, args)
+	case runner.OpShareFile:
+		var a struct {
+			Paths []string `json:"paths"`
+			Text  string   `json:"text"`
+		}
+		if err := json.Unmarshal(body, &a); err != nil || len(a.Paths) == 0 {
+			return nil, errors.New("name at least one file in paths")
+		}
+		if c.Convo == nil {
+			return nil, errors.New("sharing files works in conversation sessions; in a chat, attach them to chat_send")
+		}
+		if len(a.Paths) > 10 {
+			return nil, errors.New("at most 10 files at a time")
+		}
+		send := runner.ShareFileArgs{Text: a.Text, Turn: c.Convo.Turn()}
+		for _, p := range a.Paths {
+			f, err := c.readFileMax(p, runner.MaxShareFile)
+			if err != nil {
+				return nil, err
+			}
+			send.Files = append(send.Files, f)
+		}
+		return c.Call(ctx, op, send)
 	case runner.OpChatsList, runner.OpChatInfo:
 		var args json.RawMessage = body
 		if len(body) == 0 {
@@ -720,7 +744,17 @@ func (c *Chat) local(ctx context.Context, op string, body []byte) (json.RawMessa
 // of Roots (after resolving links), at most 10 MiB. Its type is sniffed by
 // the hub; images are shown inline, anything else is a download.
 func (c *Chat) readFile(path string) (runner.UplinkFile, error) {
+	return c.readFileMax(path, 10<<20)
+}
+
+// readFileMax is readFile with a size limit of max bytes. The type comes
+// from the name where it is known, else from the content.
+func (c *Chat) readFileMax(path string, max int64) (runner.UplinkFile, error) {
 	var f runner.UplinkFile
+	// A relative path is the agent's: from the workspace, where it runs.
+	if !filepath.IsAbs(path) && len(c.Roots) > 0 {
+		path = filepath.Join(c.Roots[0], path)
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return f, err
@@ -747,8 +781,8 @@ func (c *Chat) readFile(path string) (runner.UplinkFile, error) {
 	if err != nil || !st.Mode().IsRegular() {
 		return f, fmt.Errorf("%s is not a file", path)
 	}
-	if st.Size() > 10<<20 {
-		return f, fmt.Errorf("%s is larger than 10 MiB", path)
+	if st.Size() > max {
+		return f, fmt.Errorf("%s is larger than %d MiB", path, max>>20)
 	}
 	data, err := os.ReadFile(real)
 	if err != nil {
@@ -757,5 +791,9 @@ func (c *Chat) readFile(path string) (runner.UplinkFile, error) {
 	if len(data) == 0 {
 		return f, fmt.Errorf("%s is empty", path)
 	}
-	return runner.UplinkFile{Name: filepath.Base(real), ContentType: http.DetectContentType(data), Data: data}, nil
+	ct := http.DetectContentType(data)
+	if byName := mime.TypeByExtension(filepath.Ext(real)); byName != "" && max > 10<<20 {
+		ct = byName
+	}
+	return runner.UplinkFile{Name: filepath.Base(real), ContentType: ct, Data: data}, nil
 }

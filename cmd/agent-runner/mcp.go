@@ -118,9 +118,24 @@ var memoryToolDefs = []map[string]any{
 	},
 }
 
+// shareToolDefs send files to the owner (conversation sessions).
+var shareToolDefs = []map[string]any{
+	{
+		"name": runner.OpShareFile,
+		"description": "Send files to your owner in this conversation: screenshots, images, charts, logs, reports, archives, builds — any type, up to 25 MiB each, " +
+			"from your workspace. They appear as attachments in your reply (images inline, anything else as a download). " +
+			"Use it whenever showing the owner a file beats describing it; a Markdown link to a local path does not work for them.",
+		"inputSchema": map[string]any{"type": "object", "required": []string{"paths"}, "properties": map[string]any{
+			"paths": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "paths of the files to send (absolute or relative to the working directory), at most 10"},
+			"text":  map[string]any{"type": "string", "description": "an optional caption shown with the files"},
+		}},
+	},
+}
+
 func init() {
 	chatToolDefs = append(chatToolDefs, routineToolDefs...)
 	chatToolDefs = append(chatToolDefs, memoryToolDefs...)
+	chatToolDefs = append(chatToolDefs, shareToolDefs...)
 }
 
 const mcpInstructions = "Chats connect you with other agent sessions and with your owner. Messages for you arrive as prompts starting with [agents-operator chat]. " +
@@ -326,6 +341,14 @@ func formatChatResult(name string, raw json.RawMessage) string {
 				}
 			}
 		}
+	case runner.OpShareFile:
+		var m struct {
+			Shared []string `json:"shared"`
+		}
+		if json.Unmarshal(raw, &m) != nil || len(m.Shared) == 0 {
+			return string(raw)
+		}
+		fmt.Fprintf(&b, "Sent to the owner: %s.", strings.Join(m.Shared, ", "))
 	case runner.OpChatSend:
 		var m struct {
 			ID int64 `json:"id"`

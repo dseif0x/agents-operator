@@ -203,9 +203,18 @@ func (r pgConversations) SetInputState(ctx context.Context, sessionID, id, state
 	return tag.RowsAffected() == 1, nil
 }
 
+func (r pgConversations) AddFile(ctx context.Context, f *ConvFile) error {
+	if f.ID == "" {
+		f.ID = NewID()
+	}
+	_, err := r.pool.Exec(ctx, `INSERT INTO conversation_files (id, session_id, owner_id, name, content_type, size, data) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		f.ID, f.SessionID, f.OwnerID, f.Name, f.ContentType, f.Size, f.Data)
+	return mapErr(err)
+}
+
 func (r pgConversations) GetFile(ctx context.Context, sessionID, id string) (*ConvFile, error) {
 	var f ConvFile
-	err := r.pool.QueryRow(ctx, `SELECT id, input_id::text, session_id::text, owner_id::text, name, content_type, size, data FROM conversation_files WHERE session_id=$1 AND id::text=$2`, sessionID, id).
+	err := r.pool.QueryRow(ctx, `SELECT id, COALESCE(input_id::text, ''), session_id::text, owner_id::text, name, content_type, size, data FROM conversation_files WHERE session_id=$1 AND id::text=$2`, sessionID, id).
 		Scan(&f.ID, &f.InputID, &f.SessionID, &f.OwnerID, &f.Name, &f.ContentType, &f.Size, &f.Data)
 	if err != nil {
 		return nil, mapErr(err)

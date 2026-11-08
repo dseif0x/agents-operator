@@ -154,7 +154,7 @@ export interface ConvItem {
   thread: string;
   turn?: string;
   key: string;
-  kind: "user" | "text" | "thinking" | "tool" | "error" | "notice" | "request";
+  kind: "user" | "text" | "thinking" | "tool" | "error" | "notice" | "request" | "files";
   status: "queued" | "running" | "done" | "failed" | "interrupted" | "deleted" | "pending" | "answered" | "cancelled";
   data: ItemData;
   created_at: string;

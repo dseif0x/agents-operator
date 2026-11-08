@@ -14,6 +14,7 @@ import { loadDraft, saveDraft } from "../drafts";
 type Block =
   | { type: "user"; item: ConvItem }
   | { type: "text"; item: ConvItem }
+  | { type: "files"; item: ConvItem }
   | { type: "steps"; items: ConvItem[]; key: string }
   | { type: "error"; item: ConvItem }
   | { type: "notice"; item: ConvItem }
@@ -234,6 +235,7 @@ function toBlocks(items: ConvItem[]): Block[] {
     }
     if (it.kind === "user") out.push({ type: "user", item: it });
     else if (it.kind === "text") out.push({ type: "text", item: it });
+    else if (it.kind === "files") out.push({ type: "files", item: it });
     else if (it.kind === "error") out.push({ type: "error", item: it });
     else out.push({ type: "notice", item: it });
   }
@@ -258,8 +260,15 @@ function BlockView({ b, session }: { b: Block; session: Session }) {
           <div class={`cv-bubble cv-md ${b.item.status === "running" ? "cv-cursor" : ""}`} dangerouslySetInnerHTML={{ __html: renderMessage(b.item.data.text ?? "", []) }} />
         </div>
       );
+    case "files":
+      return (
+        <div class="cv-agent">
+          {b.item.data.text && <div class="cv-bubble cv-md" dangerouslySetInnerHTML={{ __html: renderMessage(b.item.data.text, []) }} />}
+          <FileList sessionId={session.id} files={b.item.data.files ?? []} agent />
+        </div>
+      );
     case "steps":
-      return <Steps items={b.items} />;
+      return <Steps items={b.items} sessionId={session.id} />;
     case "error":
       return (
         <div class="cv-error">
@@ -305,6 +314,36 @@ function RoutineMarker({ item, folded }: { item: ConvItem; folded: ConvItem[] })
   );
 }
 
+type ItemFile = NonNullable<ConvItem["data"]["files"]>[number];
+
+function fileSize(n: number): string {
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
+}
+
+/** Attachments: images inline (tap for full size), anything else a download. */
+function FileList({ sessionId, files, agent, small }: { sessionId: string; files: ItemFile[]; agent?: boolean; small?: boolean }) {
+  const url = (f: ItemFile) => `/api/v1/sessions/${sessionId}/files/${f.id}`;
+  return (
+    <div class={`cv-files ${agent ? "agent" : ""} ${small ? "small" : ""}`}>
+      {files.map((f) =>
+        f.content_type.startsWith("image/") && f.content_type !== "image/svg+xml" ? (
+          <a key={f.id} class="cv-file image" href={url(f)} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}>
+            <img src={url(f)} alt={f.name} loading="lazy" />
+          </a>
+        ) : (
+          <a key={f.id} class="cv-file" href={url(f)} download={f.name} onClick={(e) => e.stopPropagation()}>
+            <Icon name="file" size={16} />
+            <span>{f.name}</span>
+            {agent && <span class="size">{fileSize(f.size)}</span>}
+          </a>
+        ),
+      )}
+    </div>
+  );
+}
+
 function UserMessage({ item, session }: { item: ConvItem; session: Session }) {
   const [open, setOpen] = useState(false);
   const fromChat = item.data.source === "chat";
@@ -316,22 +355,7 @@ function UserMessage({ item, session }: { item: ConvItem; session: Session }) {
           <Icon name="chats" size={12} /> From a chat
         </span>
       )}
-      {files.length > 0 && (
-        <div class="cv-files">
-          {files.map((f) =>
-            f.content_type.startsWith("image/") ? (
-              <a class="cv-file image" href={`/api/v1/sessions/${session.id}/files/${f.id}`} target="_blank" rel="noopener">
-                <img src={`/api/v1/sessions/${session.id}/files/${f.id}`} alt={f.name} />
-              </a>
-            ) : (
-              <a class="cv-file" href={`/api/v1/sessions/${session.id}/files/${f.id}`}>
-                <Icon name="file" size={16} />
-                <span>{f.name}</span>
-              </a>
-            ),
-          )}
-        </div>
-      )}
+      {files.length > 0 && <FileList sessionId={session.id} files={files} />}
       {item.data.text && (
         <div class="cv-bubble" onClick={() => fromChat && setOpen((o) => !o)}>
           {item.data.text}
@@ -365,10 +389,12 @@ export function TurnSteps({ sessionId, turn }: { sessionId: string; turn: string
     };
   }, [sessionId, turn]);
   if (!items?.length) return null;
-  return <Steps items={items} />;
+  return <Steps items={items} sessionId={sessionId} />;
 }
 
-function Steps({ items }: { items: ConvItem[] }) {
+function Steps({ items, sessionId }: { items: ConvItem[]; sessionId: string }) {
+  // Pictures the agent looked at stay visible while the steps are folded.
+  const seen = items.flatMap((it) => (it.kind === "tool" ? (it.data.files ?? []) : []));
   const running = items.find((it) => it.status === "running");
   const [open, setOpen] = useState(false);
   const failed = items.filter((it) => it.status === "failed").length;
@@ -389,10 +415,11 @@ function Steps({ items }: { items: ConvItem[] }) {
         <span class="count">{running ? "" : duration}</span>
         <Icon name={open ? "chevronDown" : "chevronRight"} size={15} />
       </button>
+      {seen.length > 0 && !open && <FileList sessionId={sessionId} files={seen} agent small />}
       {open && (
         <div class="cv-step-list">
           {items.map((it) => (
-            <Step key={it.key} it={it} />
+            <Step key={it.key} it={it} sessionId={sessionId} />
           ))}
         </div>
       )}
@@ -400,7 +427,7 @@ function Steps({ items }: { items: ConvItem[] }) {
   );
 }
 
-function Step({ it }: { it: ConvItem }) {
+function Step({ it, sessionId }: { it: ConvItem; sessionId: string }) {
   const [open, setOpen] = useState(false);
   const t = it.data.tool;
   const kind = it.kind === "tool" ? (t?.kind ?? "other") : it.kind === "thinking" ? "thinking" : "sub";
@@ -435,6 +462,7 @@ function Step({ it }: { it: ConvItem }) {
           ) : (
             <span class="lbl">{it.status === "running" ? "Running…" : "No output"}</span>
           )}
+          {(it.data.files ?? []).length > 0 && <FileList sessionId={sessionId} files={it.data.files ?? []} agent />}
         </div>
       )}
     </>

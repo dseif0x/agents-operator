@@ -1,6 +1,7 @@
 package convo
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,5 +53,17 @@ func TestClaudeManualBackgroundResult(t *testing.T) {
 	out := "Command was manually backgrounded by user with ID: bdbqydcky. Output is being written to: /tmp/x.output."
 	if m := bgStartRE.FindStringSubmatch(out); m == nil || m[1] != "bdbqydcky" {
 		t.Fatalf("match = %v", m)
+	}
+}
+
+func TestClaudeResultImages(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\nfake")
+	raw := []byte(`[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + base64.StdEncoding.EncodeToString(png) + `"}},{"type":"text","text":"x"}]`)
+	files := resultImages(raw, "/workspace/shots/home.png")
+	if len(files) != 1 || files[0].Name != "home.png" || files[0].ContentType != "image/png" || string(files[0].Data) != string(png) {
+		t.Fatalf("files = %+v", files)
+	}
+	if resultImages([]byte(`"plain text"`), "") != nil {
+		t.Fatal("a text result has images")
 	}
 }
