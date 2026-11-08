@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Claude drives Claude Code in print mode with stream-json on both sides:
@@ -50,6 +51,9 @@ type Claude struct {
 	// Background work: by task id; toolTitles names tool calls.
 	background map[string]string
 	toolTitles map[string]string
+	// tailing is the transcript the background tasks are followed in.
+	tailing string
+	done    chan struct{}
 }
 
 // claudeControl is a control request from the CLI.
@@ -95,11 +99,14 @@ func (c *Claude) Start(ctx context.Context, ref string) error {
 	c.pendingReqs = map[string]claudeControl{}
 	c.background = map[string]string{}
 	c.toolTitles = map[string]string{}
+	c.done = make(chan struct{})
 	c.models = claudeModels
 	go c.read()
 	// The CLI's own model list (what the SDK's supportedModels reads).
 	c.initID = "init-" + randKey()
 	_ = c.p.send(map[string]any{"type": "control_request", "request_id": c.initID, "request": map[string]any{"subtype": "initialize"}})
+	// A new process has no background tasks: clear what an earlier one left.
+	c.emit(Event{Type: EventBackground, Background: []Background{}})
 	return nil
 }
 
@@ -310,6 +317,91 @@ func (c *Claude) Close() {
 	}
 }
 
+// followTranscript watches the session's transcript for background task
+// notifications: Claude Code writes them there (a user message with
+// origin task-notification) but not to stdout, so this is where a finished
+// task is seen. It reads only what is appended after it starts.
+func (c *Claude) followTranscript(ref string) {
+	home := ""
+	for _, kv := range c.Cmd.Env {
+		if v, ok := strings.CutPrefix(kv, "HOME="); ok {
+			home = v
+		}
+	}
+	if home == "" || ref == "" {
+		return
+	}
+	path := filepath.Join(home, ".claude", "projects", strings.ReplaceAll(c.Cmd.Dir, "/", "-"), ref+".jsonl")
+	c.mu.Lock()
+	if c.tailing == path {
+		c.mu.Unlock()
+		return
+	}
+	c.tailing = path
+	c.mu.Unlock()
+	var offset int64 = -1
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-tick.C:
+		}
+		c.mu.Lock()
+		still := c.tailing == path
+		c.mu.Unlock()
+		if !still {
+			return
+		}
+		st, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if offset < 0 || st.Size() < offset {
+			offset = st.Size() // start at the end (and after a rewrite)
+			continue
+		}
+		if st.Size() == offset {
+			continue
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		buf := make([]byte, st.Size()-offset)
+		n, _ := f.ReadAt(buf, offset)
+		_ = f.Close()
+		buf = buf[:n]
+		// Only whole lines; the rest is read next time.
+		last := strings.LastIndexByte(string(buf), '\n')
+		if last < 0 {
+			continue
+		}
+		offset += int64(last + 1)
+		changed := false
+		for _, line := range strings.Split(string(buf[:last]), "\n") {
+			if !strings.Contains(line, "<task-notification>") {
+				continue
+			}
+			for _, mm := range bgDoneRE.FindAllStringSubmatch(strings.ReplaceAll(line, `\n`, "\n"), -1) {
+				if strings.ToLower(mm[2]) == "running" {
+					continue
+				}
+				c.mu.Lock()
+				if _, ok := c.background[mm[1]]; ok {
+					delete(c.background, mm[1])
+					changed = true
+				}
+				c.mu.Unlock()
+			}
+		}
+		if changed {
+			c.emitBackground()
+		}
+	}
+}
+
 // Send writes a user message; the turn starts at once.
 func (c *Claude) Send(in Input) error {
 	c.mu.Lock()
@@ -459,6 +551,7 @@ type claudeStreamEvent struct {
 
 func (c *Claude) read() {
 	defer close(c.events)
+	defer close(c.done)
 	for line := range c.p.lines {
 		var l claudeLine
 		if err := json.Unmarshal(line, &l); err != nil {
@@ -491,6 +584,7 @@ func (c *Claude) handle(l claudeLine) {
 	case "system":
 		switch l.Subtype {
 		case "init":
+			go c.followTranscript(l.SessionID)
 			c.mu.Lock()
 			models := c.models
 			c.mu.Unlock()
