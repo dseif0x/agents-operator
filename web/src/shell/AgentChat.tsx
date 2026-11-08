@@ -1194,7 +1194,15 @@ function Memories({ session }: { session: Session }) {
 /** What the agent left running in the background, until it reports back. */
 function BackgroundChip({ items }: { items: { id: string; title: string }[] }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<Record<string, string> | undefined>();
   const ref = useRef<HTMLDivElement>(null);
+  const toggle = () => {
+    // On a phone the chip sits mid-header: pin the list across the screen
+    // below it instead of hanging it off the chip's right edge.
+    const r = ref.current?.getBoundingClientRect();
+    setPos(r && innerWidth <= 760 ? { position: "fixed", top: `${r.bottom + 6}px`, left: "12px", right: "12px", minWidth: "0" } : undefined);
+    setOpen((o) => !o);
+  };
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
@@ -1205,12 +1213,13 @@ function BackgroundChip({ items }: { items: { id: string; title: string }[] }) {
   }, [open]);
   return (
     <div class="sh-menu-wrap" ref={ref}>
-      <button class="sh-chip sh-bg-chip" title="Running in the background" onClick={() => setOpen((o) => !o)}>
+      <button class="sh-chip sh-bg-chip" title="Running in the background" onClick={toggle}>
         <span class="cv-spin" />
-        {items.length} in background
+        {items.length}
+        <span class="lbl"> in background</span>
       </button>
       {open && (
-        <div class="sh-menu">
+        <div class="sh-menu" style={pos}>
           <div class="rt-hint" style={{ padding: "4px 10px 6px" }}>
             The agent comes back to these when they finish.
           </div>
