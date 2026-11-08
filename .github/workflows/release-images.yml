@@ -142,7 +142,10 @@ jobs:
           d=$(docker buildx imagetools inspect "$IMAGE:${{ steps.meta.outputs.version }}" --format '{{json .Manifest}}' | jq -r .digest)
           echo "${{ matrix.name }}=$d" >> "$GITHUB_OUTPUT"
           echo "digest=$d" >> "$GITHUB_OUTPUT"
+      # Signing never blocks a release: if cosign cannot even be installed
+      # (GitHub release downloads down), the images ship unsigned.
       - uses: sigstore/cosign-installer@v3
+        continue-on-error: true
       - name: sign (keyless, non-blocking)
         continue-on-error: true
         env:
