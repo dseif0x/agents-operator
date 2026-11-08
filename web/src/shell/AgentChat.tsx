@@ -122,21 +122,23 @@ export function AgentChat({ session }: { session: Session }) {
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       {slot && createPortal(header, slot)}
-      <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-        {session.state !== "running" && <StateBanner session={session} />}
-        {session.state === "running" && conv.error && (
-          <div class="cv-banner bad">
-            <Icon name="alert" size={18} />
-            <span class="text">
-              {conv.error}
-              <br />
-              <span style={{ color: "var(--sh-muted)" }}>If the CLI needs a login, run it in the terminal (for example `claude /login`).</span>
-            </span>
-            <Link href={`/sessions/${id}/terminal`} class="sh-btn small">
-              <Icon name="terminal" size={15} /> Terminal
-            </Link>
-          </div>
-        )}
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, position: "relative" }}>
+        <div class="cv-banners">
+          {session.state !== "running" && <StateBanner session={session} />}
+          {session.state === "running" && conv.error && (
+            <div class="cv-banner bad">
+              <Icon name="alert" size={18} />
+              <span class="text">
+                {conv.error}
+                <br />
+                <span style={{ color: "var(--sh-muted)" }}>If the CLI needs a login, run it in the terminal (for example `claude /login`).</span>
+              </span>
+              <Link href={`/sessions/${id}/terminal`} class="sh-btn small">
+                <Icon name="terminal" size={15} /> Terminal
+              </Link>
+            </div>
+          )}
+        </div>
         <div
           class="cv-scroll"
           ref={scroller}

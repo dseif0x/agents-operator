@@ -1015,6 +1015,22 @@
   align-self: center;
 }
 
+/* Banners float over the top of the conversation instead of taking a
+   strip of their own. */
+.cv-banners {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.cv-banners .cv-banner {
+  pointer-events: auto;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+
 .cv-banner {
   margin: 10px auto 0;
   max-width: 820px;
