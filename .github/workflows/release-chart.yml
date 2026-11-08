@@ -41,10 +41,6 @@ jobs:
           cat charts/agents-operator/Chart.yaml
       - run: helm dependency update charts/agents-operator
       - run: helm lint charts/agents-operator --strict
-      - name: install chart-releaser
-        uses: helm/chart-releaser-action@v1
-        with:
-          install_only: true
       - name: package chart
         run: |
           mkdir -p .cr-release-packages
@@ -60,16 +56,20 @@ jobs:
         run: |
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
           gh release upload "$TAG" .cr-release-packages/agents-operator-${TAG#v}.tgz --clobber
+      # helm builds the index itself, so the release does not depend on
+      # downloading chart-releaser from GitHub release assets (those 504'd
+      # for hours on 2026-11-08).
       - name: update index.yaml on gh-pages
-        env:
-          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p .cr-index
-          cr index \
-            --owner "${GITHUB_REPOSITORY%%/*}" \
-            --git-repo "${GITHUB_REPOSITORY#*/}" \
-            --pages-branch gh-pages \
-            --package-path .cr-release-packages \
-            --release-name-template "v{{ .Version }}" \
-            --index-path .cr-index/index.yaml \
-            --push
+          git fetch origin gh-pages
+          git worktree add .pages origin/gh-pages
+          mkdir -p .idx
+          cp .cr-release-packages/agents-operator-${TAG#v}.tgz .idx/
+          helm repo index .idx \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" \
+            --merge .pages/index.yaml
+          cp .idx/index.yaml .pages/index.yaml
+          cd .pages
+          git add index.yaml
+          git commit -m "Release agents-operator ${TAG#v}"
+          git push origin HEAD:gh-pages
