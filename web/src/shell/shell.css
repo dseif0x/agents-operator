@@ -2576,3 +2576,16 @@ button.sh-chip {
     overflow: hidden;
   }
 }
+
+/* a reply quotes one short line */
+.sh .chat-quote {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  padding: 0 0 0 8px;
+  margin: 0;
+  text-decoration: none;
+}

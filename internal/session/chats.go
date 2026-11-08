@@ -23,7 +23,9 @@ import (
 //   - no mention and no reply: every agent, each deciding for itself
 //     whether it has something to add (AddressOpen);
 //   - @handle mentions, or a reply to an agent's message: those agents
-//     (AddressDirect);
+//     (AddressDirect); but an agent replying to another agent without
+//     @mentioning it only lets it know (AddressOpen), so two agents do not
+//     acknowledge each other back and forth;
 //   - @everyone: every agent, each asked to answer (AddressEveryone).
 //
 // A muted chat delivers nothing; a muted member gets nothing and its
@@ -535,16 +537,34 @@ func recipients(chat *store.Chat, members []MemberView, author string, mentions 
 	return out
 }
 
-// Address is how a message concerns recipient.
-func Address(m *store.ChatMessage, recipient string) string {
+// Address is how a message concerns recipient (whose chat handle is
+// handle). An agent's reply to another agent asks it to answer only when
+// it @mentions it: a reply alone is for its information.
+func Address(m *store.ChatMessage, recipient, handle string) string {
 	switch {
 	case m.Everyone:
 		return AddressEveryone
 	case slices.Contains(m.Mentions, recipient):
+		if m.AuthorSession != "" && m.ReplyTo > 0 && !mentionsHandle(m.Text, handle) {
+			return AddressOpen
+		}
 		return AddressDirect
 	default:
 		return AddressOpen
 	}
+}
+
+// mentionsHandle reports whether text @mentions handle.
+func mentionsHandle(text, handle string) bool {
+	if handle == "" {
+		return false
+	}
+	for _, m := range mentionRE.FindAllStringSubmatch(text, -1) {
+		if m[1] == handle {
+			return true
+		}
+	}
+	return false
 }
 
 // post validates and stores a message by the owner (author nil) or a
@@ -847,7 +867,7 @@ func (s *Service) QueuedDeliveries(ctx context.Context, sess *store.Session) ([]
 			n = max(0, unread-queuedIn[m.ChatID])
 			earlier[m.ChatID] = n
 		}
-		out = append(out, Delivery{MessageView: mvs[0], ChatName: v.Name, Address: Address(m, sess.ID), Earlier: n})
+		out = append(out, Delivery{MessageView: mvs[0], ChatName: v.Name, Address: Address(m, sess.ID, sess.Handle), Earlier: n})
 	}
 	return out, nil
 }
