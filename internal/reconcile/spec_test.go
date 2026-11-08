@@ -524,3 +524,39 @@ func TestBuildPodGPUPriority(t *testing.T) {
 		t.Fatalf("GPU session: %q (limits %v)", p.Spec.PriorityClassName, p.Spec.Containers[0].Resources.Limits)
 	}
 }
+
+func TestBuildSecretMCPServersAndSkills(t *testing.T) {
+	uc := testCredentials()
+	uc.Accounts = append(uc.Accounts,
+		&store.Account{ID: "ha", UserID: "u1", Kind: store.AcctMCPServer, Name: "Home Assistant", BaseURL: "http://ha:8080/api/mcp"},
+		&store.Account{ID: "ha2", UserID: "u1", Kind: store.AcctMCPServer, Name: "home assistant", BaseURL: "http://ha2/mcp"},
+		&store.Account{ID: "off", UserID: "u1", Kind: store.AcctMCPServer, Name: "Not picked", BaseURL: "http://x/mcp"})
+	uc.Values[store.AccountSecretKey("ha")] = []byte("tok-ha")
+	uc.Values[store.AccountSecretKey("ha2")] = []byte("tok-ha2")
+	uc.Values[store.AccountSecretKey("off")] = []byte("tok-off")
+	uc.Skills = []*store.Skill{{ID: "sk1", Name: "energy-report", Description: "d", Instructions: "i"}, {ID: "sk2", Name: "other", Description: "d", Instructions: "i"}}
+	s := testSession()
+	s.Agent = runner.AgentShell
+	s.MCPServers = []string{"ha", "ha2", "gone", "oai"} // a deleted id and a non-MCP account are skipped
+	s.Skills = []string{"sk1", "missing"}
+	data := BuildSecret(s, testCfg(), "tok", uc).Data
+	var servers []runner.MCPServer
+	if err := json.Unmarshal(data[runner.EnvMCPServers], &servers); err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 2 || servers[0] != (runner.MCPServer{Name: "home-assistant", URL: "http://ha:8080/api/mcp", TokenEnv: "AGENTS_OPERATOR_MCP_TOKEN_HOME_ASSISTANT"}) ||
+		servers[1].Name != "home-assistant-2" || servers[1].TokenEnv != "AGENTS_OPERATOR_MCP_TOKEN_HOME_ASSISTANT_2" {
+		t.Fatalf("servers = %+v", servers)
+	}
+	if string(data["AGENTS_OPERATOR_MCP_TOKEN_HOME_ASSISTANT"]) != "tok-ha" || string(data["AGENTS_OPERATOR_MCP_TOKEN_HOME_ASSISTANT_2"]) != "tok-ha2" || data["AGENTS_OPERATOR_MCP_TOKEN_NOT_PICKED"] != nil {
+		t.Fatalf("tokens: %v", data)
+	}
+	// MCP servers are not AI accounts, even for the shell (which gets every key).
+	if strings.Contains(string(data[runner.EnvAIAccounts]), "mcp_server") || data[runner.EnvAIKeyPrefix+"HOME_ASSISTANT"] != nil {
+		t.Fatalf("an MCP server became an AI account: %s", data[runner.EnvAIAccounts])
+	}
+	var skills []runner.SkillDef
+	if err := json.Unmarshal(data[runner.EnvSkills], &skills); err != nil || len(skills) != 1 || skills[0].Name != "energy-report" {
+		t.Fatalf("skills = %+v, %v", skills, err)
+	}
+}

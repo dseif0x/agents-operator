@@ -57,6 +57,7 @@ func (w *Workspace) Bootstrap(ctx context.Context) error {
 	}
 	w.prepareClaudeConfig(repos)
 	w.prepareClaudeSettings()
+	w.writeSkills()
 	if err := w.writeAgentsFile(repos); err != nil {
 		w.Log.Warn("cannot write AGENTS.md", "err", err)
 	}

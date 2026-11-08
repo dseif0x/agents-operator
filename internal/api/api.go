@@ -100,6 +100,7 @@ func (s *Server) Handler() http.Handler {
 	s.conversationRoutes(authed)
 	s.routineRoutes(authed)
 	s.pushRoutes(authed)
+	s.routesSkills(authed)
 	mux.Handle("/api/v1/", s.requireAuth(s.requireCSRF(authed)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) { writeErr(w, http.StatusNotFound, "no such route") })
 

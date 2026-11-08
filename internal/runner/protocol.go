@@ -263,6 +263,24 @@ type AIAccount struct {
 	KeyEnv  string   `json:"key_env"`
 }
 
+// MCPServer is a remote MCP server a session gets (EnvMCPServers); its
+// bearer token is in the variable TokenEnv.
+type MCPServer struct {
+	// Name is the server's name in the CLIs' configuration: lower case
+	// letters, digits, - and _.
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	TokenEnv string `json:"token_env,omitempty"`
+}
+
+// SkillDef is a skill a session gets (EnvSkills), written as
+// <skills dir>/<Name>/SKILL.md for each CLI.
+type SkillDef struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Instructions string `json:"instructions"`
+}
+
 // Environment variables the runner reads. All of them are injected by the
 // hub through the per-session Secret or the pod spec.
 const (
@@ -311,6 +329,12 @@ const (
 	// EnvAIAccounts describes the AI accounts an OpenCode or shell session
 	// gets, JSON []AIAccount; each key is in its own variable (KeyEnv).
 	EnvAIAccounts = "AGENTS_OPERATOR_AI_ACCOUNTS"
+	// EnvMCPServers lists the MCP servers the session gets, JSON
+	// []MCPServer; each token is in its own variable (EnvMCPTokenPrefix).
+	EnvMCPServers     = "AGENTS_OPERATOR_MCP_SERVERS"
+	EnvMCPTokenPrefix = "AGENTS_OPERATOR_MCP_TOKEN_"
+	// EnvSkills lists the skills the session gets, JSON []SkillDef.
+	EnvSkills = "AGENTS_OPERATOR_SKILLS"
 	// EnvAIKeyPrefix starts the variables holding those keys.
 	EnvAIKeyPrefix = "AGENTS_OPERATOR_KEY_"
 	// EnvPrivateFile is set by `agent-runner init`: the file holding the

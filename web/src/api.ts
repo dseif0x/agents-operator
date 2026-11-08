@@ -59,6 +59,9 @@ export interface Session {
   k8s_namespaces: string[];
   /** Claude Code and Codex: the account the session signs in with; "" = the owner's default. */
   ai_account: string;
+  /** Ids of the owner's MCP server accounts and skills the agent gets. */
+  mcp_servers: string[];
+  skills: string[];
   /** "conversation": the agent is driven through its protocol and shown as a chat; "terminal": a terminal. */
   interface: "conversation" | "terminal";
   /** Conversation sessions: model, context use and the running turn. */
@@ -266,6 +269,22 @@ export interface SessionDefaults {
 }
 
 /** An AI or git account. Its value (key, token, SSH key, saved login) is never sent back. */
+/** A skill of the owner's library: instructions an agent loads when they fit the task (SKILL.md). */
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillInput {
+  name: string;
+  description: string;
+  instructions: string;
+}
+
 export interface Account {
   id: string;
   kind: string;
@@ -335,6 +354,8 @@ export interface CreateSessionRequest {
   k8s_access?: K8sAccess;
   k8s_namespaces?: string[];
   ai_account?: string;
+  mcp_servers?: string[];
+  skills?: string[];
 }
 
 export class ApiError extends Error {
@@ -407,6 +428,10 @@ export const api = {
   createAccount: (a: AccountInput) => request<{ accounts: Account[]; kinds: string[] }>("POST", "/me/accounts", a),
   updateAccount: (id: string, a: AccountInput) => request<{ accounts: Account[]; kinds: string[] }>("PUT", `/me/accounts/${id}`, a),
   deleteAccount: (id: string) => request<{ accounts: Account[]; kinds: string[] }>("DELETE", `/me/accounts/${id}`),
+  skills: () => request<{ skills: Skill[] }>("GET", "/me/skills"),
+  createSkill: (s: SkillInput) => request<Skill>("POST", "/me/skills", s),
+  updateSkill: (id: string, s: SkillInput) => request<Skill>("PUT", `/me/skills/${id}`, s),
+  deleteSkill: (id: string) => request<{ ok: boolean }>("DELETE", `/me/skills/${id}`),
   profile: () => request<Profile>("GET", "/me/profile"),
   putProfile: (p: Profile) => request<Profile>("PUT", "/me/profile", p),
   githubRepos: (refresh = false) =>

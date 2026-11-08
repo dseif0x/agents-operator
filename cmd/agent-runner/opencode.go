@@ -419,10 +419,12 @@ func openCodeConfig(env []string) (map[string]any, []string) {
 		return ""
 	}
 	home := get("HOME")
-	cfg := map[string]any{"autoupdate": false, "share": "disabled",
-		// The chat tools (`agent-runner mcp`).
-		"mcp": map[string]any{mcpServerName: map[string]any{"type": "local", "command": []string{"agent-runner", "mcp"}, "enabled": true}},
+	// The chat tools (`agent-runner mcp`) and the owner's MCP servers.
+	mcp := map[string]any{mcpServerName: map[string]any{"type": "local", "command": []string{"agent-runner", "mcp"}, "enabled": true}}
+	for _, s := range sessionMCPServers(env) {
+		mcp[s.Name] = openCodeMCPEntry(s)
 	}
+	cfg := map[string]any{"autoupdate": false, "share": "disabled", "mcp": mcp}
 	var args []string
 	var plugins []string
 

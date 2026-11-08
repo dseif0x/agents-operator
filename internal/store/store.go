@@ -104,12 +104,16 @@ const (
 	AcctGitHTTPS = "git_https"
 	// AcctGitSSH is an SSH private key for one git host.
 	AcctGitSSH = "git_ssh"
+	// AcctMCPServer is a remote MCP server (streamable HTTP): its URL in
+	// BaseURL, its bearer token as the value. Sessions pick the ones they
+	// get (Session.MCPServers).
+	AcctMCPServer = "mcp_server"
 )
 
 // AccountKinds lists every accepted kind, in the order the UI offers them.
 var AccountKinds = []string{
 	AcctAnthropicAPIKey, AcctClaudeOAuthToken, AcctClaudeLogin, AcctOpenAIAPIKey, AcctCodexLogin,
-	AcctOpenAICompatible, AcctUnjailed, AcctGitHTTPS, AcctGitSSH,
+	AcctOpenAICompatible, AcctUnjailed, AcctGitHTTPS, AcctGitSSH, AcctMCPServer,
 }
 
 // ValidAccountKind reports whether kind is known.
@@ -239,6 +243,10 @@ type Session struct {
 	// AIAccount is the account a Claude Code or Codex session signs in
 	// with; empty = the owner's default for the agent.
 	AIAccount string
+	// MCPServers are the ids of the owner's MCP server accounts the agent
+	// gets; Skills the ids of skills from the owner's library.
+	MCPServers []string
+	Skills     []string
 	// Interface is InterfaceTerminal or InterfaceConversation (the runner
 	// drives the CLI through its protocol; docs/design/conversations.md).
 	Interface string
@@ -372,6 +380,7 @@ type Store interface {
 	Conversations() Conversations
 	Routines() Routines
 	Memories() Memories
+	Skills() Skills
 	Push() PushSubscriptions
 	Settings() Settings
 	Events() Events

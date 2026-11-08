@@ -561,6 +561,9 @@ func (r *Reconciler) userCredentials(ctx context.Context, userID string) (UserCr
 	if uc.Profile, err = r.store.Profiles().Get(ctx, userID); err != nil {
 		return uc, fmt.Errorf("read profile: %w", err)
 	}
+	if uc.Skills, err = r.store.Skills().List(ctx, userID); err != nil {
+		return uc, fmt.Errorf("list skills: %w", err)
+	}
 	s, err := r.cs.CoreV1().Secrets(r.cfg.Namespace).Get(ctx, UserSecretName(userID), metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {

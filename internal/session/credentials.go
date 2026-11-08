@@ -290,6 +290,7 @@ var kindLabel = map[string]string{
 	store.AcctUnjailed:         "Unjailed",
 	store.AcctGitHTTPS:         "HTTPS token",
 	store.AcctGitSSH:           "SSH key",
+	store.AcctMCPServer:        "MCP server token",
 }
 
 // claudeOAuthTokenPrefix is what `claude setup-token` output starts with.
@@ -330,6 +331,9 @@ func applyInput(a *store.Account, in AccountInput, create bool) ([]byte, error) 
 	} else {
 		a.Name = oneLine(in.Name)
 		if a.Name == "" {
+			if a.Kind == store.AcctMCPServer {
+				return nil, &ValidationError{"an MCP server needs a name"}
+			}
 			return nil, &ValidationError{"an AI account needs a name"}
 		}
 	}
@@ -346,6 +350,16 @@ func applyInput(a *store.Account, in AccountInput, create bool) ([]byte, error) 
 			return nil, &ValidationError{"an OpenAI-compatible endpoint needs its base URL, such as http://litellm:4000/v1"}
 		}
 		a.BaseURL = base
+	}
+	if a.Kind == store.AcctMCPServer {
+		u, err := normaliseURL(in.BaseURL)
+		if err != nil {
+			return nil, &ValidationError{"the MCP server's URL must be an http(s) URL such as http://home-assistant.home-assistant:8080/api/mcp"}
+		}
+		if u == "" {
+			return nil, &ValidationError{"an MCP server needs its URL, such as http://home-assistant.home-assistant:8080/api/mcp"}
+		}
+		a.BaseURL = u
 	}
 	if a.Kind == store.AcctOpenAICompatible {
 		for _, m := range in.Models {
