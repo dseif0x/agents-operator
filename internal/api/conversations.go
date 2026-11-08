@@ -20,6 +20,7 @@ func (s *Server) conversationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/sessions/{id}/inputs/{input}/now", s.sendNow)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/files/{file}", s.inputFile)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/interrupt", s.interrupt)
+	mux.HandleFunc("POST /api/v1/sessions/{id}/background", s.background)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/requests/{request}", s.answerRequest)
 	mux.HandleFunc("POST /api/v1/sessions/{id}/model", s.setModel)
 	mux.HandleFunc("GET /api/v1/sessions/{id}/memories", s.listMemories)
@@ -200,6 +201,14 @@ func (s *Server) cancelInput(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sendNow(w http.ResponseWriter, r *http.Request) {
 	if err := s.Sessions.SendNow(r.Context(), principal(r).User, r.PathValue("id"), r.PathValue("input")); err != nil {
+		s.mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) background(w http.ResponseWriter, r *http.Request) {
+	if err := s.Sessions.Background(r.Context(), principal(r).User, r.PathValue("id")); err != nil {
 		s.mapErr(w, err)
 		return
 	}

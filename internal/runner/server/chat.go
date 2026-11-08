@@ -115,6 +115,12 @@ func (c *Chat) ServeUplink(w http.ResponseWriter, r *http.Request) {
 					c.Log.Warn("cannot interrupt the agent", "err", err)
 				}
 			}()
+		case f.Event == runner.EventBackground && c.Convo != nil:
+			go func() {
+				if err := c.Convo.Background(); err != nil {
+					c.Log.Warn("cannot move commands to the background", "err", err)
+				}
+			}()
 		case f.Event == runner.EventCancel && c.Convo != nil:
 			c.Convo.Cancel(f.IDs...)
 		case f.Event == runner.EventRespond && c.Convo != nil && f.Response != nil:

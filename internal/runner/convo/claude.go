@@ -129,6 +129,16 @@ func (c *Claude) Steer(in Input) error {
 	return c.p.send(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}})
 }
 
+// Background moves the running foreground commands to the background, as
+// Ctrl+B does in Claude Code: their tool calls return and the turn goes on;
+// the CLI reports back when they finish.
+func (c *Claude) Background() error {
+	if c.currentTurn() == "" {
+		return nil
+	}
+	return c.p.send(map[string]any{"type": "control_request", "request_id": "bg-" + randKey(), "request": map[string]any{"subtype": "background_tasks"}})
+}
+
 // ensureTurn starts a turn for output the CLI produces on its own (after
 // a background task finished, it continues without a message from us).
 func (c *Claude) ensureTurn() string {
@@ -162,7 +172,7 @@ func (c *Claude) emitBackground() {
 }
 
 var (
-	bgStartRE = regexp.MustCompile(`(?:running in background with ID|Monitor started \(task|Started background task|task ID):?\s*([A-Za-z0-9_-]{4,})`)
+	bgStartRE = regexp.MustCompile(`(?:running in background with ID|backgrounded by user with ID|Monitor started \(task|Started background task|task ID):?\s*([A-Za-z0-9_-]{4,})`)
 	bgDoneRE  = regexp.MustCompile(`(?s)<task-id>([^<]+)</task-id>.*?<status>([^<]+)</status>`)
 	bgSumRE   = regexp.MustCompile(`(?s)<summary>([^<]+)</summary>`)
 )
@@ -503,6 +513,13 @@ type claudeLine struct {
 	Usage      *claudeUsage               `json:"usage"`
 	CostUSD    float64                    `json:"total_cost_usd"`
 	ModelUsage map[string]claudeModelInfo `json:"modelUsage"`
+	// system background_tasks_changed: what runs in the background now.
+	Tasks []claudeTask `json:"tasks"`
+}
+
+type claudeTask struct {
+	TaskID      string `json:"task_id"`
+	Description string `json:"description"`
 }
 
 type claudeUsage struct {
@@ -589,6 +606,18 @@ func (c *Claude) handle(l claudeLine) {
 			models := c.models
 			c.mu.Unlock()
 			c.emit(Event{Type: EventInfo, Info: &Info{Model: l.Model, Ref: l.SessionID, Models: models}})
+		case "background_tasks_changed":
+			// The CLI's own list (newer versions): it replaces what the
+			// tool results and the transcript told us.
+			c.mu.Lock()
+			c.background = map[string]string{}
+			for _, t := range l.Tasks {
+				if t.TaskID != "" {
+					c.background[t.TaskID] = firstNonEmpty(t.Description, "background task")
+				}
+			}
+			c.mu.Unlock()
+			c.emitBackground()
 		case "compact_boundary":
 			if turn := c.currentTurn(); turn != "" {
 				c.emit(Event{Type: EventItem, Turn: turn, Item: &Item{Key: "compact-" + randKey(), Kind: KindNotice, Status: StatusDone, Text: "Context compacted"}})
