@@ -1356,8 +1356,10 @@
   }
 
   .sh-panel {
+    /* over the conversation, right below the top bar: .sh-content (the
+       positioned parent) already starts under it */
     position: absolute;
-    inset: 48px 0 0 0;
+    inset: 0;
     width: auto;
     background: var(--sh-bg);
     z-index: 20;
