@@ -7,6 +7,7 @@ import (
 
 	"github.com/dseif0x/agents-operator/internal/push"
 	"github.com/dseif0x/agents-operator/internal/runner"
+	"github.com/dseif0x/agents-operator/internal/runner/convo"
 )
 
 type fakePusher struct {
@@ -55,5 +56,55 @@ func TestActivityPush(t *testing.T) {
 	if len(fp.sent) != 2 || fp.sent[0].Title != "impl needs you" || fp.sent[0].Body != "Bash: rm -rf build" || fp.sent[0].URL != "/sessions/"+sess.ID ||
 		fp.sent[1].Title != "impl hit an error" {
 		t.Fatalf("sent = %+v", fp.sent)
+	}
+}
+
+func TestConversationPush(t *testing.T) {
+	svc, _, u := newService(t)
+	fp := &fakePusher{}
+	svc.Push = fp
+	ctx := context.Background()
+	sess, err := svc.Create(ctx, u, CreateRequest{Name: "impl", Agent: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply := func(evs ...convo.Event) {
+		t.Helper()
+		if err := svc.ApplyEvents(ctx, sess, evs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A turn that ends: its last answer.
+	apply(convo.Event{Type: convo.EventTurnStarted, Turn: "t1"},
+		convo.Event{Type: convo.EventItem, Turn: "t1", Item: &convo.Item{Key: "a", Kind: convo.KindText, Status: convo.StatusDone, Text: "working on it"}},
+		convo.Event{Type: convo.EventItem, Turn: "t1", Item: &convo.Item{Key: "sub", Kind: convo.KindText, Status: convo.StatusDone, Text: "sub-agent text", Parent: "tool1"}})
+	apply(convo.Event{Type: convo.EventItem, Turn: "t1", Item: &convo.Item{Key: "b", Kind: convo.KindText, Status: convo.StatusDone, Text: "**Done**: tests pass."}})
+	apply(convo.Event{Type: convo.EventTurnEnded, Turn: "t1", Status: convo.StatusDone})
+	// A question, once even when the runner repeats it.
+	req := &convo.Request{ID: "r1", Kind: "question", Questions: []convo.Question{{ID: "q", Question: "Which branch?"}}}
+	apply(convo.Event{Type: convo.EventTurnStarted, Turn: "t2"}, convo.Event{Type: convo.EventRequest, Turn: "t2", Request: req})
+	apply(convo.Event{Type: convo.EventRequest, Turn: "t2", Request: req})
+	// Stopped by the owner: nothing.
+	apply(convo.Event{Type: convo.EventTurnEnded, Turn: "t2", Status: convo.StatusInterrupted})
+	// A turn for a chat message: the chat notifies.
+	apply(convo.Event{Type: convo.EventTurnStarted, Turn: "t3", Inputs: []string{"chat-msg-7"}},
+		convo.Event{Type: convo.EventItem, Turn: "t3", Item: &convo.Item{Key: "c", Kind: convo.KindText, Status: convo.StatusDone, Text: "replied in the chat"}},
+		convo.Event{Type: convo.EventTurnEnded, Turn: "t3", Status: convo.StatusDone})
+	// A failure.
+	apply(convo.Event{Type: convo.EventTurnStarted, Turn: "t4"}, convo.Event{Type: convo.EventTurnEnded, Turn: "t4", Status: convo.StatusFailed, Error: "rate limited"})
+
+	want := []push.Notification{
+		{Title: "impl", Body: "Done: tests pass."},
+		{Title: "impl needs you", Body: "Which branch?"},
+		{Title: "impl hit an error", Body: "rate limited"},
+	}
+	if len(fp.sent) != len(want) {
+		t.Fatalf("sent = %+v", fp.sent)
+	}
+	for i, w := range want {
+		n := fp.sent[i]
+		if n.Title != w.Title || n.Body != w.Body || n.URL != "/sessions/"+sess.ID || n.Tag != "session-"+sess.ID {
+			t.Fatalf("notification %d = %+v, want %+v", i, n, w)
+		}
 	}
 }

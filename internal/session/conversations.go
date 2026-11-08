@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dseif0x/agents-operator/internal/push"
 	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/runner/convo"
 	"github.com/dseif0x/agents-operator/internal/store"
@@ -377,6 +378,8 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 		return nil
 	}
 	now := time.Now()
+	// Pushes for the owner, sent once the batch is stored.
+	var pushes []func()
 	for _, ev := range events {
 		switch ev.Type {
 		case convo.EventInfo:
@@ -400,6 +403,7 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 			// the turn they started (a quiet routine run folds by it).
 			sum.Turn, sum.TurnSince = ev.Turn, &now
 			s.routineTurnStarted(ctx, ev.Turn, ev.Inputs)
+			fromOwner := false
 			for _, id := range ev.Inputs {
 				key := "input:" + id
 				if touched[key] == nil {
@@ -407,8 +411,14 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 						continue // a chat message: its item comes from the runner
 					}
 				}
+				fromOwner = true
 				it, _ := load(key)
 				it.Turn = ev.Turn
+			}
+			// A turn for chat messages answers in the chat, whose messages
+			// notify already.
+			if len(ev.Inputs) > 0 && !fromOwner {
+				s.chatTurns.Store(ev.Turn, true)
 			}
 		case convo.EventItem:
 			if ev.Item == nil || ev.Item.Key == "" {
@@ -450,6 +460,10 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 			it.Turn, it.Kind, it.Status = ev.Turn, "request", "pending"
 			d.Request = ev.Request
 			it.Data = mustJSON(d)
+			if it.ID == 0 { // new, not a repeat of one we know
+				req := ev.Request
+				pushes = append(pushes, func() { s.notifyConvo(sess, sess.Name+" needs you", requestSummary(req)) })
+			}
 		case convo.EventRequestDone:
 			if ev.Request == nil {
 				continue
@@ -497,7 +511,17 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 				sum.Turn, sum.TurnSince = "", nil
 			}
 			// A routine run with no news folds its answer away.
-			for _, input := range s.routineTurnEnded(ctx, ev.Turn, ev.Status, ev.Error) {
+			quiet := s.routineTurnEnded(ctx, ev.Turn, ev.Status, ev.Error)
+			_, chatTurn := s.chatTurns.LoadAndDelete(ev.Turn)
+			switch turn, errText := ev.Turn, ev.Error; {
+			case ev.Status == convo.StatusFailed:
+				pushes = append(pushes, func() {
+					s.notifyConvo(sess, sess.Name+" hit an error", firstNonEmptyStr(plainText(errText, 160), "The turn failed."))
+				})
+			case ev.Status == convo.StatusDone && len(quiet) == 0 && !chatTurn:
+				pushes = append(pushes, func() { s.notifyConvo(sess, sess.Name, s.turnReply(ctx, sess.ID, turn)) })
+			}
+			for _, input := range quiet {
 				it, d := load("input:" + input)
 				if it.Kind == "" {
 					continue
@@ -525,6 +549,9 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 	if err := flush(); err != nil {
 		return err
 	}
+	for _, fn := range pushes {
+		fn()
+	}
 	if b := mustJSON(sum); string(b) != string(mustJSON(before)) {
 		if err := s.Store.Sessions().SetConversation(ctx, sess.ID, b); err != nil {
 			return err
@@ -533,6 +560,56 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 		s.SessionChanged(ctx, sess)
 	}
 	return nil
+}
+
+// notifyConvo pushes a notification about a conversation session to its
+// owner (held back while they look at the session).
+func (s *Service) notifyConvo(sess *store.Session, title, body string) {
+	if s.Push == nil {
+		return
+	}
+	s.Push.Notify(sess.OwnerID, push.Notification{Title: title, Body: body, URL: "/sessions/" + sess.ID, Tag: "session-" + sess.ID})
+}
+
+// turnReply is the start of the agent's last answer in a turn.
+func (s *Service) turnReply(ctx context.Context, sessionID, turn string) string {
+	items, err := s.Store.Conversations().TurnItems(ctx, sessionID, store.MainThread, turn)
+	if err == nil {
+		for i := len(items) - 1; i >= 0; i-- {
+			it := items[i]
+			if it.Kind != convo.KindText {
+				continue
+			}
+			var d ItemData
+			_ = json.Unmarshal(it.Data, &d)
+			if d.Parent == "" {
+				if t := plainText(d.Text, 160); t != "" {
+					return t
+				}
+			}
+		}
+	}
+	return "Finished its turn."
+}
+
+// requestSummary is a one-line description of what the agent asks for.
+func requestSummary(r *convo.Request) string {
+	if len(r.Questions) > 0 {
+		return plainText(r.Questions[0].Question, 160)
+	}
+	if r.Tool != nil && r.Tool.Title != "" {
+		return "Allow " + plainText(r.Tool.Title, 140) + "?"
+	}
+	return firstNonEmptyStr(plainText(r.Title, 160), "It is waiting for your answer.")
+}
+
+func firstNonEmptyStr(s ...string) string {
+	for _, v := range s {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // AnswerRequest answers a permission or a question of the agent.
