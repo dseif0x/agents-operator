@@ -121,6 +121,28 @@ func TestChatAddressing(t *testing.T) {
 		t.Fatalf("reply = %+v", rm)
 	}
 	_ = svc.MarkDelivered(ctx, review, []int64{rm.ID})
+	if ds := queuedFor(t, svc, review); len(ds) != 0 {
+		t.Fatalf("delivered reply still queued: %+v", ds)
+	}
+
+	// Loop guard: an agent's reply to another agent only lets it know...
+	ack, err := svc.AgentPost(ctx, impl, "launch", "Thanks, will do.", am.ID, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ds := queuedFor(t, svc, review); len(ds) != 1 || ds[0].ID != ack.ID || ds[0].Address != AddressOpen {
+		t.Fatalf("agent-to-agent reply = %+v", ds)
+	}
+	_ = svc.MarkDelivered(ctx, review, []int64{ack.ID})
+	// ...unless it @mentions it.
+	ask, err := svc.AgentPost(ctx, impl, "launch", "@"+review.Handle+" which file was the nit in?", am.ID, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ds := queuedFor(t, svc, review); len(ds) != 1 || ds[0].ID != ask.ID || ds[0].Address != AddressDirect {
+		t.Fatalf("agent-to-agent question = %+v", ds)
+	}
+	_ = svc.MarkDelivered(ctx, review, []int64{ask.ID})
 
 	// @everyone: everyone, asked to answer.
 	em, _ := svc.PostChatMessage(ctx, u, c.ID, "@everyone status?", 0, nil)

@@ -520,7 +520,7 @@ function Message(props: {
               document.getElementById(`msg-${m.reply_to}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
             }}
           >
-            ↪ {props.parent ? `${props.parent.author.kind === "owner" ? "You" : props.parent.author.name}: ${props.parent.text.slice(0, 140)}` : `message #${m.reply_to}`}
+            ↪ {props.parent ? `${props.parent.author.kind === "owner" ? "You" : props.parent.author.name}: ${quoteLine(props.parent.text)}` : `message #${m.reply_to}`}
           </a>
         )}
         {!owner && m.turn && m.author.session_id && <TurnSteps sessionId={m.author.session_id} turn={m.turn} />}
@@ -974,4 +974,14 @@ function ReplyPanel(props: { messages: ChatMessage[]; members: ChatMember[]; wor
         ))}
     </div>
   );
+}
+
+/** The one line a reply quotes: plain text, no Markdown, cut short. */
+function quoteLine(text: string): string {
+  const plain = text
+    .replace(/```[\s\S]*?```/g, "[code]")
+    .replace(/[*_`#>~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return plain.length > 90 ? plain.slice(0, 88) + "…" : plain;
 }
