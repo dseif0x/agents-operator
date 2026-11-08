@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"github.com/dseif0x/agents-operator/internal/runner"
 	"strings"
 	"testing"
 
@@ -86,5 +87,72 @@ func TestSkillsAndSessionPicks(t *testing.T) {
 	}
 	if list, _ := svc.ListSkills(ctx, u); len(list) != 0 {
 		t.Fatalf("after delete = %+v", list)
+	}
+}
+
+type recordingUplinks struct {
+	frames map[string][]runner.UplinkFrame
+}
+
+func (r *recordingUplinks) Notify(string) {}
+
+func (r *recordingUplinks) Send(id string, f runner.UplinkFrame) bool {
+	r.frames[id] = append(r.frames[id], f)
+	return true
+}
+
+func TestSkillsArePushedLive(t *testing.T) {
+	svc, _, u := newService(t)
+	ctx := context.Background()
+	rec := &recordingUplinks{frames: map[string][]runner.UplinkFrame{}}
+	svc.Uplinks = rec
+	sk, err := svc.CreateSkill(ctx, u, SkillInput{Name: "big", Description: "d", Instructions: strings.Repeat("x", 512<<10)}) // over the old 32 KiB cap
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := svc.CreateSkill(ctx, u, SkillInput{Name: "other", Description: "d", Instructions: "i"})
+	sess, err := svc.Create(ctx, u, CreateRequest{Name: "a", Agent: "claude", Skills: &[]string{sk.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	last := func() runner.UplinkFrame {
+		t.Helper()
+		f := rec.frames[sess.ID]
+		if len(f) == 0 {
+			t.Fatal("nothing pushed")
+		}
+		return f[len(f)-1]
+	}
+	// Editing a skill the session has pushes the new text.
+	if _, err := svc.UpdateSkill(ctx, u, sk.ID, SkillInput{Name: "big", Description: "d2", Instructions: "short now"}); err != nil {
+		t.Fatal(err)
+	}
+	if f := last(); f.Event != runner.EventSkills || !f.HasSkills || len(f.Skills) != 1 || f.Skills[0].Instructions != "short now" {
+		t.Fatalf("frame = %+v", f)
+	}
+	// A skill it does not have: nothing new.
+	n := len(rec.frames[sess.ID])
+	if _, err := svc.UpdateSkill(ctx, u, other.ID, SkillInput{Name: "other", Description: "d", Instructions: "j"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.frames[sess.ID]) != n {
+		t.Fatal("an unrelated skill was pushed")
+	}
+	// Changing the session's list pushes right away.
+	if _, err := svc.Update(ctx, u, sess.ID, CreateRequest{Name: "a", Agent: "claude", Skills: &[]string{other.ID, sk.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if f := last(); len(f.Skills) != 2 || f.Skills[0].Name != "other" {
+		t.Fatalf("frame after edit = %+v", f)
+	}
+	// Deleting a skill pushes the rest.
+	if err := svc.DeleteSkill(ctx, u, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if f := last(); len(f.Skills) != 1 || f.Skills[0].Name != "big" {
+		t.Fatalf("frame after delete = %+v", f)
 	}
 }

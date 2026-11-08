@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/dseif0x/agents-operator/internal/runner"
 )
@@ -75,16 +76,17 @@ func skillsManifest(home string) string {
 	return filepath.Join(home, ".config", "agents-operator", "skills.json")
 }
 
-// writeSkills writes the session's skills as <dir>/<name>/SKILL.md for
-// every CLI and removes the ones it wrote before that are gone.
-func (w *Workspace) writeSkills() {
+// skillsMu serialises writing the skills (the hub may push twice quickly).
+var skillsMu sync.Mutex
+
+// writeSkills writes the session's skills (pushed by the hub on every
+// connect and change) as <dir>/<name>/SKILL.md for every CLI and removes
+// the ones it wrote before that are gone. They stay on the volume, so a
+// CLI starting before the next push finds the last set.
+func (w *Workspace) writeSkills(skills []runner.SkillDef) {
+	skillsMu.Lock()
+	defer skillsMu.Unlock()
 	home := w.HomeDir()
-	var skills []runner.SkillDef
-	if v := os.Getenv(runner.EnvSkills); v != "" {
-		if err := json.Unmarshal([]byte(v), &skills); err != nil {
-			w.Log.Warn("cannot read the session's skills", "err", err)
-		}
-	}
 	// The manifest holds the directories written, relative to home.
 	var before []string
 	if b, err := os.ReadFile(skillsManifest(home)); err == nil {

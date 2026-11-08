@@ -165,6 +165,11 @@ func (u *Uplinks) run(ctx context.Context, sessionID string, c *uplinkConn) {
 		if err != nil {
 			return err
 		}
+		if sess.Agent != runner.AgentShell {
+			if err := write(runner.UplinkFrame{Event: runner.EventSkills, Skills: u.Svc.SessionSkillDefs(ctx, sess), HasSkills: true}); err != nil {
+				return err
+			}
+		}
 		if sess.Interface == store.InterfaceConversation {
 			notes := u.Svc.MemoryNotes(ctx, sess)
 			if notes == nil {

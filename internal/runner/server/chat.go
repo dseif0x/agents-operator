@@ -42,7 +42,9 @@ type Chat struct {
 	// Convo is set in conversation mode: chat messages and the owner's
 	// messages become inputs of the conversation instead of typed prompts.
 	Convo *convo.Session
-	Log   *slog.Logger
+	// OnSkills writes the skills the hub pushes (runner.EventSkills).
+	OnSkills func([]runner.SkillDef)
+	Log      *slog.Logger
 
 	mu      sync.Mutex
 	conn    *websocket.Conn
@@ -135,6 +137,9 @@ func (c *Chat) ServeUplink(w http.ResponseWriter, r *http.Request) {
 			for _, id := range f.IDs {
 				go c.Convo.SendNow(context.Background(), id)
 			}
+		case f.Event == runner.EventSkills && f.HasSkills && c.OnSkills != nil:
+			skills := f.Skills
+			go c.OnSkills(skills)
 		case f.Event == runner.EventMemories && c.Convo != nil:
 			notes := make([]convo.Note, 0, len(f.Memories))
 			for _, m := range f.Memories {

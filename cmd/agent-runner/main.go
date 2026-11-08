@@ -122,7 +122,7 @@ func run() int {
 	defer proc.Close()
 
 	hooks := &server.Hooks{Log: log}
-	chat := &server.Chat{Proc: proc, Agent: *agent, Home: ws.HomeDir(), Roots: []string{ws.Root, ws.TempDir()}, Log: log}
+	chat := &server.Chat{Proc: proc, Agent: *agent, Home: ws.HomeDir(), Roots: []string{ws.Root, ws.TempDir()}, OnSkills: ws.writeSkills, Log: log}
 	var conv *convo.Session
 	if convoMode {
 		conv = &convo.Session{

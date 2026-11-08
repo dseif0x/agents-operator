@@ -69,11 +69,7 @@ func TestWriteSkills(t *testing.T) {
 	if err := os.MkdirAll(own, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	set := func(skills ...runner.SkillDef) {
-		b, _ := json.Marshal(skills)
-		t.Setenv(runner.EnvSkills, string(b))
-		ws.writeSkills()
-	}
+	set := func(skills ...runner.SkillDef) { ws.writeSkills(skills) }
 	set(runner.SkillDef{Name: "energy-report", Description: `Summarise "yesterday's" energy use`, Instructions: "Use the home-assistant tools.\n"},
 		runner.SkillDef{Name: "mine", Description: "x", Instructions: "y"})
 	for _, dir := range []string{".claude", ".codex"} {

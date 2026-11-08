@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/dseif0x/agents-operator/internal/runner"
 	"github.com/dseif0x/agents-operator/internal/store"
 )
 
@@ -24,7 +26,7 @@ var skillNameRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 const (
 	MaxSkillName         = 64
 	MaxSkillDescription  = 1024
-	MaxSkillInstructions = 32 << 10
+	MaxSkillInstructions = 1 << 20
 )
 
 func (in SkillInput) validate() (store.Skill, error) {
@@ -43,7 +45,7 @@ func (in SkillInput) validate() (store.Skill, error) {
 	case sk.Instructions == "":
 		return sk, &ValidationError{"a skill needs instructions"}
 	case len(sk.Instructions) > MaxSkillInstructions:
-		return sk, &ValidationError{"a skill's instructions are limited to 32 KiB"}
+		return sk, &ValidationError{"a skill's instructions are limited to 1 MiB"}
 	case !utf8.ValidString(sk.Instructions) || !utf8.ValidString(sk.Description):
 		return sk, &ValidationError{"skills are UTF-8 text"}
 	}
@@ -87,6 +89,9 @@ func (s *Service) UpdateSkill(ctx context.Context, owner *store.User, id string,
 	if errors.Is(err, store.ErrConflict) {
 		return nil, &ValidationError{"you have a skill named " + sk.Name + " already"}
 	}
+	if err == nil {
+		s.pushSkillChange(ctx, owner.ID, id)
+	}
 	return out, err
 }
 
@@ -96,5 +101,50 @@ func (s *Service) DeleteSkill(ctx context.Context, owner *store.User, id string)
 	if _, err := s.Store.Skills().Get(ctx, owner.ID, id); err != nil {
 		return err
 	}
-	return s.Store.Skills().Delete(ctx, owner.ID, id)
+	if err := s.Store.Skills().Delete(ctx, owner.ID, id); err != nil {
+		return err
+	}
+	s.pushSkillChange(ctx, owner.ID, id)
+	return nil
+}
+
+// SessionSkillDefs are the skills the session gets, in its order.
+func (s *Service) SessionSkillDefs(ctx context.Context, sess *store.Session) []runner.SkillDef {
+	out := []runner.SkillDef{}
+	if len(sess.Skills) == 0 {
+		return out
+	}
+	library, err := s.Store.Skills().List(ctx, sess.OwnerID)
+	if err != nil {
+		return out
+	}
+	for _, id := range sess.Skills {
+		for _, sk := range library {
+			if sk.ID == id {
+				out = append(out, runner.SkillDef{Name: sk.Name, Description: sk.Description, Instructions: sk.Instructions})
+			}
+		}
+	}
+	return out
+}
+
+// pushSkills sends a running session its skills; the runner rewrites them.
+func (s *Service) pushSkills(ctx context.Context, sess *store.Session) {
+	if us, ok := s.Uplinks.(uplinkSender); ok && sess.State == store.StateRunning && sess.Agent != runner.AgentShell {
+		us.Send(sess.ID, runner.UplinkFrame{Event: runner.EventSkills, Skills: s.SessionSkillDefs(ctx, sess), HasSkills: true})
+	}
+}
+
+// pushSkillChange sends the new skills to every running session of the
+// owner that has the skill.
+func (s *Service) pushSkillChange(ctx context.Context, ownerID, skillID string) {
+	sessions, err := s.Store.Sessions().List(ctx, ownerID)
+	if err != nil {
+		return
+	}
+	for _, sess := range sessions {
+		if slices.Contains(sess.Skills, skillID) {
+			s.pushSkills(ctx, sess)
+		}
+	}
 }
