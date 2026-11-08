@@ -42,13 +42,16 @@ const (
 	StateCreating = "creating"
 	StateRunning  = "running"
 	StateStopping = "stopping"
-	StateStopped  = "stopped"
-	StateFailed   = "failed"
-	StateDeleting = "deleting"
+	// StateRestarting replaces the pod: the old one goes, then the session
+	// is created again (a restart by the owner, or after the pod died).
+	StateRestarting = "restarting"
+	StateStopped    = "stopped"
+	StateFailed     = "failed"
+	StateDeleting   = "deleting"
 )
 
 // States lists every state, for validation and metrics.
-var States = []string{StateCreating, StateRunning, StateStopping, StateStopped, StateFailed, StateDeleting}
+var States = []string{StateCreating, StateRunning, StateStopping, StateRestarting, StateStopped, StateFailed, StateDeleting}
 
 // Kubernetes access modes of a session (Session.K8sAccess).
 const (

@@ -116,6 +116,8 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [accountDefaults, setAccountDefaults] = useState<Record<string, string>>({});
   const [editable, setEditable] = useState<boolean | null>(editing ? null : true);
+  // After saving the settings of a running session: restart now or later.
+  const [restartPrompt, setRestartPrompt] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [defaults, setDefaults] = useState<SessionDefaults | null>(null);
@@ -178,7 +180,7 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
         setHandle(s.handle || "");
         setAgentDefinition(s.agent_definition || "");
         setAIAccount(s.ai_account || "");
-        setEditable(s.state === "stopped" || s.state === "failed");
+        setEditable(s.state !== "deleting");
       })
       .catch((e) => setError((e as Error).message));
   }, [props.edit]);
@@ -282,6 +284,11 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
     if (tol.tolerations.length) req.tolerations = tol.tolerations;
     try {
       const s = props.edit ? await api.updateSession(props.edit, req) : await api.createSession(req);
+      if (props.edit && (s.state === "running" || s.state === "creating")) {
+        setRestartPrompt(s.id);
+        setBusy(false);
+        return;
+      }
       navigate(`/sessions/${s.id}`);
     } catch (err) {
       setError((err as Error).message);
@@ -294,10 +301,37 @@ export function NewSession(props: { user: User; onLogout: () => void; embedded?:
       {!props.embedded && <Nav user={props.user} onLogout={props.onLogout} />}
       <form class="card" onSubmit={submit} style="max-width:720px">
         <h3 style="margin:0">{editing ? "Agent settings" : "New agent"}</h3>
-        {editing && editable === false && <div class="banner error" style="position:static;margin-top:8px">Stop the session to change its settings; they apply to the next start.</div>}
+        {editing && editable === false && <div class="banner error" style="position:static;margin-top:8px">This session is being deleted.</div>}
+        {restartPrompt && (
+          <div class="restart-prompt" role="dialog">
+            <div>
+              <strong>Settings saved.</strong> They apply when the agent restarts. Its workspace and conversation stay.
+            </div>
+            <div class="restart-actions">
+              <button
+                type="button"
+                class="btn primary"
+                onClick={async () => {
+                  try {
+                    await api.restartSession(restartPrompt);
+                  } catch (e) {
+                    setError((e as Error).message);
+                    return;
+                  }
+                  navigate(`/sessions/${restartPrompt}`);
+                }}
+              >
+                Restart now
+              </button>
+              <button type="button" class="btn" onClick={() => navigate(`/sessions/${restartPrompt}`)}>
+                Restart later
+              </button>
+            </div>
+          </div>
+        )}
         {editing && editable && (
           <p class="muted" style="margin:6px 0 0;font-size:13px">
-            Changes apply when the session starts again. The agent, PVC size and storage class are fixed: they shape the volume and the CLI state on it. Repositories
+            Changes apply when the agent restarts. The agent, PVC size and storage class are fixed: they shape the volume and the CLI state on it. Repositories
             added here are cloned on the next start; removed ones stay on disk.
           </p>
         )}

@@ -235,7 +235,7 @@ export interface Activity {
 
 export type K8sAccess = "off" | "readonly" | "namespace" | "sandbox";
 
-export type SessionState = "creating" | "running" | "stopping" | "stopped" | "failed" | "deleting";
+export type SessionState = "creating" | "running" | "stopping" | "restarting" | "stopped" | "failed" | "deleting";
 
 export interface SessionEvent {
   id: number;
@@ -387,6 +387,7 @@ export const api = {
   deleteSession: (id: string) => request<Session>("DELETE", `/sessions/${id}`),
   startSession: (id: string) => request<Session>("POST", `/sessions/${id}/start`),
   stopSession: (id: string) => request<Session>("POST", `/sessions/${id}/stop`),
+  restartSession: (id: string) => request<Session>("POST", `/sessions/${id}/restart`),
   sessionEvents: (id: string) => request<{ events: SessionEvent[] }>("GET", `/sessions/${id}/events`),
   sessionLogs: async (id: string) => {
     const res = await fetch(`/api/v1/sessions/${id}/logs`, { credentials: "same-origin" });

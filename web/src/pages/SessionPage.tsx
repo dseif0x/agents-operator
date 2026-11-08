@@ -178,8 +178,8 @@ export function SessionPage({ id }: { id: string }) {
           </>
         )}
         {s && (s.state === "running" || s.state === "creating") && (
-          <button class="btn small" disabled={!!busy} onClick={() => act("stop", () => api.stopSession(id))}>
-            Stop
+          <button class="btn small" disabled={!!busy} onClick={() => act("restart", () => api.restartSession(id))}>
+            Restart
           </button>
         )}
         <button class="btn small" onClick={() => setDrawer(drawer ? null : "events")} title="Events and logs">
@@ -203,7 +203,7 @@ export function SessionPage({ id }: { id: string }) {
               <>
                 <div style="font-size:18px">{stateLabel(s.state)}</div>
                 {s.state_reason && <div class="mono" style="font-size:13px">{s.state_reason}</div>}
-                {(s.state === "creating" || s.state === "stopping" || s.state === "deleting") && <div>working…</div>}
+                {(s.state === "creating" || s.state === "stopping" || s.state === "restarting" || s.state === "deleting") && <div>working…</div>}
                 {(s.state === "stopped" || s.state === "failed") && (
                   <div>
                     The volume is kept. Press <b>Start</b> to recreate the pod.

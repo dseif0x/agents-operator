@@ -446,9 +446,13 @@ func TestUpdate(t *testing.T) {
 	edit := CreateRequest{Name: "edited", Agent: "codex", PVCSize: "99Gi", StorageClass: "other", ImageTag: "1.2.3", RuntimeClass: "gvisor",
 		Repos: []store.Repo{{URL: "https://x/app.git"}, {URL: "https://x/lib.git"}}, Env: map[string]string{"A": "b"}, Autonomous: ptr.To(false),
 		GitCredentials: ptr.To(false), ContextCompression: ptr.To(true), Resources: config.Resources{Limits: config.ResourceList{CPU: "2", Memory: "1Gi"}}}
-	// Only stopped or failed sessions can be edited.
+	// A deleting session cannot be edited; a running one can (the settings
+	// apply when it restarts).
+	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateDeleting, ""); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.Update(ctx, u, sess.ID, edit); err != ErrInvalidTransition {
-		t.Fatalf("update while creating = %v", err)
+		t.Fatalf("update while deleting = %v", err)
 	}
 	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateStopped, ""); err != nil {
 		t.Fatal(err)
@@ -677,5 +681,35 @@ func TestHandles(t *testing.T) {
 	}
 	if again, _ := svc.Store.Sessions().Get(ctx, old.ID); again.Handle != got.Handle {
 		t.Fatal("backfill changed an existing handle")
+	}
+}
+
+func TestRestart(t *testing.T) {
+	svc, orch, u := newService(t)
+	ctx := context.Background()
+	sess, err := svc.Create(ctx, u, CreateRequest{Name: "a", Agent: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	n := len(orch.notified)
+	got, err := svc.Restart(ctx, u, sess.ID)
+	if err != nil || got.State != store.StateRestarting || len(orch.notified) != n+1 {
+		t.Fatalf("restart running = %+v, %v", got, err)
+	}
+	// A stopped session starts.
+	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateStopped, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.Restart(ctx, u, sess.ID); err != nil || got.State != store.StateCreating {
+		t.Fatalf("restart stopped = %+v, %v", got, err)
+	}
+	if _, err := svc.Store.Sessions().SetState(ctx, sess.ID, store.StateDeleting, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Restart(ctx, u, sess.ID); err != ErrInvalidTransition {
+		t.Fatalf("restart deleting = %v", err)
 	}
 }

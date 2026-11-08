@@ -58,7 +58,18 @@ type Reconciler struct {
 	now      func() time.Time
 
 	startOnce sync.Once
+
+	// crashes are when sessions' pods died while running (auto restarts).
+	crashMu sync.Mutex
+	crashes map[string][]time.Time
 }
+
+// Crash-loop guard: a session whose pod dies this often is marked failed
+// instead of restarted again.
+const (
+	crashLimit  = 3
+	crashWindow = 15 * time.Minute
+)
 
 // New wires a reconciler. Run must be called to process work.
 func New(cfg Config, st store.Store, cs kubernetes.Interface, inf *k8s.Informers, notifier Notifier, interval time.Duration, log *slog.Logger) *Reconciler {
@@ -212,6 +223,8 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, id string) error {
 		return r.reconcileRunning(ctx, sess, o)
 	case store.StateStopping:
 		return r.reconcileStopping(ctx, sess, o)
+	case store.StateRestarting:
+		return r.reconcileRestarting(ctx, sess, o)
 	case store.StateStopped:
 		if o.pod != nil && o.pod.DeletionTimestamp == nil {
 			return r.deletePod(ctx, sess.ID)
@@ -369,14 +382,64 @@ func (r *Reconciler) reconcileCreating(ctx context.Context, sess *store.Session,
 }
 
 func (r *Reconciler) reconcileRunning(ctx context.Context, sess *store.Session, o observed) error {
+	var reason string
 	switch {
 	case o.pod == nil:
-		return r.fail(ctx, sess, "pod disappeared")
+		reason = "pod disappeared"
 	case o.pod.DeletionTimestamp != nil:
-		return r.fail(ctx, sess, "pod was deleted outside agents-operator")
+		reason = "pod was deleted outside agents-operator"
 	case PodTerminal(o.pod):
-		return r.fail(ctx, sess, PodReason(o.pod))
+		reason = PodReason(o.pod)
+	default:
+		return nil
 	}
+	// A session does not stay down: its pod is replaced, unless it keeps
+	// dying (then it fails and waits for the owner).
+	if n := r.recordCrash(sess.ID); n > crashLimit {
+		return r.fail(ctx, sess, fmt.Sprintf("the pod died %d times in %s; last: %s", n, crashWindow, reason))
+	}
+	return r.setState(ctx, sess, store.StateRestarting, "restarting: "+reason)
+}
+
+// recordCrash notes that the session's pod died and returns how often that
+// happened within crashWindow.
+func (r *Reconciler) recordCrash(id string) int {
+	r.crashMu.Lock()
+	defer r.crashMu.Unlock()
+	if r.crashes == nil {
+		r.crashes = map[string][]time.Time{}
+	}
+	now := r.now()
+	recent := r.crashes[id][:0]
+	for _, t := range r.crashes[id] {
+		if now.Sub(t) < crashWindow {
+			recent = append(recent, t)
+		}
+	}
+	recent = append(recent, now)
+	r.crashes[id] = recent
+	return len(recent)
+}
+
+// reconcileRestarting removes the pod, then creates the session again.
+func (r *Reconciler) reconcileRestarting(ctx context.Context, sess *store.Session, o observed) error {
+	if o.pod != nil {
+		if o.pod.DeletionTimestamp == nil {
+			if err := r.deletePod(ctx, sess.ID); err != nil {
+				return err
+			}
+		}
+		r.requeueSoon(sess.ID)
+		return nil
+	}
+	updated, err := r.store.Sessions().Bump(ctx, sess.ID, store.StateCreating)
+	if err != nil {
+		return err
+	}
+	r.log.Info("session state", "session", sess.ID, "from", sess.State, "to", store.StateCreating, "reason", "restart")
+	r.event(ctx, sess, "state", sess.State+" → "+store.StateCreating)
+	r.notifier.SessionChanged(ctx, updated)
+	r.queue.Add(sess.ID)
 	return nil
 }
 

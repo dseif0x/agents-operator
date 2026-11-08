@@ -622,7 +622,9 @@ func (s *Service) Update(ctx context.Context, owner *store.User, id string, req 
 	if err != nil {
 		return nil, err
 	}
-	if sess.State != store.StateStopped && sess.State != store.StateFailed {
+	// A running session keeps its pod: the settings apply when it restarts
+	// (the owner is offered a restart).
+	if sess.State == store.StateDeleting {
 		return nil, ErrInvalidTransition
 	}
 	req.Agent, req.PVCSize, req.StorageClass = sess.Agent, sess.PVCSize, sess.StorageClass
@@ -763,6 +765,34 @@ func (s *Service) Start(ctx context.Context, owner *store.User, id string) (*sto
 		return nil, err
 	}
 	s.event(ctx, id, "user", "start requested by "+owner.Username)
+	s.Orch.Notify(id)
+	s.SessionChanged(ctx, updated)
+	return updated, nil
+}
+
+// Restart replaces the session's pod (new settings, a stuck agent): a
+// running one goes and is created again; a stopped or failed one starts.
+// The workspace, the conversation and the CLI's state stay.
+func (s *Service) Restart(ctx context.Context, owner *store.User, id string) (*store.Session, error) {
+	sess, err := s.Get(ctx, owner.ID, id)
+	if err != nil {
+		return nil, err
+	}
+	switch sess.State {
+	case store.StateStopped, store.StateFailed:
+		return s.Start(ctx, owner, id)
+	case store.StateRunning, store.StateCreating:
+	case store.StateRestarting:
+		return sess, nil
+	default:
+		return nil, ErrInvalidTransition
+	}
+	updated, err := s.Store.Sessions().SetState(ctx, id, store.StateRestarting, "restart requested")
+	if err != nil {
+		return nil, err
+	}
+	s.event(ctx, id, "user", "restart requested by "+owner.Username)
+	s.live.Delete(id)
 	s.Orch.Notify(id)
 	s.SessionChanged(ctx, updated)
 	return updated, nil

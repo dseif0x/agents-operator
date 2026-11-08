@@ -54,6 +54,7 @@ export function needsYou(s: Session): boolean {
 export function agentLine(s: Session): string {
   if (s.state === "creating") return "Starting…";
   if (s.state === "stopping") return "Stopping…";
+  if (s.state === "restarting") return "Restarting…";
   if (s.state === "stopped") return "Stopped";
   if (s.state === "failed") return s.state_reason || "Failed";
   if (s.conversation?.error) return s.conversation.error;
