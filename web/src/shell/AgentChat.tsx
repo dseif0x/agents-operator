@@ -1010,7 +1010,11 @@ function TaskCard({ item }: { item: ConvItem }) {
 /** A permission or a question the agent waits for. */
 function RequestCard({ item, session }: { item: ConvItem; session: Session }) {
   const req = item.data.request;
+  // Single choice per question, the choices of a multi-select one, and
+  // free text ("Other": Claude's question tool always allows one).
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [multi, setMulti] = useState<Record<string, string[]>>({});
+  const [other, setOther] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   if (!req) return null;
@@ -1030,6 +1034,13 @@ function RequestCard({ item, session }: { item: ConvItem; session: Session }) {
   const status = item.status === "cancelled" ? "No longer needed" : resp?.option ? (resp.option === "deny" ? "Denied" : resp.option === "allow_always" ? "Always allowed" : "Allowed") : resp?.answers ? "Answered" : "";
   if (req.kind === "question") {
     const qs = req.questions ?? [];
+    // What goes back for a question: the choices (a multi-select joins them
+    // with ", ", as Claude Code does) plus any free text.
+    const answerOf = (q: (typeof qs)[number]) => {
+      const text = (q.options?.length ? other[q.id] : answers[q.id])?.trim() ?? "";
+      if (q.multi) return [...(multi[q.id] ?? []), ...(text ? [text] : [])].join(", ");
+      return text || (q.options?.length ? (answers[q.id] ?? "") : "");
+    };
     return (
       <div class={`cv-request ${pending ? "pending" : ""}`}>
         <div class="cv-request-head">
@@ -1043,23 +1054,47 @@ function RequestCard({ item, session }: { item: ConvItem; session: Session }) {
           )}
         </div>
         {qs.map((q) => {
-          const picked = pending ? answers[q.id] : resp?.answers?.[q.id];
+          const given = resp?.answers?.[q.id] ?? "";
+          const isOn = (o: string) =>
+            pending ? (q.multi ? (multi[q.id] ?? []).includes(o) : answers[q.id] === o && !other[q.id]) : q.multi ? given.split(", ").includes(o) : given === o;
+          const choose = (o: string) => {
+            if (q.multi) setMulti((m) => ({ ...m, [q.id]: (m[q.id] ?? []).includes(o) ? (m[q.id] ?? []).filter((x) => x !== o) : [...(m[q.id] ?? []), o] }));
+            else {
+              setAnswers((a) => ({ ...a, [q.id]: o }));
+              setOther((t) => ({ ...t, [q.id]: "" }));
+            }
+          };
+          const custom = !pending && given && !(q.options ?? []).some((o) => isOn(o));
           return (
             <div class="cv-question">
               {q.header && <div class="cv-q-header">{q.header}</div>}
-              <div class="cv-q-text">{q.question}</div>
+              <div class="cv-q-text">
+                {q.question}
+                {q.multi && pending && <span class="cv-q-hint"> · pick any number</span>}
+              </div>
               {q.options?.length ? (
                 <div class="cv-q-options">
                   {q.options.map((o) => (
-                    <button class={picked === o ? "on" : ""} disabled={!pending || busy} onClick={() => setAnswers((a) => ({ ...a, [q.id]: o }))}>
+                    <button class={isOn(o) ? "on" : ""} disabled={!pending || busy} onClick={() => choose(o)}>
+                      {q.multi && <span class="cv-q-check">{isOn(o) ? "☑" : "☐"}</span>}
                       {o}
                     </button>
                   ))}
                 </div>
-              ) : pending ? (
-                <input class="rt-input" value={answers[q.id] ?? ""} onInput={(e) => setAnswers((a) => ({ ...a, [q.id]: (e.target as HTMLInputElement).value }))} />
+              ) : null}
+              {pending ? (
+                <input
+                  class="rt-input"
+                  placeholder={q.options?.length ? "Other (optional)" : "Your answer"}
+                  value={q.options?.length ? (other[q.id] ?? "") : (answers[q.id] ?? "")}
+                  onInput={(e) => {
+                    const v = (e.target as HTMLInputElement).value;
+                    if (q.options?.length) setOther((t) => ({ ...t, [q.id]: v }));
+                    else setAnswers((a) => ({ ...a, [q.id]: v }));
+                  }}
+                />
               ) : (
-                <div class="cv-q-answer">{picked}</div>
+                (custom || !q.options?.length) && <div class="cv-q-answer">{given}</div>
               )}
             </div>
           );
@@ -1067,7 +1102,7 @@ function RequestCard({ item, session }: { item: ConvItem; session: Session }) {
         {err && <div class="cv-error">{err}</div>}
         {pending && (
           <div class="cv-request-actions">
-            <button class="sh-btn small primary" disabled={busy || qs.some((q) => !answers[q.id])} onClick={() => send({ answers })}>
+            <button class="sh-btn small primary" disabled={busy || qs.some((q) => !answerOf(q))} onClick={() => send({ answers: Object.fromEntries(qs.map((q) => [q.id, answerOf(q)])) })}>
               Answer
             </button>
             <button class="sh-btn small" disabled={busy} onClick={() => send({ answers: {} })}>

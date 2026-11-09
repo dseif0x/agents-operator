@@ -2813,3 +2813,17 @@ button.chat-file {
     border-radius: 16px 16px 0 0;
   }
 }
+
+/* multi-select questions */
+.cv-q-hint {
+  color: var(--sh-muted);
+  font-size: 12.5px;
+}
+
+.cv-q-check {
+  margin-right: 6px;
+}
+
+.cv-question .rt-input {
+  margin-top: 8px;
+}
