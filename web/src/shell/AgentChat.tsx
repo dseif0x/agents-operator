@@ -1166,6 +1166,20 @@ function ModelPicker({ session }: { session: Session }) {
   const current = models.find((m) => m.id === conv.model);
   const [q, setQ] = useState("");
   const shown = q ? models.filter((m) => `${m.id} ${m.name ?? ""}`.toLowerCase().includes(q.toLowerCase())) : models;
+  // Typed text that is not one of the listed ids can be used as a model id
+  // as is (e.g. a specific model version the CLI's list doesn't name).
+  const custom = q.trim() && !models.some((m) => m.id === q.trim()) ? q.trim() : "";
+  const pick = async (id: string) => {
+    setOpen(false);
+    setErr("");
+    setQ("");
+    try {
+      await api.setModel(session.id, id);
+    } catch (e) {
+      setErr((e as Error).message);
+      alert((e as Error).message);
+    }
+  };
   return (
     <div class="sh-menu-wrap" ref={ref}>
       <button class="sh-chip" title="Model" onClick={() => models.length && setOpen((o) => !o)} disabled={!models.length}>
@@ -1174,24 +1188,26 @@ function ModelPicker({ session }: { session: Session }) {
       </button>
       {open && (
         <div class="sh-menu sh-model-menu">
-          {models.length > 8 && (
-            <input class="sh-menu-search" placeholder="Search models" value={q} autoFocus onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
-          )}
+          <input
+            class="sh-menu-search"
+            placeholder={models.length > 8 ? "Search, or type a model ID" : "Type a model ID"}
+            value={q}
+            autoFocus={models.length > 8}
+            onInput={(e) => setQ((e.target as HTMLInputElement).value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && custom && shown.length === 0) pick(custom);
+            }}
+          />
           <div class="sh-menu-scroll">
-          {shown.length === 0 && <div class="rt-hint" style={{ padding: 8 }}>No model matches.</div>}
+          {custom && (
+            <button onClick={() => pick(custom)} title="Switch to this model ID as typed">
+              <span style={{ width: 16, flex: "none" }}><Icon name="arrowUp" size={14} /></span>
+              <span class="sh-model-name">Use “{custom}” as model ID</span>
+            </button>
+          )}
+          {shown.length === 0 && !custom && <div class="rt-hint" style={{ padding: 8 }}>No model matches.</div>}
           {shown.map((m) => (
-            <button
-              onClick={async () => {
-                setOpen(false);
-                setErr("");
-                try {
-                  await api.setModel(session.id, m.id);
-                } catch (e) {
-                  setErr((e as Error).message);
-                  alert((e as Error).message);
-                }
-              }}
-            >
+            <button onClick={() => pick(m.id)}>
               <span style={{ width: 16, flex: "none" }}>{m.id === conv.model && <Icon name="check" size={14} />}</span>
               <span class="sh-model-name">{m.name || m.id}</span>
             </button>
