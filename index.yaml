@@ -2,6 +2,34 @@ apiVersion: v1
 entries:
   agents-operator:
   - apiVersion: v2
+    appVersion: 3.8.5
+    created: "2026-11-10T14:08:21.790730084Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: oci://registry-1.docker.io/bitnamicharts
+      version: 18.12.4
+    description: Mission control for AI coding agents. One pod per session with its
+      own PVC, the agent's real terminal streamed to the browser.
+    digest: cb3e75b5924bd4578a98442004afafada0354436fc71ba6b372e56b446e9930c
+    home: https://github.com/dseif0x/agents-operator
+    keywords:
+    - ai
+    - agents
+    - claude-code
+    - terminal
+    kubeVersion: '>=1.27.0-0'
+    maintainers:
+    - name: dseif0x
+      url: https://github.com/dseif0x
+    name: agents-operator
+    sources:
+    - https://github.com/dseif0x/agents-operator
+    type: application
+    urls:
+    - https://github.com/dseif0x/agents-operator/releases/download/v3.8.5/agents-operator-3.8.5.tgz
+    version: 3.8.5
+  - apiVersion: v2
     appVersion: 3.8.4
     created: "2026-11-09T13:31:22.185361315Z"
     dependencies:
@@ -1709,4 +1737,4 @@ entries:
     urls:
     - https://github.com/dseif0x/agents-operator/releases/download/agents-operator-1.0.0/agents-operator-1.0.0.tgz
     version: 1.0.0
-generated: "2026-11-09T13:31:22.177891538Z"
+generated: "2026-11-10T14:08:21.785126219Z"
