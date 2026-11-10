@@ -252,7 +252,7 @@ func (c *Codex) Send(in Input) error {
 	}
 	model := c.Model
 	c.turnSeq++
-	c.turn = fmt.Sprintf("x%d", c.turnSeq)
+	c.turn = newTurnID("x", c.turnSeq)
 	c.codexTID = ""
 	c.usage = nil
 	turn, thread := c.turn, c.thread

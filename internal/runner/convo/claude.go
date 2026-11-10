@@ -150,7 +150,7 @@ func (c *Claude) ensureTurn() string {
 		return t
 	}
 	c.turnSeq++
-	c.turn = fmt.Sprintf("c%d", c.turnSeq)
+	c.turn = newTurnID("c", c.turnSeq)
 	c.interrupted = false
 	turn := c.turn
 	c.mu.Unlock()
@@ -421,7 +421,7 @@ func (c *Claude) Send(in Input) error {
 		return ErrBusy
 	}
 	c.turnSeq++
-	c.turn = fmt.Sprintf("c%d", c.turnSeq)
+	c.turn = newTurnID("c", c.turnSeq)
 	c.interrupted = false
 	turn := c.turn
 	c.mu.Unlock()

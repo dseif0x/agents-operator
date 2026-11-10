@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 )
 
 // Event types.
@@ -278,4 +279,13 @@ func permissionTitle(t *Tool) string {
 		return "Use " + firstNonEmpty(t.Title, t.Name)
 	}
 	return "Use " + firstNonEmpty(t.Name, "a tool")
+}
+
+// runID tells this runner process's turns apart from an earlier one's: the
+// counters restart with the process, and a reused turn id (or an ACP item
+// key built from it) would update an old item instead of adding a new one.
+var runID = randKey()[:6]
+
+func newTurnID(prefix string, seq int) string {
+	return fmt.Sprintf("%s%s-%d", prefix, runID, seq)
 }
