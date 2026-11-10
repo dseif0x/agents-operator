@@ -473,10 +473,16 @@ func (s *Service) ChatMessages(ctx context.Context, owner *store.User, chatID st
 
 // MarkChatRead moves the owner's read marker.
 func (s *Service) MarkChatRead(ctx context.Context, owner *store.User, chatID string, lastID int64) error {
-	if _, err := s.ownChat(ctx, owner, chatID); err != nil {
+	c, err := s.ownChat(ctx, owner, chatID)
+	if err != nil {
 		return err
 	}
-	return s.Store.Chats().SetRead(ctx, chatID, store.OwnerReader, lastID)
+	if err := s.Store.Chats().SetRead(ctx, chatID, store.OwnerReader, lastID); err != nil {
+		return err
+	}
+	// Every open list (the sidebar, other devices) gets the new unread count.
+	_, err = s.chatChanged(ctx, owner, c)
+	return err
 }
 
 // PostChatMessage posts as the owner.
