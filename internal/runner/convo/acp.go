@@ -304,7 +304,7 @@ func (a *ACP) Send(in Input) error {
 		return ErrBusy
 	}
 	a.turnSeq++
-	a.turn = fmt.Sprintf("a%d", a.turnSeq)
+	a.turn = newTurnID("a", a.turnSeq)
 	a.cancelled = false
 	a.textKey, a.thinkKey = "", ""
 	a.usage = nil
