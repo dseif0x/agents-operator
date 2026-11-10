@@ -375,3 +375,30 @@ func TestChatUplinkEndToEnd(t *testing.T) {
 	}
 	ul.CloseAll()
 }
+
+func TestMarkChatReadPublishes(t *testing.T) {
+	svc, u, ss, c := chatFixture(t)
+	ctx := context.Background()
+	m, err := svc.AgentPost(ctx, ss[1], c.ID, "hello", 0, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, cancel := svc.Broker.Subscribe(u.ID)
+	defer cancel()
+	if err := svc.MarkChatRead(ctx, u, c.ID, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type == "chat" && ev.ID == c.ID {
+				if ev.Chat == nil || ev.Chat.Unread != 0 {
+					t.Fatalf("chat event after read = %+v", ev.Chat)
+				}
+				return
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("no chat event after marking it read")
+		}
+	}
+}
