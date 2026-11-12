@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,7 +30,9 @@ import (
 //     `name.namespace.svc.cluster.local`): its pods, by the Service's
 //     selector, on the target port behind the URL's port. NetworkPolicies
 //     see traffic after the Service has forwarded it, so the Service IP
-//     itself would never match.
+//     itself would never match. Pods on the host network (Home Assistant
+//     often runs so) are not matched by pod selectors: their endpoints that
+//     are a node's own address are opened as that address and port too.
 //   - an address, or a host name that resolves to one: that address on the
 //     URL's port.
 //
@@ -88,12 +91,12 @@ func (r *Reconciler) mcpRulesFor(ctx context.Context, raw string) ([]networkingv
 		return []networkingv1.NetworkPolicyEgressRule{addrRule(a, port)}, nil
 	}
 	if name, ns, ok := r.serviceName(host); ok {
-		rule, found, err := r.serviceRule(ctx, name, ns, port)
+		rules, found, err := r.serviceRules(ctx, name, ns, port)
 		if err != nil {
 			return nil, err
 		}
 		if found {
-			return []networkingv1.NetworkPolicyEgressRule{rule}, nil
+			return rules, nil
 		}
 		if strings.HasSuffix(host, ".svc") || strings.HasSuffix(host, ".svc.cluster.local") {
 			return nil, fmt.Errorf("service %s/%s not found", ns, name)
@@ -151,22 +154,24 @@ func (r *Reconciler) serviceName(host string) (name, ns string, ok bool) {
 	return "", "", false
 }
 
-// serviceRule allows the pods behind a Service's port. found is false when
-// there is no such Service, so the caller can try the name as a host.
-func (r *Reconciler) serviceRule(ctx context.Context, name, ns string, port int32) (networkingv1.NetworkPolicyEgressRule, bool, error) {
+// serviceRules allow the pods behind a Service's port (and its host-network
+// endpoints). found is false when there is no such Service, so the caller
+// can try the name as a host.
+func (r *Reconciler) serviceRules(ctx context.Context, name, ns string, port int32) ([]networkingv1.NetworkPolicyEgressRule, bool, error) {
 	svc, err := r.cs.CoreV1().Services(ns).Get(ctx, name, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		return networkingv1.NetworkPolicyEgressRule{}, false, nil
+		return nil, false, nil
 	case apierrors.IsForbidden(err):
-		return networkingv1.NetworkPolicyEgressRule{}, false, fmt.Errorf("the hub may not read services (chart: runner.networkPolicy.mcpAutoAllow grants it): %w", err)
+		return nil, false, fmt.Errorf("the hub may not read services (chart: runner.networkPolicy.mcpAutoAllow grants it): %w", err)
 	case err != nil:
-		return networkingv1.NetworkPolicyEgressRule{}, false, err
+		return nil, false, err
 	}
 	if len(svc.Spec.Selector) == 0 {
-		return networkingv1.NetworkPolicyEgressRule{}, false, fmt.Errorf("service %s/%s has no pod selector", ns, name)
+		return nil, false, fmt.Errorf("service %s/%s has no pod selector", ns, name)
 	}
 	var target *intstr.IntOrString
+	portName := ""
 	for _, p := range svc.Spec.Ports {
 		if p.Port != port || (p.Protocol != "" && p.Protocol != corev1.ProtocolTCP) {
 			continue
@@ -175,22 +180,75 @@ func (r *Reconciler) serviceRule(ctx context.Context, name, ns string, port int3
 		if t.Type == intstr.Int && t.IntVal == 0 {
 			t = intstr.FromInt32(p.Port) // unset: the same as the port
 		}
-		target = &t
+		target, portName = &t, p.Name
 	}
 	if target == nil {
-		return networkingv1.NetworkPolicyEgressRule{}, false, fmt.Errorf("service %s/%s has no TCP port %d", ns, name, port)
+		return nil, false, fmt.Errorf("service %s/%s has no TCP port %d", ns, name, port)
 	}
 	selector := make(map[string]string, len(svc.Spec.Selector))
 	for k, v := range svc.Spec.Selector {
 		selector[k] = v
 	}
-	return networkingv1.NetworkPolicyEgressRule{
+	rules := []networkingv1.NetworkPolicyEgressRule{{
 		To: []networkingv1.NetworkPolicyPeer{{
 			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": ns}},
 			PodSelector:       &metav1.LabelSelector{MatchLabels: selector},
 		}},
 		Ports: []networkingv1.NetworkPolicyPort{{Protocol: ptr.To(corev1.ProtocolTCP), Port: target}},
-	}, true, nil
+	}}
+	return append(rules, r.hostNetworkRules(ctx, name, ns, portName)...), true, nil
+}
+
+// hostNetworkRules opens the Service's endpoints that are a node's own
+// address: pods on the host network, which pod selectors do not match.
+// Best effort: without the rights to read them it opens nothing more.
+func (r *Reconciler) hostNetworkRules(ctx context.Context, name, ns, portName string) []networkingv1.NetworkPolicyEgressRule {
+	nodes, err := r.cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		r.log.Debug("mcp egress: list nodes", "err", err)
+		return nil
+	}
+	nodeIPs := map[netip.Addr]bool{}
+	for _, n := range nodes.Items {
+		for _, a := range n.Status.Addresses {
+			if ip, err := netip.ParseAddr(a.Address); err == nil {
+				nodeIPs[ip.Unmap()] = true
+			}
+		}
+	}
+	slices, err := r.cs.DiscoveryV1().EndpointSlices(ns).List(ctx, metav1.ListOptions{LabelSelector: discoveryv1.LabelServiceName + "=" + name})
+	if err != nil {
+		r.log.Debug("mcp egress: list endpointslices", "err", err)
+		return nil
+	}
+	var rules []networkingv1.NetworkPolicyEgressRule
+	seen := map[string]bool{}
+	for _, sl := range slices.Items {
+		var epPort int32
+		for _, p := range sl.Ports {
+			if p.Port != nil && ptr.Deref(p.Name, "") == portName && ptr.Deref(p.Protocol, corev1.ProtocolTCP) == corev1.ProtocolTCP {
+				epPort = *p.Port
+			}
+		}
+		if epPort == 0 {
+			continue
+		}
+		for _, ep := range sl.Endpoints {
+			for _, addr := range ep.Addresses {
+				ip, err := netip.ParseAddr(addr)
+				if err != nil || !nodeIPs[ip.Unmap()] {
+					continue
+				}
+				key := ip.Unmap().String() + ":" + strconv.Itoa(int(epPort))
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				rules = append(rules, addrRule(ip, epPort))
+			}
+		}
+	}
+	return rules
 }
 
 // addrRule allows one address on one TCP port.
