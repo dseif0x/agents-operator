@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
@@ -163,5 +164,40 @@ func TestMCPAutoAllowOpensPickedServers(t *testing.T) {
 	h2.converge(s2.ID)
 	if h2.egressPolicy(s2.ID) != nil {
 		t.Fatal("policy without MCPAutoAllow")
+	}
+}
+
+func TestMCPRulesForHostNetworkService(t *testing.T) {
+	// Home Assistant on the host network: its endpoint is the node's own
+	// address, which pod selectors do not match, so it is opened as an address.
+	h := newHarness(t)
+	svc := haService()
+	if _, err := h.cs.CoreV1().Services("home-assistant").Create(h.ctx, svc, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.cs.CoreV1().Nodes().Create(h.ctx, &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "brute"},
+		Status:     corev1.NodeStatus{Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.13.1.187"}}},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	name, port := "http", int32(8123)
+	tcp := corev1.ProtocolTCP
+	if _, err := h.cs.DiscoveryV1().EndpointSlices("home-assistant").Create(h.ctx, &discoveryv1.EndpointSlice{
+		ObjectMeta:  metav1.ObjectMeta{Name: "ha-x", Labels: map[string]string{discoveryv1.LabelServiceName: "home-assistant"}},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Endpoints:   []discoveryv1.Endpoint{{Addresses: []string{"10.13.1.187"}}, {Addresses: []string{"10.42.3.9"}}},
+		Ports:       []discoveryv1.EndpointPort{{Name: &name, Port: &port, Protocol: &tcp}},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := h.r.mcpRulesFor(h.ctx, "http://home-assistant.home-assistant:8080/api/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The selector rule plus the node address; the pod address stays a selector match.
+	if len(rules) != 2 || rules[0].To[0].PodSelector == nil || rules[1].To[0].IPBlock == nil ||
+		rules[1].To[0].IPBlock.CIDR != "10.13.1.187/32" || rules[1].Ports[0].Port.IntValue() != 8123 {
+		t.Fatalf("rules = %+v", rules)
 	}
 }

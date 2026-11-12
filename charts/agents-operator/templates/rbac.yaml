@@ -123,6 +123,14 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get"]
+  # Host-network endpoints (pod selectors do not match them) are opened by
+  # address: the Service's EndpointSlices, checked against the node addresses.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
