@@ -138,6 +138,9 @@ type Config struct {
 	// policies (alone, one would isolate the pod instead of opening it), and
 	// only then does the chart grant the RBAC for them.
 	RunnerNetworkPolicy bool
+	// RunnerMCPAutoAllow lets sessions reach the MCP servers they picked on
+	// the local network (cluster Services, LAN addresses).
+	RunnerMCPAutoAllow bool
 	// RunnerEgressAllowed are the ranges a session may open on top of that
 	// policy, RunnerEgressDenied the ones it never may (the cluster's own).
 	// Empty RunnerEgressAllowed turns per-session egress off.
@@ -310,6 +313,7 @@ func load(get lookup) (*Config, error) {
 		RunnerClusterWideRead:  boolean("RUNNER_CLUSTER_WIDE_READ", false),
 		RunnerTmpInit:          boolean("RUNNER_TMP_INIT", true),
 		RunnerNetworkPolicy:    boolean("RUNNER_NETWORK_POLICY", false),
+		RunnerMCPAutoAllow:     boolean("RUNNER_MCP_AUTO_ALLOW", false),
 		HubServiceAccount:      str("HUB_SERVICE_ACCOUNT", ""),
 		Sandbox: Sandbox{
 			Enabled:         boolean("SANDBOX_ENABLED", false),

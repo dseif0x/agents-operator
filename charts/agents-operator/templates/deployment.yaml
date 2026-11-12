@@ -104,6 +104,8 @@ spec:
               value: {{ .Values.runner.tmpInit | quote }}
             - name: AGENTS_OPERATOR_RUNNER_NETWORK_POLICY
               value: {{ .Values.runner.networkPolicy.enabled | quote }}
+            - name: AGENTS_OPERATOR_RUNNER_MCP_AUTO_ALLOW
+              value: {{ and .Values.runner.networkPolicy.enabled .Values.runner.networkPolicy.mcpAutoAllow | quote }}
             - name: AGENTS_OPERATOR_RUNNER_EGRESS_ALLOWED
               value: {{ .Values.runner.networkPolicy.sessionEgress.allowedCIDRs | toJson | quote }}
             - name: AGENTS_OPERATOR_RUNNER_EGRESS_DENIED

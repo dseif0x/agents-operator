@@ -67,6 +67,9 @@ type Config struct {
 	// NetworkPolicy says the chart's default-deny NetworkPolicy covers
 	// session pods, so a session's own egress policy widens it (egress.go).
 	NetworkPolicy bool
+	// MCPAutoAllow opens, in a session's own NetworkPolicy, the remote MCP
+	// servers it picked when they are on the local network (mcpegress.go).
+	MCPAutoAllow bool
 	// TmpInit adds an init container, running as root, that gives the /tmp
 	// emptyDir the sticky bit (chmod 1777). Kubernetes creates emptyDirs
 	// world-writable without it, and Claude Code refuses such a directory

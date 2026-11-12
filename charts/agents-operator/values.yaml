@@ -123,6 +123,8 @@ runner:
             k8s-app: kube-dns
     # -- Extra peers allowed to egress to on any port (raw NetworkPolicy "to" entries)
     extraEgress: []
+    # -- Open the remote MCP servers a session picked when they are on the local network, in that session's own NetworkPolicy: an in-cluster Service URL (`http://name.namespace:port/...`) opens that Service's pods on its target port, an address or LAN host name that address on the URL's port. Hosts behind an ingress controller are not covered. Grants the hub read access to Services in every namespace. Anyone who may add MCP accounts can then reach any such service from their sessions
+    mcpAutoAllow: false
     sessionEgress:
       # -- Ranges a session may open for itself (its "local network access" list: an address or CIDR, optionally with a port), through a NetworkPolicy of its own on top of this one. Empty turns the option off
       allowedCIDRs:
