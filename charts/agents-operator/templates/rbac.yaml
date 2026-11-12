@@ -109,3 +109,33 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "agents-operator.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+{{- if and .Values.runner.networkPolicy.enabled .Values.runner.networkPolicy.mcpAutoAllow }}
+---
+# runner.networkPolicy.mcpAutoAllow: the hub reads the Service behind an
+# in-cluster MCP server URL to open its pods for the session that uses it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agents-operator.fullname" . }}-{{ .Release.Namespace }}-mcp
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "agents-operator.fullname" . }}-{{ .Release.Namespace }}-mcp
+  labels:
+    {{- include "agents-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "agents-operator.fullname" . }}-{{ .Release.Namespace }}-mcp
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agents-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

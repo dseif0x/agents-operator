@@ -30,14 +30,15 @@ import (
 // delete) and is found again by its session label.
 
 // BuildEgressPolicy returns the session's NetworkPolicy, or nil when it
-// lists no destinations and has no sandbox cluster to reach.
-func BuildEgressPolicy(s *store.Session, cfg Config) (*networkingv1.NetworkPolicy, error) {
+// lists no destinations, has no sandbox cluster to reach and gets no extra
+// rules (its MCP servers', mcpegress.go).
+func BuildEgressPolicy(s *store.Session, cfg Config, extra ...networkingv1.NetworkPolicyEgressRule) (*networkingv1.NetworkPolicy, error) {
 	access, _ := effectiveAccess(s, cfg.Defaults())
 	sandbox := access == store.K8sAccessSandbox
-	if len(s.Egress) == 0 && !sandbox {
+	if len(s.Egress) == 0 && !sandbox && len(extra) == 0 {
 		return nil, nil
 	}
-	rules := make([]networkingv1.NetworkPolicyEgressRule, 0, len(s.Egress)+1)
+	rules := make([]networkingv1.NetworkPolicyEgressRule, 0, len(s.Egress)+1+len(extra))
 	if sandbox {
 		// The vcluster API server, behind its service's 443.
 		port := intstr.FromInt32(8443)
@@ -66,6 +67,7 @@ func BuildEgressPolicy(s *store.Session, cfg Config) (*networkingv1.NetworkPolic
 		}
 		rules = append(rules, rule)
 	}
+	rules = append(rules, extra...)
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: ObjectName(s.ID), Namespace: cfg.Namespace, Labels: Labels(s)},
 		Spec: networkingv1.NetworkPolicySpec{
@@ -89,7 +91,22 @@ func (r *Reconciler) ensureEgress(ctx context.Context, sess *store.Session) erro
 	if !r.cfg.NetworkPolicy {
 		return nil
 	}
-	want, err := BuildEgressPolicy(sess, r.cfg)
+	mcp, err := r.mcpEgressRules(ctx, sess)
+	if err != nil {
+		return err
+	}
+	var extra []networkingv1.NetworkPolicyEgressRule
+	opened := 0
+	for _, m := range mcp {
+		if m.Err != nil {
+			// The agent runs without that server; say why it is cut off.
+			r.event(ctx, sess, "network", "MCP server "+m.Name+": not opened: "+m.Err.Error())
+			continue
+		}
+		extra = append(extra, m.Rules...)
+		opened++
+	}
+	want, err := BuildEgressPolicy(sess, r.cfg, extra...)
 	if err != nil {
 		return &egressError{err.Error()}
 	}
@@ -103,7 +120,7 @@ func (r *Reconciler) ensureEgress(ctx context.Context, sess *store.Session) erro
 		if _, err := api.Create(ctx, want, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 			return wrapEgress("create network policy", err)
 		}
-		r.event(ctx, sess, "network", egressSummary(sess))
+		r.event(ctx, sess, "network", egressSummary(sess, opened))
 	case err != nil:
 		return wrapEgress("read network policy", err)
 	case !reflect.DeepEqual(have.Spec, want.Spec) || !reflect.DeepEqual(have.Labels, want.Labels):
@@ -111,13 +128,16 @@ func (r *Reconciler) ensureEgress(ctx context.Context, sess *store.Session) erro
 		if _, err := api.Update(ctx, have, metav1.UpdateOptions{}); err != nil {
 			return wrapEgress("update network policy", err)
 		}
-		r.event(ctx, sess, "network", egressSummary(sess))
+		r.event(ctx, sess, "network", egressSummary(sess, opened))
 	}
 	return nil
 }
 
-func egressSummary(sess *store.Session) string {
+func egressSummary(sess *store.Session, mcp int) string {
 	msg := fmt.Sprintf("local network access: %d destination(s)", len(sess.Egress))
+	if mcp > 0 {
+		msg += fmt.Sprintf(" plus %d MCP server(s)", mcp)
+	}
 	if sess.K8sAccess == store.K8sAccessSandbox {
 		msg += " plus the sandbox cluster's API"
 	}

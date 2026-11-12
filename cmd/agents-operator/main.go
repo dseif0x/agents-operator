@@ -133,7 +133,7 @@ func run() error {
 		DefaultStorageClass: cfg.DefaultStorageClass, DefaultPVCSize: cfg.DefaultPVCSize, DefaultResources: cfg.DefaultResources, MaxResources: cfg.MaxResources,
 		NodeSelector: cfg.RunnerNodeSelector, Tolerations: cfg.RunnerTolerations, RuntimeClass: cfg.RunnerRuntimeClass, GPUPriorityClass: cfg.RunnerGPUPriorityClass, ServiceAccount: cfg.RunnerServiceAccount, ExtraEnv: cfg.RunnerExtraEnv, TmpInit: cfg.RunnerTmpInit,
 		NamespaceWrite: cfg.RunnerNamespaceWrite, ReadClusterRole: cfg.RunnerReadClusterRole, WriteClusterRole: cfg.RunnerWriteClusterRole, ClusterWideRead: cfg.RunnerClusterWideRead,
-		NetworkPolicy: cfg.RunnerNetworkPolicy, Sandbox: cfg.Sandbox, HubServiceAccount: cfg.HubServiceAccount,
+		NetworkPolicy: cfg.RunnerNetworkPolicy, MCPAutoAllow: cfg.RunnerMCPAutoAllow, Sandbox: cfg.Sandbox, HubServiceAccount: cfg.HubServiceAccount,
 	}.Defaults()
 	proxy := &term.Proxy{Resolver: &reconcile.Resolver{Informers: inf, Namespace: cfg.Namespace}, OriginPatterns: cfg.AllowedHosts, Log: log}
 	creds := &session.Credentials{Store: st, CS: cs, Namespace: cfg.Namespace}
