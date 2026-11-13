@@ -276,6 +276,7 @@ func convert(in, out any) error {
 // handle answers one runner request on behalf of the session's agent.
 func (u *Uplinks) handle(ctx context.Context, sessionID string, f runner.UplinkFrame) runner.UplinkFrame {
 	resp := runner.UplinkFrame{ID: f.ID}
+	f.Args = stripNUL(f.Args)
 	result, err := u.do(ctx, sessionID, f)
 	if err != nil {
 		var ve *ValidationError
