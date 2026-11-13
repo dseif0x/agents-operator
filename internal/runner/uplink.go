@@ -201,3 +201,10 @@ type ChatRefArgs struct {
 
 // UplinkMaxFrame bounds an uplink frame: up to five 10 MiB images in base64.
 const UplinkMaxFrame = 80 << 20
+
+// HubError is a request the hub answered with an error: the uplink works,
+// the hub refused or failed this request. Transport problems (no uplink,
+// timeouts) are other errors.
+type HubError struct{ Msg string }
+
+func (e *HubError) Error() string { return e.Msg }

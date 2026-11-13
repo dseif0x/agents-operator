@@ -632,34 +632,95 @@ func (s *Session) push(ev Event) {
 
 // sender batches events to the hub: at most every 100 ms, retrying while
 // the hub is not connected.
+//
+// A batch the hub answers with an error is not retried as is forever: one
+// event the hub cannot store (it once was a NUL byte Postgres rejects) would
+// otherwise hold back everything after it, and the session's view stalls.
+// The batch is halved until the failing event is alone; that event is
+// dropped only once the event after it goes through on its own, which
+// shows the hub works and that one event is the problem. When everything
+// fails (the hub's database is down) nothing is dropped: the sender backs
+// off and keeps trying.
 func (s *Session) sender(ctx context.Context) {
+	const maxBatch = 500
+	limit := maxBatch
+	backoff := time.Duration(0)
 	for {
+		wait := time.Second
+		if backoff > wait {
+			wait = backoff
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-s.flush:
-		case <-time.After(time.Second):
+			if backoff > 0 {
+				// Rejections back off on the timer only, not on new events.
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoff):
+				}
+			}
+		case <-time.After(wait):
 		}
 		time.Sleep(100 * time.Millisecond)
 		for {
 			s.mu.Lock()
-			n := min(len(s.outbox), 500)
+			n := min(len(s.outbox), limit)
 			batch := append([]Event(nil), s.outbox[:n]...)
+			var next []Event
+			if n == 1 && len(s.outbox) > 1 {
+				next = []Event{s.outbox[1]}
+			}
 			s.mu.Unlock()
 			if n == 0 || s.Send == nil {
 				break
 			}
-			sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			err := s.Send(sctx, batch)
-			cancel()
-			if err != nil {
-				break // the next tick tries again
+			err := s.send(ctx, batch)
+			if err == nil {
+				s.mu.Lock()
+				s.outbox = s.outbox[n:]
+				s.mu.Unlock()
+				limit, backoff = maxBatch, 0
+				continue
 			}
-			s.mu.Lock()
-			s.outbox = s.outbox[n:]
-			s.mu.Unlock()
+			var he *runner.HubError
+			if !errors.As(err, &he) {
+				break // no hub: the next tick tries again
+			}
+			if n > 1 {
+				limit = n / 2 // find the event the hub refuses
+				continue
+			}
+			// The first event alone is refused. If the one after it goes
+			// through, the hub works and that event is the problem.
+			if next != nil && s.send(ctx, next) == nil {
+				s.logger().Warn("dropping an event the hub refuses", "type", batch[0].Type, "turn", batch[0].Turn, "err", he.Msg)
+				s.mu.Lock()
+				s.outbox = s.outbox[2:]
+				s.mu.Unlock()
+				limit, backoff = maxBatch, 0
+				continue
+			}
+			backoff = min(max(2*backoff, 2*time.Second), 30*time.Second)
+			s.logger().Debug("the hub refuses events, backing off", "err", he.Msg, "backoff", backoff)
+			break
 		}
 	}
+}
+
+func (s *Session) send(ctx context.Context, events []Event) error {
+	sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return s.Send(sctx, events)
+}
+
+func (s *Session) logger() *slog.Logger {
+	if s.Log == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return s.Log
 }
 
 type state struct {

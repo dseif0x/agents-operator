@@ -225,7 +225,7 @@ func (c *Chat) Call(ctx context.Context, op string, args any) (json.RawMessage, 
 			return nil, ErrNoUplink
 		}
 		if !f.OK {
-			return nil, errors.New(cmpOr(f.Error, "the hub refused"))
+			return nil, &runner.HubError{Msg: cmpOr(f.Error, "the hub refused")}
 		}
 		return f.Result, nil
 	case <-time.After(60 * time.Second):
