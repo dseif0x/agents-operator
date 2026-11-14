@@ -64,6 +64,12 @@ final class HubViewController: UIViewController {
         return host == homeHost
     }
 
+    /// Login pages a hub may sit behind (Cloudflare Access), kept in the app.
+    fileprivate func isLoginFlow(_ url: URL?) -> Bool {
+        guard let host = url?.host?.lowercased() else { return false }
+        return host.hasSuffix(".cloudflareaccess.com")
+    }
+
     fileprivate func openOutside(_ url: URL) {
         UIApplication.shared.open(url)
     }
@@ -115,8 +121,13 @@ extension HubViewController: WKNavigationDelegate {
             decisionHandler(.cancel)
             return
         }
-        // Links to other sites open in Safari; the hub stays in the app.
-        if action.targetFrame?.isMainFrame == true, (scheme == "http" || scheme == "https"), !isHub(url) {
+        // Links the user taps to other sites open in Safari; the hub stays in
+        // the app. Redirects and form posts stay in the app too: a hub behind
+        // Cloudflare Access (or another login proxy) redirects to its login
+        // page on another domain and back, and the cookie it sets has to end
+        // up in this web view, not in Safari.
+        if action.targetFrame?.isMainFrame == true, (scheme == "http" || scheme == "https"),
+           !isHub(url), !isLoginFlow(url), action.navigationType == .linkActivated {
             openOutside(url)
             decisionHandler(.cancel)
             return
@@ -184,7 +195,7 @@ extension HubViewController: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard let url = action.request.url else { return nil }
-        if !isHub(url) {
+        if !isHub(url) && !isLoginFlow(url) {
             openOutside(url)
             return nil
         }

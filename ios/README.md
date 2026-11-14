@@ -6,7 +6,8 @@ full-screen web view. Unlike the Home Screen web app it is a real app, so the
 appears in Shortcuts ("Open App" and an "Open Agents" action) and Spotlight.
 
 - First launch asks for the hub address; change it later in iOS Settings → Agents.
-- The login cookie is kept between launches.
+- The login cookie is kept between launches. Hubs behind Cloudflare Access work:
+  the Access login (e.g. the email code) happens inside the app.
 - Attachments open in a sheet (Share saves them), downloads go to the share sheet,
   links to other sites open in Safari, camera/photos work for file uploads.
 - Not available in an app web view: web push notifications. Keep the Home Screen
