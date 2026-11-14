@@ -1,0 +1,66 @@
+name: ios
+
+# Builds the iOS wrapper app (ios/) as an UNSIGNED .ipa: install it with your
+# own signing (Sideloadly, AltStore/SideStore, or `codesign` + a profile).
+on:
+  push:
+    branches: [main]
+    tags: ["ios-v*"]
+    paths: ["ios/**", ".github/workflows/ios.yml", "web/public/icon-maskable-512.png"]
+  pull_request:
+    paths: ["ios/**", ".github/workflows/ios.yml", "web/public/icon-maskable-512.png"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: unsigned ipa
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: brew install xcodegen
+
+      - name: App icon (from the PWA's maskable icon)
+        run: sips -z 1024 1024 web/public/icon-maskable-512.png --out ios/Agents/Assets.xcassets/AppIcon.appiconset/icon-1024.png
+
+      - name: Generate the Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build (no code signing)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Agents.xcodeproj -scheme Agents -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tee build.log | grep -E "error:|warning: .*Agents/|BUILD (SUCCEEDED|FAILED)" || true
+          test -d build/Build/Products/Release-iphoneos/Agents.app
+
+      - name: Package the IPA
+        run: |
+          mkdir -p Payload
+          cp -R ios/build/Build/Products/Release-iphoneos/Agents.app Payload/
+          zip -qry Agents-unsigned.ipa Payload
+          ls -la Agents-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Agents-unsigned-ipa
+          path: Agents-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Attach to the release (ios-v* tags)
+        if: startsWith(github.ref, 'refs/tags/ios-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "iOS app $GITHUB_REF_NAME" --notes "Unsigned IPA of the iOS wrapper app (ios/). Sign it yourself to install."
+          gh release upload "$GITHUB_REF_NAME" Agents-unsigned.ipa --clobber
