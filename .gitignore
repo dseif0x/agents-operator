@@ -14,3 +14,7 @@ coverage.out
 .env
 .DS_Store
 hack/dev.env
+ios/build/
+ios/Agents.xcodeproj/
+ios/Agents/Info.plist
+ios/Agents/Assets.xcassets/AppIcon.appiconset/icon-1024.png
