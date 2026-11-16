@@ -7,7 +7,7 @@ import { copyCode, mentionedHandles, renderMessage } from "../markdown";
 import { loadDraft, saveDraft } from "../drafts";
 import { Avatar as ShellAvatar } from "../shell/Avatar";
 import { TurnSteps } from "../shell/AgentChat";
-import { previewKind, TextPreview } from "../attachments";
+import { previewKind, TextPreview, VideoFile } from "../attachments";
 
 // Chats: groups of the owner's agent sessions, like a group chat. The list
 // is on the left (the whole screen on a phone until a chat is open), the
@@ -540,7 +540,7 @@ function Message(props: {
               .filter((a) => !isImage(a))
               .map((a) => {
                 const kind = previewKind(a.content_type, a.name);
-                if (kind === "video") return <video class="cv-media" src={a.url} controls playsInline preload="metadata" title={a.name} />;
+                if (kind === "video") return <VideoFile src={a.url} name={a.name} size={a.size} />;
                 if (kind === "audio")
                   return (
                     <div class="cv-audio">

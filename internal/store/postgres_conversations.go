@@ -212,6 +212,24 @@ func (r pgConversations) AddFile(ctx context.Context, f *ConvFile) error {
 	return mapErr(err)
 }
 
+func (r pgConversations) FileInfo(ctx context.Context, sessionID, id string) (*ConvFile, error) {
+	var f ConvFile
+	err := r.pool.QueryRow(ctx, `SELECT id, COALESCE(input_id::text, ''), session_id::text, owner_id::text, name, content_type, octet_length(data) FROM conversation_files WHERE session_id=$1 AND id::text=$2`, sessionID, id).
+		Scan(&f.ID, &f.InputID, &f.SessionID, &f.OwnerID, &f.Name, &f.ContentType, &f.Size)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return &f, nil
+}
+
+func (r pgConversations) ReadFile(ctx context.Context, id string, off, n int64) ([]byte, error) {
+	var data []byte
+	// substring of an uncompressed out-of-line value fetches only the
+	// TOAST chunks it covers (migration 00022 stores the column EXTERNAL).
+	err := r.pool.QueryRow(ctx, `SELECT substring(data FROM $2 FOR $3) FROM conversation_files WHERE id::text=$1`, id, off+1, n).Scan(&data)
+	return data, mapErr(err)
+}
+
 func (r pgConversations) GetFile(ctx context.Context, sessionID, id string) (*ConvFile, error) {
 	var f ConvFile
 	err := r.pool.QueryRow(ctx, `SELECT id, COALESCE(input_id::text, ''), session_id::text, owner_id::text, name, content_type, size, data FROM conversation_files WHERE session_id=$1 AND id::text=$2`, sessionID, id).

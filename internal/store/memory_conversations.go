@@ -215,6 +215,34 @@ func (r memConversations) SetInputState(_ context.Context, sessionID, id, state 
 	return true, nil
 }
 
+func (r memConversations) FileInfo(ctx context.Context, sessionID, id string) (*ConvFile, error) {
+	f, err := r.GetFile(ctx, sessionID, id)
+	if err != nil {
+		return nil, err
+	}
+	f.Size, f.Data = len(f.Data), nil
+	return f, nil
+}
+
+func (r memConversations) ReadFile(_ context.Context, id string, off, n int64) ([]byte, error) {
+	r.d.mu.Lock()
+	defer r.d.mu.Unlock()
+	f := r.d.files[id]
+	if f == nil {
+		return nil, ErrNotFound
+	}
+	return sliceRange(f.Data, off, n), nil
+}
+
+// sliceRange copies up to n bytes of data from off.
+func sliceRange(data []byte, off, n int64) []byte {
+	size := int64(len(data))
+	if off < 0 || off >= size || n <= 0 {
+		return []byte{}
+	}
+	return append([]byte(nil), data[off:min(off+n, size)]...)
+}
+
 func (r memConversations) GetFile(_ context.Context, sessionID, id string) (*ConvFile, error) {
 	r.d.mu.Lock()
 	defer r.d.mu.Unlock()

@@ -89,4 +89,10 @@ type Conversations interface {
 	AddFile(ctx context.Context, f *ConvFile) error
 	// GetFile returns a file with its data.
 	GetFile(ctx context.Context, sessionID, id string) (*ConvFile, error)
+	// FileInfo returns a file without its data (Size is the data's length).
+	FileInfo(ctx context.Context, sessionID, id string) (*ConvFile, error)
+	// ReadFile returns up to n bytes of a file's data from off: serving a
+	// file never loads all of it (a video player's range requests come
+	// several at a time).
+	ReadFile(ctx context.Context, id string, off, n int64) ([]byte, error)
 }

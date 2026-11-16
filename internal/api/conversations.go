@@ -224,10 +224,10 @@ func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) inputFile(w http.ResponseWriter, r *http.Request) {
-	f, err := s.Sessions.OwnerInputFile(r.Context(), principal(r).User.ID, r.PathValue("id"), r.PathValue("file"))
+	f, read, err := s.Sessions.OwnerFileInfo(r.Context(), principal(r).User.ID, r.PathValue("id"), r.PathValue("file"))
 	if err != nil {
 		s.mapErr(w, err)
 		return
 	}
-	serveStoredFile(w, r, f.Name, f.ContentType, f.Data)
+	serveStoredRange(w, r, f.Name, f.ContentType, int64(f.Size), read)
 }

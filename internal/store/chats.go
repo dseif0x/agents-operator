@@ -109,6 +109,11 @@ type Chats interface {
 	Message(ctx context.Context, id int64) (*ChatMessage, error)
 	// Attachment returns an image's description, chat and bytes.
 	Attachment(ctx context.Context, id string) (*ChatAttachment, string, []byte, error)
+	// AttachmentInfo returns an attachment's description and chat, without
+	// its bytes (Size is their length).
+	AttachmentInfo(ctx context.Context, id string) (*ChatAttachment, string, error)
+	// ReadAttachment returns up to n bytes of an attachment from off.
+	ReadAttachment(ctx context.Context, id string, off, n int64) ([]byte, error)
 	// AttachmentBytes is the total size of an owner's images.
 	AttachmentBytes(ctx context.Context, ownerID string) (int64, error)
 
