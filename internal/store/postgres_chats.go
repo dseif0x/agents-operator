@@ -266,6 +266,23 @@ func (r pgChats) Attachment(ctx context.Context, id string) (*ChatAttachment, st
 	return &a, chatID, data, nil
 }
 
+func (r pgChats) AttachmentInfo(ctx context.Context, id string) (*ChatAttachment, string, error) {
+	var a ChatAttachment
+	var chatID string
+	err := r.pool.QueryRow(ctx, `SELECT id, message_id, chat_id::text, name, content_type, octet_length(data) FROM chat_attachments WHERE id::text=$1`, id).
+		Scan(&a.ID, &a.MessageID, &chatID, &a.Name, &a.ContentType, &a.Size)
+	if err != nil {
+		return nil, "", mapErr(err)
+	}
+	return &a, chatID, nil
+}
+
+func (r pgChats) ReadAttachment(ctx context.Context, id string, off, n int64) ([]byte, error) {
+	var data []byte
+	err := r.pool.QueryRow(ctx, `SELECT substring(data FROM $2 FOR $3) FROM chat_attachments WHERE id::text=$1`, id, off+1, n).Scan(&data)
+	return data, mapErr(err)
+}
+
 func (r pgChats) AttachmentBytes(ctx context.Context, ownerID string) (int64, error) {
 	var n int64
 	err := r.pool.QueryRow(ctx, `SELECT COALESCE(sum(size), 0) FROM chat_attachments WHERE owner_id=$1`, ownerID).Scan(&n)

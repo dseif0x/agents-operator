@@ -274,6 +274,28 @@ func (r memChats) Attachment(_ context.Context, id string) (*ChatAttachment, str
 	return &ca, a.chatID, append([]byte(nil), a.data...), nil
 }
 
+func (r memChats) AttachmentInfo(_ context.Context, id string) (*ChatAttachment, string, error) {
+	r.d.mu.Lock()
+	defer r.d.mu.Unlock()
+	a, ok := r.d.attachments[id]
+	if !ok {
+		return nil, "", ErrNotFound
+	}
+	ca := a.ChatAttachment
+	ca.Size = len(a.data)
+	return &ca, a.chatID, nil
+}
+
+func (r memChats) ReadAttachment(_ context.Context, id string, off, n int64) ([]byte, error) {
+	r.d.mu.Lock()
+	defer r.d.mu.Unlock()
+	a, ok := r.d.attachments[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return sliceRange(a.data, off, n), nil
+}
+
 func (r memChats) AttachmentBytes(_ context.Context, ownerID string) (int64, error) {
 	r.d.mu.Lock()
 	defer r.d.mu.Unlock()

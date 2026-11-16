@@ -5,7 +5,7 @@ import { createPortal } from "preact/compat";
 import { api, subscribeItems, type ConvItem, type Session } from "../api";
 import { Link, navigate } from "../router";
 import { copyCode, renderMessage } from "../markdown";
-import { previewKind, TextPreview } from "../attachments";
+import { previewKind, TextPreview, VideoFile } from "../attachments";
 import { Avatar } from "./Avatar";
 import { Icon } from "./icons";
 import { agentLabel, agentStatus, longTime, shortTime } from "./format";
@@ -347,7 +347,7 @@ function FileList({ sessionId, files, agent, small }: { sessionId: string; files
               </a>
             );
           case "video":
-            return <video key={f.id} class="cv-media" src={url(f)} controls playsInline preload="metadata" title={f.name} />;
+            return <VideoFile key={f.id} src={url(f)} name={f.name} size={f.size} />;
           case "audio":
             return (
               <div key={f.id} class="cv-audio">

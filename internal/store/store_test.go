@@ -23,7 +23,7 @@ func stores(t *testing.T) map[string]Store {
 			t.Fatalf("open postgres: %v", err)
 		}
 		// Start from a clean slate; tests share one database.
-		_, _ = pg.pool.Exec(ctx, "TRUNCATE memories, routine_runs, routines, conversation_files, conversation_inputs, conversation_items, push_subscriptions, app_settings, chat_reads, chat_deliveries, chat_attachments, chat_messages, chat_members, chats, session_events, sessions, user_credentials, accounts, user_profiles, repo_usage, users")
+		_, _ = pg.pool.Exec(ctx, "TRUNCATE skills, memories, routine_runs, routines, conversation_files, conversation_inputs, conversation_items, push_subscriptions, app_settings, chat_reads, chat_deliveries, chat_attachments, chat_messages, chat_members, chats, session_events, sessions, user_credentials, accounts, user_profiles, repo_usage, users")
 		t.Cleanup(pg.Close)
 		out["postgres"] = pg
 	} else {
@@ -330,6 +330,12 @@ func exercise(t *testing.T, st Store) {
 	a, inChat, data, err := st.Chats().Attachment(ctx, m1.Attachments[0].ID)
 	if err != nil || inChat != chat.ID || string(data) != "png" || a.ContentType != "image/png" {
 		t.Fatalf("attachment = %+v %s %v", a, inChat, err)
+	}
+	if ai, ic, err := st.Chats().AttachmentInfo(ctx, m1.Attachments[0].ID); err != nil || ic != chat.ID || ai.Size != 3 || ai.Name != "a.png" {
+		t.Fatalf("attachment info = %+v %s %v", ai, ic, err)
+	}
+	if b, err := st.Chats().ReadAttachment(ctx, m1.Attachments[0].ID, 1, 5); err != nil || string(b) != "ng" {
+		t.Fatalf("attachment range = %q, %v", b, err)
 	}
 	if n, _ := st.Chats().AttachmentBytes(ctx, u.ID); n != 3 {
 		t.Fatalf("attachment bytes = %d", n)

@@ -334,6 +334,23 @@ func (s *Service) InputFile(ctx context.Context, sess *store.Session, fileID str
 	return s.Store.Conversations().GetFile(ctx, sess.ID, fileID)
 }
 
+// RangeReader reads up to n bytes of a stored file from off.
+type RangeReader func(ctx context.Context, off, n int64) ([]byte, error)
+
+// OwnerFileInfo returns a file's description for the owner's browser and a
+// reader of its bytes in ranges (serving never loads a whole file).
+func (s *Service) OwnerFileInfo(ctx context.Context, ownerID, id, fileID string) (*store.ConvFile, RangeReader, error) {
+	if _, err := s.Get(ctx, ownerID, id); err != nil {
+		return nil, nil, err
+	}
+	f, err := s.Store.Conversations().FileInfo(ctx, id, fileID)
+	if err != nil {
+		return nil, nil, err
+	}
+	conv := s.Store.Conversations()
+	return f, func(ctx context.Context, off, n int64) ([]byte, error) { return conv.ReadFile(ctx, f.ID, off, n) }, nil
+}
+
 // OwnerInputFile returns a file for the owner's browser.
 func (s *Service) OwnerInputFile(ctx context.Context, ownerID, id, fileID string) (*store.ConvFile, error) {
 	if _, err := s.Get(ctx, ownerID, id); err != nil {

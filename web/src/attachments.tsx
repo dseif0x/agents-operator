@@ -4,6 +4,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { createPortal } from "preact/compat";
 import { renderMessage } from "./markdown";
+import { Icon } from "./shell/icons";
 
 export type PreviewKind = "image" | "video" | "audio" | "pdf" | "text" | "file";
 
@@ -95,5 +96,28 @@ export function TextPreview({ name, url, size, onClose }: { name: string; url: s
       </div>
     </div>,
     document.body,
+  );
+}
+
+/** downloadUrl asks the hub for the file as an attachment (a download, not
+ * inline playback); the link's `download` attribute does the same where
+ * it is honoured (the iOS app turns such links into a Files save). */
+export function downloadUrl(url: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}download=1`;
+}
+
+/** VideoFile is an inline player with a download link under it. */
+export function VideoFile(props: { src: string; name: string; size?: number }) {
+  const mb = props.size ? ` · ${(props.size / (1024 * 1024)).toFixed(props.size < 10 * 1024 * 1024 ? 1 : 0)} MB` : "";
+  return (
+    <div class="cv-video">
+      <video class="cv-media" src={props.src} controls playsInline preload="metadata" title={props.name} />
+      <a class="cv-video-dl" href={downloadUrl(props.src)} download={props.name} title={`Download ${props.name}`}>
+        <Icon name="download" size={14} />
+        <span>
+          Download{mb}
+        </span>
+      </a>
+    </div>
   );
 }

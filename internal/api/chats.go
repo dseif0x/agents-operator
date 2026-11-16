@@ -205,10 +205,10 @@ func (s *Server) markChatRead(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chatAttachment(w http.ResponseWriter, r *http.Request) {
-	a, data, err := s.Sessions.ChatAttachment(r.Context(), principal(r).User, r.PathValue("id"), r.PathValue("aid"))
+	a, read, err := s.Sessions.ChatAttachmentInfo(r.Context(), principal(r).User, r.PathValue("id"), r.PathValue("aid"))
 	if err != nil {
 		s.mapErr(w, err)
 		return
 	}
-	serveStoredFile(w, r, a.Name, a.ContentType, data)
+	serveStoredRange(w, r, a.Name, a.ContentType, int64(a.Size), read)
 }

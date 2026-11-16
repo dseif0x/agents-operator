@@ -501,6 +501,25 @@ func (s *Service) PostChatMessage(ctx context.Context, owner *store.User, chatID
 }
 
 // ChatAttachment returns an image of one of the owner's chats.
+// ChatAttachmentInfo is ChatAttachment without the bytes, which the
+// returned reader fetches in ranges.
+func (s *Service) ChatAttachmentInfo(ctx context.Context, owner *store.User, chatID, id string) (*store.ChatAttachment, RangeReader, error) {
+	if _, err := s.ownChat(ctx, owner, chatID); err != nil {
+		return nil, nil, err
+	}
+	chats := s.Store.Chats()
+	a, inChat, err := chats.AttachmentInfo(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if inChat != chatID {
+		return nil, nil, store.ErrNotFound
+	}
+	return a, func(ctx context.Context, off, n int64) ([]byte, error) {
+		return chats.ReadAttachment(ctx, a.ID, off, n)
+	}, nil
+}
+
 func (s *Service) ChatAttachment(ctx context.Context, owner *store.User, chatID, id string) (*store.ChatAttachment, []byte, error) {
 	if _, err := s.ownChat(ctx, owner, chatID); err != nil {
 		return nil, nil, err

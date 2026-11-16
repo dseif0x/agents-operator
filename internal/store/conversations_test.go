@@ -95,6 +95,21 @@ func exerciseConversations(t *testing.T, st Store) {
 	if err != nil || string(f.Data) != "abc" {
 		t.Fatalf("file = %+v, %v", f, err)
 	}
+	// Info without the bytes, and the bytes in ranges.
+	if fi, err := c.FileInfo(ctx, s.ID, in.Files[0].ID); err != nil || fi.Data != nil || fi.Size != 3 || fi.Name != "a.txt" {
+		t.Fatalf("file info = %+v, %v", fi, err)
+	}
+	if _, err := c.FileInfo(ctx, NewID(), in.Files[0].ID); err != ErrNotFound {
+		t.Fatalf("file info of another session err = %v", err)
+	}
+	for _, tc := range []struct {
+		off, n int64
+		want   string
+	}{{0, 3, "abc"}, {1, 1, "b"}, {1, 10, "bc"}, {3, 2, ""}} {
+		if b, err := c.ReadFile(ctx, in.Files[0].ID, tc.off, tc.n); err != nil || string(b) != tc.want {
+			t.Fatalf("read %d+%d = %q, %v", tc.off, tc.n, b, err)
+		}
+	}
 	if ok, err := c.SetInputState(ctx, s.ID, in.ID, InputSent); err != nil || !ok {
 		t.Fatalf("claim = %v, %v", ok, err)
 	}
