@@ -247,6 +247,43 @@ func (s *Session) Enqueue(ps ...Pending) {
 	}
 }
 
+// Deliver hands an input to the agent right away: into the running turn
+// when the agent can take messages during a turn (steering, like the owner's
+// "Send now"), else it is queued for the next turn. Chat messages use it, so
+// a long turn no longer holds them back until it ends.
+func (s *Session) Deliver(p Pending) {
+	s.mu.Lock()
+	s.init()
+	if s.known[p.ID] {
+		s.mu.Unlock()
+		return
+	}
+	d, turn := s.driver, s.turn
+	if d == nil || turn == "" || turn == "pending" || len(s.queue) > 0 {
+		// idle (dispatch sends it at once) or others are waiting: keep the order
+		s.mu.Unlock()
+		s.Enqueue(p)
+		return
+	}
+	s.known[p.ID] = true
+	s.mu.Unlock()
+	if err := d.Steer(p.Input); err != nil {
+		// no steering (ACP) or the turn just ended: the next turn takes it
+		s.mu.Lock()
+		s.queue = append(s.queue, p)
+		s.mu.Unlock()
+		s.kick(s.wake)
+		return
+	}
+	s.Log.Debug("input steered into the running turn", "id", p.ID)
+	if p.Source == SourceChat {
+		s.push(Event{Type: EventItem, Item: &Item{Key: "input:" + p.ID, Kind: KindUser, Status: StatusDone, Text: p.Text, Source: p.Source}})
+	}
+	if p.OnSent != nil {
+		go p.OnSent()
+	}
+}
+
 // Cancel drops queued inputs that were not sent yet.
 func (s *Session) Cancel(ids ...string) {
 	s.mu.Lock()

@@ -381,20 +381,74 @@ function FileList({ sessionId, files, agent, small }: { sessionId: string; files
 }
 
 function UserMessage({ item, session }: { item: ConvItem; session: Session }) {
-  const [open, setOpen] = useState(false);
-  const fromChat = item.data.source === "chat";
   const files = item.data.files ?? [];
+  if (item.data.source === "chat") {
+    const msgs = parseChatPrompt(item.data.text ?? "");
+    if (msgs.length) return <ChatMarker item={item} msgs={msgs} />;
+  }
   return (
-    <div class={`cv-user ${fromChat ? "from-chat" : ""} ${open ? "open" : ""}`}>
-      {fromChat && (
-        <span class="cv-source">
-          <Icon name="chats" size={12} /> From a chat
-        </span>
-      )}
+    <div class="cv-user">
       {files.length > 0 && <FileList sessionId={session.id} files={files} />}
-      {item.data.text && (
-        <div class="cv-bubble" onClick={() => fromChat && setOpen((o) => !o)}>
-          {item.data.text}
+      {item.data.text && <div class="cv-bubble">{item.data.text}</div>}
+    </div>
+  );
+}
+
+/** One chat message as the runner hands it to the agent (see the runner's
+ *  Chat.prompt): "--- chat "name" · message #id · from who · address[ · in
+ *  reply to #n]" followed by the text. */
+export type ChatPromptMsg = { chat: string; id: string; from: string; address: string; replyTo?: string; text: string };
+
+export function parseChatPrompt(text: string): ChatPromptMsg[] {
+  // the closing instructions after the last message are for the agent
+  let body = text;
+  for (const tail of ["\n\nAnswer in the chat with the chat_send tool", "\n\nIf you have something to add, post it with the chat_send tool"]) {
+    const i = body.lastIndexOf(tail);
+    if (i >= 0) body = body.slice(0, i);
+  }
+  const out: ChatPromptMsg[] = [];
+  const parts = body.split(/\n--- chat /).slice(1);
+  for (const part of parts) {
+    const nl = part.indexOf("\n");
+    const head = nl >= 0 ? part.slice(0, nl) : part;
+    const m = head.match(/^"(.*)" · message #(\d+) · from (.+?) · (addressed to you: please answer|@everyone: everyone is asked to answer|to everyone: answer only if you have something to add)(?: · in reply to #(\d+))?$/);
+    if (!m) return [];
+    const address = m[4].startsWith("addressed") ? "to you" : m[4].startsWith("@everyone") ? "@everyone" : "to everyone";
+    out.push({ chat: m[1], id: m[2], from: m[3], address, replyTo: m[5], text: (nl >= 0 ? part.slice(nl + 1) : "").trim() });
+  }
+  return out;
+}
+
+/** A chat message handed to the agent: a one-line marker like a routine
+ *  run's, the message itself folded under it. */
+function ChatMarker({ item, msgs }: { item: ConvItem; msgs: ChatPromptMsg[] }) {
+  const [open, setOpen] = useState(false);
+  const first = msgs[0];
+  const chats = [...new Set(msgs.map((m) => m.chat))];
+  const who = [...new Set(msgs.map((m) => m.from.replace(/ \(@[^)]*\)$/, "")))];
+  return (
+    <div class="cv-routine cv-chatmsg">
+      <button class="cv-routine-head" onClick={() => setOpen((o) => !o)} title={open ? "Hide the message" : "Show the message"}>
+        <Icon name="chats" size={14} class="cv-ok" />
+        <b>{chats.join(", ")}</b>
+        <span>· {who.join(", ")}</span>
+        <span>· {msgs.length === 1 ? `#${first.id}` : `${msgs.length} messages`}</span>
+        {msgs.some((m) => m.address !== "to everyone") && <span>· {msgs.some((m) => m.address === "to you") ? "to this agent" : "@everyone"}</span>}
+        <span>· {shortTime(item.created_at)}</span>
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={13} />
+      </button>
+      {open && (
+        <div class="cv-routine-body">
+          {msgs.map((m) => (
+            <div key={m.id} class="cv-chatmsg-msg">
+              <div class="cv-chatmsg-meta">
+                {m.from} · #{m.id}
+                {m.replyTo && <> · reply to #{m.replyTo}</>}
+                {chats.length > 1 && <> · {m.chat}</>}
+              </div>
+              <div class="cv-md" dangerouslySetInnerHTML={{ __html: renderMessage(m.text, []) }} />
+            </div>
+          ))}
         </div>
       )}
     </div>
