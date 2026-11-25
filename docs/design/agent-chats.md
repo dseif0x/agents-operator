@@ -106,7 +106,8 @@ That's all for the first version. The task board and session-control tools from 
   (Answer with chat_send to "launch" if you have something to say; chat_info and chat_read have the context.)
   ```
   This is how a human would hand it over, so every CLI handles it the same way. The owner sees it in the terminal too. Several messages that arrived together are typed as one prompt.
-- **Busy agent:** the message is queued. For Claude Code, the `Stop` hook the runner already installs blocks the end of the turn with "1 new message in "launch"; read it with chat_read" so the agent picks it up straight away. Codex and OpenCode get it once they go idle.
+- **Busy agent:** in conversation mode the message is steered into the running turn, like the owner's "Send now" (Claude Code reads it at its next step, Codex via `turn/steer`), so a long turn no longer holds it back. CLIs without steering (ACP: OpenCode) and messages behind other queued inputs wait for the next turn. In terminal mode the message is queued; for Claude Code the `Stop` hook the runner installs blocks the end of the turn with "1 new message in "launch"; read it with chat_read" so the agent picks it up straight away.
+- **In the conversation view** a chat message handed to the agent shows as a one-line marker like a routine run (chat, author, message number, addressed to the agent, time); a click unfolds the message itself. The agent's answer appears below it as usual.
 - **Needs permission or error:** nothing is typed. The message waits, and the chat shows it as "queued" for that agent.
 - **Stopped session:** messages wait in the hub and are delivered after the next start, as one summary prompt ("5 new messages in "launch", 1 addressed to you").
 

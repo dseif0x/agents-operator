@@ -648,20 +648,6 @@
   gap: 5px;
 }
 
-.cv-user.from-chat .cv-bubble {
-  background: transparent;
-  border: 1px dashed var(--sh-border);
-  color: var(--sh-muted);
-  font-size: 13px;
-  max-height: 7.5em;
-  overflow: hidden;
-  cursor: pointer;
-}
-
-.cv-user.from-chat.open .cv-bubble {
-  max-height: none;
-}
-
 .cv-agent {
   align-self: flex-start;
   max-width: 88%;
@@ -2055,6 +2041,20 @@
 
 .rt-target a {
   color: var(--sh-muted);
+}
+
+/* a chat message handed to the agent: a marker like a routine run's */
+.cv-chatmsg-msg {
+  border: 1px dashed var(--sh-border);
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--sh-muted);
+}
+
+.cv-chatmsg-meta {
+  font-size: 11.5px;
+  margin-bottom: 4px;
 }
 
 /* a routine run in the conversation */

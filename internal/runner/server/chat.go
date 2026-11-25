@@ -345,8 +345,9 @@ func (c *Chat) Run(ctx context.Context) {
 	}
 }
 
-// runConvo hands chat messages to the conversation as they arrive; the
-// conversation's queue keeps them in order with the owner's messages.
+// runConvo hands chat messages to the conversation as they arrive: into the
+// running turn when the agent can take them there, else queued in order with
+// the owner's messages.
 func (c *Chat) runConvo(ctx context.Context) {
 	c.mu.Lock()
 	c.init()
@@ -368,7 +369,7 @@ func (c *Chat) runConvo(ctx context.Context) {
 		for i, d := range ds {
 			ids[i] = fmt.Sprint(d.ID)
 		}
-		c.Convo.Enqueue(convo.Pending{
+		c.Convo.Deliver(convo.Pending{
 			Input:  convo.Input{ID: "chat-" + strings.Join(ids, "-"), Text: prompt},
 			Source: convo.SourceChat,
 			OnSent: func() {
