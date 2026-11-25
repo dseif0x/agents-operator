@@ -245,7 +245,8 @@ func cmpOr(a, b string) string {
 	return b
 }
 
-// enqueueInputs hands the owner's messages to the conversation, with their
+// enqueueInputs hands the owner's messages (and routine runs) to the
+// conversation, into the running turn when it can take them, with their
 // files written under ~/inputs/<input>/.
 func (c *Chat) enqueueInputs(ctx context.Context, ins []runner.ConvoInput) {
 	var ps []convo.Pending
@@ -262,7 +263,7 @@ func (c *Chat) enqueueInputs(ctx context.Context, ins []runner.ConvoInput) {
 		}
 		ps = append(ps, p)
 	}
-	c.Convo.Enqueue(ps...)
+	c.Convo.Deliver(ctx, ps...)
 }
 
 func (c *Chat) fetchInputFile(ctx context.Context, inputID string, i int, f runner.ChatFile) string {
@@ -369,7 +370,7 @@ func (c *Chat) runConvo(ctx context.Context) {
 		for i, d := range ds {
 			ids[i] = fmt.Sprint(d.ID)
 		}
-		c.Convo.Deliver(convo.Pending{
+		c.Convo.Deliver(ctx, convo.Pending{
 			Input:  convo.Input{ID: "chat-" + strings.Join(ids, "-"), Text: prompt},
 			Source: convo.SourceChat,
 			OnSent: func() {
@@ -649,8 +650,8 @@ func (c *Chat) local(ctx context.Context, op string, body []byte) (json.RawMessa
 		if c.Convo == nil {
 			return nil, errors.New("routines run in conversation sessions only")
 		}
-		cur, running := c.Convo.Current()
-		if !running || cur.Source != convo.SourceRoutine {
+		cur, ok := c.Convo.TurnRoutine()
+		if !ok {
 			return nil, errors.New("this works only during a routine run")
 		}
 		return c.Call(ctx, op, map[string]string{"input": cur.ID, "reason": a.Reason})

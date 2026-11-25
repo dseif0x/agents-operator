@@ -437,6 +437,25 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 			if len(ev.Inputs) > 0 && !fromOwner {
 				s.chatTurns.Store(ev.Turn, true)
 			}
+		case convo.EventInputsJoined:
+			// Inputs steered into the running turn: they belong to it, as
+			// the inputs a turn started with do.
+			s.routineTurnStarted(ctx, ev.Turn, ev.Inputs)
+			for _, id := range ev.Inputs {
+				key := "input:" + id
+				if touched[key] == nil {
+					if _, err := conv.GetItem(ctx, sess.ID, store.MainThread, key); err != nil {
+						continue // a chat message: its item comes from the runner
+					}
+				}
+				it, d := load(key)
+				it.Turn = ev.Turn
+				if d.Extra == nil {
+					d.Extra = map[string]any{}
+				}
+				d.Extra["joined"] = true
+				it.Data = mustJSON(d)
+			}
 		case convo.EventItem:
 			if ev.Item == nil || ev.Item.Key == "" {
 				continue
@@ -540,6 +559,16 @@ func (s *Service) ApplyEvents(ctx context.Context, sess *store.Session, events [
 			}
 			// A routine run with no news folds its answer away.
 			quiet := s.routineTurnEnded(ctx, ev.Turn, ev.Status, ev.Error)
+			// A quiet run that only joined a turn someone else started does not
+			// fold that turn or silence its notification: the turn answered
+			// something else too.
+			kept := quiet[:0]
+			for _, input := range quiet {
+				if _, d := load("input:" + input); d.Extra == nil || d.Extra["joined"] != true {
+					kept = append(kept, input)
+				}
+			}
+			quiet = kept
 			_, chatTurn := s.chatTurns.LoadAndDelete(ev.Turn)
 			switch turn, errText := ev.Turn, ev.Error; {
 			case ev.Status == convo.StatusFailed:
