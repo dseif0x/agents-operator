@@ -70,6 +70,7 @@ type Session struct {
 	prefix   string // makes turn ids unique across CLI restarts
 	lastAt   time.Time
 	current  Pending           // the input of the running (or last) turn
+	joined   []Pending         // inputs steered into the running turn
 	requests map[string]string // waiting for the owner: id -> title
 	memories []Note
 	memVer   string // of memories
@@ -248,10 +249,18 @@ func (s *Session) Enqueue(ps ...Pending) {
 }
 
 // Deliver hands an input to the agent right away: into the running turn
-// when the agent can take messages during a turn (steering, like the owner's
-// "Send now"), else it is queued for the next turn. Chat messages use it, so
-// a long turn no longer holds them back until it ends.
-func (s *Session) Deliver(p Pending) {
+// when the agent can take messages during a turn (steering, what "Send now"
+// did by hand), else it is queued for the next turn. Every input goes this
+// way (the owner's messages, routine and webhook runs, chat messages), so a
+// long turn no longer holds them back and back-to-back webhooks do not pile
+// up. Inputs queued in the hub are claimed first.
+func (s *Session) Deliver(ctx context.Context, ps ...Pending) {
+	for _, p := range ps {
+		s.deliver(ctx, p)
+	}
+}
+
+func (s *Session) deliver(ctx context.Context, p Pending) {
 	s.mu.Lock()
 	s.init()
 	if s.known[p.ID] {
@@ -267,21 +276,62 @@ func (s *Session) Deliver(p Pending) {
 	}
 	s.known[p.ID] = true
 	s.mu.Unlock()
-	if err := d.Steer(p.Input); err != nil {
-		// no steering (ACP) or the turn just ended: the next turn takes it
+	queue := func() {
 		s.mu.Lock()
 		s.queue = append(s.queue, p)
 		s.mu.Unlock()
 		s.kick(s.wake)
+	}
+	if p.Claim && s.ClaimInput != nil {
+		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		ok, err := s.ClaimInput(cctx, p.ID)
+		cancel()
+		if err != nil {
+			queue() // no answer from the hub: dispatch claims it later
+			return
+		}
+		if !ok {
+			return // edited or cancelled meanwhile
+		}
+		p.Claim = false
+	}
+	if err := d.Steer(p.Input); err != nil {
+		queue() // no steering (ACP) or the turn just ended: the next turn takes it
 		return
 	}
 	s.Log.Debug("input steered into the running turn", "id", p.ID)
+	s.mu.Lock()
+	cur := s.turn
+	s.joined = append(s.joined, p)
+	s.mu.Unlock()
 	if p.Source == SourceChat {
 		s.push(Event{Type: EventItem, Item: &Item{Key: "input:" + p.ID, Kind: KindUser, Status: StatusDone, Text: p.Text, Source: p.Source}})
+	}
+	if cur != "" && cur != "pending" {
+		s.push(Event{Type: EventInputsJoined, Turn: cur, Inputs: []string{p.ID}})
 	}
 	if p.OnSent != nil {
 		go p.OnSent()
 	}
+}
+
+// TurnRoutine is the routine run the running turn works on: the latest
+// routine input steered into it, else the one that started it.
+func (s *Session) TurnRoutine() (Pending, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turn == "" {
+		return Pending{}, false
+	}
+	for i := len(s.joined) - 1; i >= 0; i-- {
+		if s.joined[i].Source == SourceRoutine {
+			return s.joined[i], true
+		}
+	}
+	if s.current.Source == SourceRoutine {
+		return s.current, true
+	}
+	return Pending{}, false
 }
 
 // Cancel drops queued inputs that were not sent yet.
@@ -549,6 +599,7 @@ func (s *Session) handle(ev Event) {
 	switch ev.Type {
 	case EventTurnStarted:
 		s.turn = ev.Turn
+		s.joined = nil
 		s.text = map[string]*strings.Builder{}
 		s.tools = map[string]string{}
 		s.setActivity(runner.ActivityThinking, "", "")

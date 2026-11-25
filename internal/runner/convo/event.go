@@ -27,6 +27,9 @@ const (
 	// EventBackground: the work the agent left running in the background
 	// (Background is the whole list now).
 	EventBackground = "background"
+	// EventInputsJoined: inputs were steered into the running turn (Turn);
+	// the hub gives them that turn, as turn_started does for its inputs.
+	EventInputsJoined = "inputs_joined"
 )
 
 // Background is one thing the agent runs in the background: a command, a
@@ -71,7 +74,8 @@ type Event struct {
 	Type string `json:"type"`
 	// Turn is the turn's id, set on everything but info.
 	Turn string `json:"turn,omitempty"`
-	// Inputs are the ids of the inputs a turn started with (turn_started).
+	// Inputs are the ids of the inputs a turn started with (turn_started)
+	// or that joined it (inputs_joined).
 	Inputs []string `json:"inputs,omitempty"`
 	Item   *Item    `json:"item,omitempty"`
 	// Status and Error end a turn (turn_ended).

@@ -103,8 +103,14 @@ and the account setup stay exactly as for terminal sessions.
 Everything an agent works on is an **input**: a message from the owner, a
 chat delivery (as today: the runner builds the `[agents-operator chat]`
 text), later a routine run. The runner keeps one FIFO and hands the next
-input to the driver when the agent is idle; Claude Code and Codex get
-follow-ups during a turn only through the queue (no steering in phase 1).
+input to the driver when the agent is idle. During a turn every input (the
+owner's messages, routine and webhook runs, chat messages) is steered into
+the running turn right away (`Session.Deliver`: Claude Code reads it at its
+next step, Codex via `turn/steer`); the runner then reports
+`inputs_joined` so the hub gives the input that turn. Only CLIs without
+steering (ACP) and inputs behind others already queued wait in the FIFO
+for the next turn. A routine run that joined someone else's turn and
+reports "no update" does not fold that turn or silence its notification.
 
 Owner messages are stored in the hub first (`conversation_inputs`, state
 `queued`) and pushed over the uplink (`{"event":"inputs",...}`), like chat
