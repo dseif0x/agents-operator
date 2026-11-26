@@ -451,6 +451,7 @@ function ChatView(props: {
               !m.reply_to;
             return (
               <Message
+                key={m.id}
                 m={m}
                 grouped={!!grouped}
                 parent={m.reply_to ? byId.get(m.reply_to) : undefined}
