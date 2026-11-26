@@ -7,8 +7,11 @@
 // content fires no scroll event, so "stay at the bottom" never ran again.
 // A ResizeObserver on every child of the view catches all of it (new
 // children are observed as they are added); media load events are kept as
-// a second trigger. atBottom is the reader's position as of their last
-// scroll, so a reader who scrolled up is left alone.
+// a second trigger. The view itself is observed too: when something below
+// it appears or grows (the "Waiting for replies" panel, a taller composer)
+// the view gets shorter and the newest message would slip behind it.
+// atBottom is the reader's position as of their last scroll, so a reader
+// who scrolled up is left alone.
 export function followMediaLoads(el: HTMLElement, atBottom: () => boolean): () => void {
   const stick = () => {
     if (atBottom()) el.scrollTop = el.scrollHeight;
@@ -23,6 +26,7 @@ export function followMediaLoads(el: HTMLElement, atBottom: () => boolean): () =
   const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => stick());
   const observeAll = () => {
     if (!ro) return;
+    ro.observe(el);
     for (const child of Array.from(el.children)) ro.observe(child);
   };
   observeAll();
