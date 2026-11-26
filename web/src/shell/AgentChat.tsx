@@ -11,6 +11,7 @@ import { Icon } from "./icons";
 import { agentLabel, agentStatus, longTime, shortTime } from "./format";
 import { RoutineList } from "./Routines";
 import { loadDraft, saveDraft } from "../drafts";
+import { followMediaLoads } from "../followMedia";
 
 type Block =
   | { type: "user"; item: ConvItem }
@@ -89,6 +90,11 @@ export function AgentChat({ session }: { session: Session }) {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [items, session.conversation?.turn]);
+  // Pictures loading above must not push the end out of view.
+  useEffect(() => {
+    const el = scroller.current;
+    return el ? followMediaLoads(el, () => stick.current) : undefined;
+  }, [id]);
   const onScroll = () => {
     const el = scroller.current;
     if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
