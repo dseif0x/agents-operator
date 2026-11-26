@@ -8,6 +8,7 @@ import { loadDraft, saveDraft } from "../drafts";
 import { Avatar as ShellAvatar } from "../shell/Avatar";
 import { TurnSteps } from "../shell/AgentChat";
 import { previewKind, TextPreview, VideoFile } from "../attachments";
+import { followMediaLoads } from "../followMedia";
 
 // Chats: groups of the owner's agent sessions, like a group chat. The list
 // is on the left (the whole screen on a phone until a chat is open), the
@@ -293,6 +294,12 @@ function ChatView(props: {
 
   const members = chat.members;
   const memberById = useMemo(() => new Map(members.map((m) => [m.session_id, m])), [members]);
+
+  // Pictures loading above must not push the newest message out of view.
+  useEffect(() => {
+    const el = scroller.current;
+    return el ? followMediaLoads(el, () => atBottom.current) : undefined;
+  }, [chat.id]);
 
   const scrollDown = () =>
     requestAnimationFrame(() => {
