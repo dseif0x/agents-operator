@@ -963,8 +963,13 @@
 
 .cv-file img {
   display: block;
+  /* fixed height: a picture loading late doesn't shift the conversation */
+  height: 160px;
+  width: auto;
+  min-width: 60px;
   max-width: 220px;
-  max-height: 180px;
+  object-fit: cover;
+  background: var(--sh-hover);
   border-radius: 8px;
 }
 
@@ -993,8 +998,9 @@
 }
 
 .cv-files.small .cv-file img {
+  height: 80px;
+  min-width: 40px;
   max-width: 120px;
-  max-height: 90px;
 }
 
 .cv-load-more {
